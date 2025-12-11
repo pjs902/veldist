@@ -333,3 +333,6 @@ class KinematicSolver:
         ax.set_ylabel("Probability Density")
         ax.legend()
         return ax
+
+
+__all__ = ["KinematicSolver", "precompute_design_matrix", "generate_smooth_curve", "model"]

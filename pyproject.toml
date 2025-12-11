@@ -6,10 +6,20 @@ build-backend = "hatchling.build"
 name = "veldist"
 version = "0.1.0"
 description = "Infer velocity distribution from noisy data"
-readme = "README.md"
+readme = { file = "README.md", content-type = "text/markdown" }
+requires-python = ">=3.10"
+keywords = ["astronomy", "kinematics", "bayesian", "velocity", "deconvolution"]
 authors = [{ name = "Peter Smith", email = "pesmith@mpia.de" }]
 license = { file = "LICENSE" }
 dependencies = ["numpy", "numpyro", "jax", "matplotlib"]
 
 [project.urls]
 homepage = "https://github.com/pjs902/veldist"
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0"]
+
+[tool.pytest.ini_options]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
