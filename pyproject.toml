@@ -1,0 +1,15 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "veldist"
+version = "0.1.0"
+description = "Infer velocity distribution from noisy data"
+readme = "README.md"
+authors = [{ name = "Peter Smith", email = "pesmith@mpia.de" }]
+license = { file = "LICENSE" }
+dependencies = ["numpy", "numpyro", "jax", "matplotlib"]
+
+[project.urls]
+homepage = "https://github.com/pjs902/veldist"
