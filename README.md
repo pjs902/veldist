@@ -1,10 +1,12 @@
 # veldist
 
-Infer velocity distributions from noisy stellar kinematics using Bayesian methods.
+Infer velocity distributions from noisy stellar kinematics.
 
 More generally, do unbiased, non-parametric density estimation.
 
 ## Installation
+
+(pypi coming soon)
 
 ```bash
 pip install -e .
@@ -42,3 +44,7 @@ solver.plot_result()
 ## License
 
 MIT License - see LICENSE file for details.
+
+## Attribution
+
+This will eventually be described in a paper. If this code is useful for your research, please cite the paper (when available) or the GitHub repository.
