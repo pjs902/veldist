@@ -17,6 +17,15 @@ import numpyro.distributions as dist
 from numpyro.infer import MCMC, NUTS
 import matplotlib.pyplot as plt
 
+
+__all__ = [
+    "KinematicSolver",
+    "precompute_design_matrix",
+    "generate_smooth_curve",
+    "model",
+]
+
+
 # ==============================================================================
 # Design Matrix
 # ==============================================================================
@@ -132,6 +141,11 @@ def model(matrix, n_bins):
         The pre-computed Design Matrix M.
     n_bins : int
         Number of velocity bins.
+
+    Returns
+    -------
+    None
+        This function defines the probabilistic graph and has no return value.
     """
     # --- Hyperparameters ---
 
@@ -185,6 +199,25 @@ def model(matrix, n_bins):
 
 
 class KinematicSolver:
+    """
+    A high-level interface for performing Bayesian kinematic deconvolution.
+
+    This class manages the full inference workflow:
+    1.  Defining the velocity grid (``setup_grid``).
+    2.  Ingesting data and building the design matrix (``add_data``).
+    3.  Running the MCMC sampler (``run``).
+    4.  Visualizing the results (``plot_result``).
+
+    Attributes
+    ----------
+    matrix : jnp.ndarray or None
+        The pre-computed design matrix of shape (N_stars, N_bins).
+    grid : dict
+        Metadata defining the velocity grid (centers, edges, width).
+    samples : dict or None
+        Posterior samples from the MCMC run.
+    """
+
     def __init__(self):
         """
         Initializes the KinematicSolver instance.
@@ -205,6 +238,11 @@ class KinematicSolver:
             Total width of the velocity grid.
         n_bins : int
             Number of bins in the grid.
+
+        Returns
+        -------
+        None
+            Sets ``self.grid``.
         """
         edges = np.linspace(center - width / 2, center + width / 2, n_bins + 1)
         centers = 0.5 * (edges[:-1] + edges[1:])
@@ -225,6 +263,11 @@ class KinematicSolver:
             Observed velocities of stars.
         err : array-like
             Measurement errors associated with the velocities.
+
+        Returns
+        -------
+        None
+            Sets ``self.matrix``.
         """
         if not self.grid:
             msg = "Run setup_grid() first."
@@ -250,6 +293,11 @@ class KinematicSolver:
             Number of MCMC samples to draw.
         gpu : bool
             Whether to use GPU acceleration (if available).
+
+        Returns
+        -------
+        samples : dict
+            Posterior samples (e.g., "intrinsic_pdf", "smoothness_sigma").
         """
         if self.matrix is None:
             msg = "No data added."
@@ -333,6 +381,3 @@ class KinematicSolver:
         ax.set_ylabel("Probability Density")
         ax.legend()
         return ax
-
-
-__all__ = ["KinematicSolver", "precompute_design_matrix", "generate_smooth_curve", "model"]
