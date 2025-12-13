@@ -1,5 +1,10 @@
 # veldist
 
+<!-- Add tests status badges, readthedocs badge, license badge -->
+[![Tests](https://github.com/pjs902/veldist/actions/workflows/tests.yml/badge.svg)](https://github.com/pjs902/veldist/actions/workflows/tests.yml)
+[![Documentation Status](https://readthedocs.org/projects/veldist/badge/?version=latest)](https://veldist.readthedocs.io/en/latest/?badge=latest)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+
 Infer velocity distributions from noisy stellar kinematics.
 
 More generally, do unbiased, non-parametric density estimation.
