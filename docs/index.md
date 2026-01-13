@@ -41,11 +41,14 @@ samples = solver.run(num_warmup=500, num_samples=1000)
 solver.plot_result()
 ```
 
+For complete, runnable examples covering various use cases, see the [Examples](examples) page.
+
 ```{toctree}
 :hidden:
 :caption: Documentation
 
 theory
+examples
 api
 ```
 
