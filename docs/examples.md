@@ -71,6 +71,8 @@ plt.tight_layout()
 plt.show()
 ```
 
+![Example 1 Data Generation](images/ex1_data_generation.png)
+
 Notice how the observed standard deviation (10.2 km/s) is slightly larger than the true intrinsic width (10.0 km/s) due to measurement errors. The scatter plot shows the noise is homoscedastic (constant ~2 km/s errors).
 
 ### Step 2: Naive Approach (Ignoring Measurement Errors)
@@ -160,6 +162,60 @@ Deconvolved error: 0.02 km/s
 ```
 
 The Bayesian deconvolution recovers the true intrinsic width much more accurately!
+
+Let's visualize the posterior samples to see the uncertainty:
+
+```python
+import matplotlib.pyplot as plt
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+# Left: Posterior distribution of the velocity dispersion
+ax = axes[0]
+std_samples = [compute_moments(samples['intrinsic_pdf'][i:i+1], solver.grid['centers'])['std'][0] 
+               for i in range(samples['intrinsic_pdf'].shape[0])]
+ax.hist(std_samples, bins=40, alpha=0.7, edgecolor='black')
+ax.axvline(true_std, color='red', linestyle='--', linewidth=2, label=f'True σ={true_std:.1f}')
+ax.axvline(naive_std, color='orange', linestyle=':', linewidth=2, label=f'Naive σ={naive_std:.1f}')
+ax.axvline(np.mean(std_samples), color='green', linewidth=2, label=f'Inferred σ={np.mean(std_samples):.1f}')
+ax.set_xlabel('Velocity Dispersion (km/s)')
+ax.set_ylabel('Posterior Samples')
+ax.set_title('Recovered Dispersion')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+# Middle: Smoothness parameter posterior
+ax = axes[1]
+ax.hist(samples['smoothness_sigma'], bins=40, alpha=0.7, edgecolor='black', color='steelblue')
+ax.set_xlabel('Smoothness σ')
+ax.set_ylabel('Posterior Samples')
+ax.set_title('Inferred Smoothness Prior')
+ax.grid(True, alpha=0.2)
+
+# Right: Sample of posterior PDFs
+ax = axes[2]
+# Plot a random subset of posterior samples
+n_samples_to_plot = 50
+indices = np.random.choice(samples['intrinsic_pdf'].shape[0], n_samples_to_plot, replace=False)
+centers = solver.grid['centers']
+pdf_density = samples['intrinsic_pdf'] / solver.grid['width']
+for idx in indices:
+    ax.plot(centers, pdf_density[idx], 'gray', alpha=0.1, linewidth=1)
+ax.plot(centers, np.mean(pdf_density, axis=0), 'green', linewidth=2, label='Mean posterior')
+ax.plot(centers, true_pdf(centers), 'r--', linewidth=2, label='True')
+ax.set_xlabel('Velocity (km/s)')
+ax.set_ylabel('Probability Density')
+ax.set_title('Posterior PDF Samples')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+plt.tight_layout()
+plt.show()
+```
+
+![Example 1 Posterior Analysis](images/ex1_posterior_analysis.png)
+
+These plots show: (left) the posterior distribution of velocity dispersion tightly centered on the true value, (middle) the inferred smoothness parameter, and (right) the uncertainty in the inferred PDF with 50 posterior samples in gray and the mean in green.
 
 ### Step 5: Visualize the Results
 
@@ -270,6 +326,8 @@ plt.tight_layout()
 plt.show()
 ```
 
+![Example 2 Data Generation](images/ex2_data_generation.png)
+
 You can see the observed distribution (orange) is significantly wider than the true distribution (blue) because measurement errors dominate.
 
 ### Step 2: Compare Naive vs Deconvolution Approaches
@@ -323,6 +381,62 @@ Deconvolved error: 0.12 km/s (2% bias)
 ```
 
 The naive approach has a 72% bias, while deconvolution reduces this to just 2%!
+
+Let's visualize how the deconvolution "peels away" the measurement noise:
+
+```python
+import matplotlib.pyplot as plt
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+# Left: Show the deconvolution process conceptually
+ax = ax1
+x = np.linspace(-30, 30, 200)
+
+# True distribution
+true_pdf_vals = np.exp(-0.5*(x/true_std)**2) / (true_std*np.sqrt(2*np.pi))
+ax.fill_between(x, true_pdf_vals, alpha=0.3, color='blue', label=f'True (σ={true_std:.1f})')
+
+# Measurement error kernel
+error_kernel = np.exp(-0.5*(x/measurement_errors[0])**2) / (measurement_errors[0]*np.sqrt(2*np.pi))
+ax.plot(x, error_kernel * 0.5, 'r--', linewidth=2, label=f'Measurement blur (σ={measurement_errors[0]:.1f})')
+
+# Observed (convolution)
+obs_pdf = np.exp(-0.5*(x/naive_std)**2) / (naive_std*np.sqrt(2*np.pi))
+ax.plot(x, obs_pdf, 'orange', linewidth=2, label=f'Observed (σ={naive_std:.1f})')
+
+# Deconvolved
+centers = solver.grid['centers']
+pdf_density = samples['intrinsic_pdf'] / solver.grid['width']
+mean_pdf = np.mean(pdf_density, axis=0)
+ax.plot(centers, mean_pdf, 'g-', linewidth=2.5, label=f'Deconvolved (σ={deconvolved_std:.1f})')
+
+ax.set_xlabel('Velocity (km/s)')
+ax.set_ylabel('Probability Density')
+ax.set_title('Deconvolution Process')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+# Right: Posterior uncertainty in recovered width
+ax = ax2
+std_samples = [compute_moments(samples['intrinsic_pdf'][i:i+1], solver.grid['centers'])['std'][0] 
+               for i in range(samples['intrinsic_pdf'].shape[0])]
+ax.hist(std_samples, bins=50, alpha=0.7, edgecolor='black', color='green')
+ax.axvline(true_std, color='red', linestyle='--', linewidth=2.5, label=f'True σ={true_std:.1f}')
+ax.axvline(naive_std, color='orange', linestyle=':', linewidth=2.5, label=f'Naive σ={naive_std:.1f}')
+ax.set_xlabel('Inferred Velocity Dispersion (km/s)')
+ax.set_ylabel('Posterior Samples')
+ax.set_title('Posterior: Recovered Width')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+plt.tight_layout()
+plt.show()
+```
+
+![Example 2 Deconvolution Process](images/ex2_deconvolution_process.png)
+
+The left panel shows how deconvolution (green) successfully "un-blurs" the observed distribution (orange) to recover the narrow true distribution (blue shaded). The right panel shows the posterior distribution of the recovered dispersion is tightly centered on the true value (red line), far from the biased naive estimate (orange line).
 
 ### Step 4: Visualize the Recovery
 
@@ -468,6 +582,8 @@ plt.tight_layout()
 plt.show()
 ```
 
+![Example 3 Data Generation](images/ex3_data_generation.png)
+
 The left panel shows the two distinct populations clearly separated. The right panel shows how measurement errors blur the peaks but they're still somewhat visible.
 
 ### Step 2: Naive Single-Gaussian Fit
@@ -554,6 +670,59 @@ Component 2: velocity = 20.0 km/s
 
 Excellent! The deconvolution successfully identified both components with accurate positions.
 
+Let's visualize the posterior uncertainty in the bimodal structure:
+
+```python
+import matplotlib.pyplot as plt
+
+fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 5))
+
+# Left: Posterior samples showing bimodal recovery
+ax = ax1
+n_samples_to_plot = 100
+indices = np.random.choice(pdf_density.shape[0], n_samples_to_plot, replace=False)
+for idx in indices:
+    ax.plot(centers, pdf_density[idx], 'gray', alpha=0.05, linewidth=0.5)
+ax.plot(centers, mean_pdf, 'green', linewidth=2.5, label='Mean posterior', zorder=10)
+ax.plot(centers, true_pdf(centers), 'r--', linewidth=2, label='True bimodal', zorder=10)
+ax.plot(centers[peaks], mean_pdf[peaks], 'k*', markersize=15, label='Detected peaks', zorder=11)
+ax.set_xlabel('Velocity (km/s)')
+ax.set_ylabel('Probability Density')
+ax.set_title('Posterior: 100 Samples + Mean')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+# Right: Peak locations across posterior samples
+ax = ax2
+# Find peaks in each posterior sample
+peak1_locations = []
+peak2_locations = []
+for i in range(min(500, pdf_density.shape[0])):
+    peaks_i, _ = find_peaks(pdf_density[i], distance=5, prominence=0.002)
+    if len(peaks_i) >= 2:
+        # Sort peaks by position
+        sorted_peaks = sorted(peaks_i, key=lambda p: centers[p])
+        peak1_locations.append(centers[sorted_peaks[0]])
+        peak2_locations.append(centers[sorted_peaks[1]])
+
+ax.hist(peak1_locations, bins=30, alpha=0.6, color='blue', label=f'Component 1 (true: {mean1:.0f})')
+ax.hist(peak2_locations, bins=30, alpha=0.6, color='orange', label=f'Component 2 (true: {mean2:.0f})')
+ax.axvline(mean1, color='blue', linestyle='--', linewidth=2)
+ax.axvline(mean2, color='orange', linestyle='--', linewidth=2)
+ax.set_xlabel('Peak Velocity (km/s)')
+ax.set_ylabel('Posterior Samples')
+ax.set_title('Uncertainty in Peak Locations')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+plt.tight_layout()
+plt.show()
+```
+
+![Example 3 Posterior Uncertainty](images/ex3_posterior_uncertainty.png)
+
+The left panel shows 100 posterior samples (gray) demonstrating the bimodal structure is robustly recovered, with the mean (green) matching the true distribution (red dashed). The right panel shows the posterior distribution of peak locations, tightly centered on the true values.
+
 ### Step 5: Visualize the Multi-Component Recovery
 
 ```python
@@ -630,9 +799,9 @@ np.random.seed(789)
 true_a, true_loc, true_scale = 2, 5, 8
 true_velocities = skewnorm.rvs(a=true_a, loc=true_loc, scale=true_scale, size=400)
 
-# Realistic heteroscedastic errors (depends on magnitude, etc.)
-# Better measurements for slow-moving stars
-errors = 2.0 + 0.1 * np.abs(true_velocities) + np.random.uniform(0, 1, 400)
+# Heteroscedastic errors (star-to-star variation)
+# Errors depend on stellar properties (magnitude, S/N, etc.), not on RV
+errors = np.random.uniform(2.0, 5.0, 400)
 observed_velocities = true_velocities + np.random.normal(0, errors)
 
 print("=== Dataset Summary ===")
@@ -647,8 +816,8 @@ print(f"Error range: {errors.min():.1f} - {errors.max():.1f} km/s")
 === Dataset Summary ===
 N stars: 400
 Velocity range: -8.2 to 35.4 km/s
-Median error: 3.12 km/s
-Error range: 2.0 - 5.8 km/s
+Median error: 3.52 km/s
+Error range: 2.0 - 5.0 km/s
 ```
 
 Visualize the asymmetric (skewed) distribution:
@@ -671,17 +840,21 @@ ax1.set_title('Asymmetric Distribution (Positive Skew)')
 ax1.legend()
 ax1.grid(True, alpha=0.2)
 
-# Right: Heteroscedastic errors
-ax2.scatter(true_velocities, errors, alpha=0.4, s=15)
-ax2.set_xlabel('True Velocity (km/s)')
+# Right: Heteroscedastic errors (independent of RV)
+ax2.scatter(observed_velocities, errors, alpha=0.4, s=15)
+ax2.axhline(np.median(errors), color='red', linestyle='--', linewidth=2, label='Median error')
+ax2.set_xlabel('Observed Velocity (km/s)')
 ax2.set_ylabel('Measurement Error (km/s)')
-ax2.set_title('Heteroscedastic Errors (velocity-dependent)')
+ax2.set_title('Heteroscedastic Errors')
+ax2.legend()
 ax2.grid(True, alpha=0.2)
 plt.tight_layout()
 plt.show()
 ```
 
-Notice the positive skew (longer tail to the right) and how measurement errors increase with velocity magnitude.
+![Example 4 Data Generation](images/ex4_data_generation.png)
+
+Notice the positive skew (longer tail to the right) in the velocity distribution. The errors vary from star to star (2-5 km/s range), representing realistic variation in measurement quality across a stellar sample.
 
 ### Step 2: Pre-Analysis Quality Checks
 
@@ -822,6 +995,71 @@ Max relative uncertainty: 68.2%
 ```
 
 The positive skewness is successfully recovered, indicating an asymmetric distribution!
+
+Let's visualize the posterior distributions of the statistical moments:
+
+```python
+import matplotlib.pyplot as plt
+
+# Compute moments for each posterior sample
+n_posterior = samples['intrinsic_pdf'].shape[0]
+mean_samples = np.zeros(n_posterior)
+std_samples = np.zeros(n_posterior)
+skew_samples = np.zeros(n_posterior)
+
+for i in range(n_posterior):
+    m = compute_moments(samples['intrinsic_pdf'][i:i+1], solver.grid['centers'])
+    mean_samples[i] = m['mean'][0]
+    std_samples[i] = m['std'][0]
+    skew_samples[i] = m['skewness'][0]
+
+# True values from the skewed distribution
+true_mean_val = skewnorm.mean(a=true_a, loc=true_loc, scale=true_scale)
+true_std_val = skewnorm.std(a=true_a, loc=true_loc, scale=true_scale)
+true_skew_val = skewnorm.stats(a=true_a, loc=true_loc, scale=true_scale, moments='s')
+
+fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+# Mean
+ax = axes[0]
+ax.hist(mean_samples, bins=40, alpha=0.7, edgecolor='black', color='steelblue')
+ax.axvline(true_mean_val, color='red', linestyle='--', linewidth=2.5, label=f'True: {true_mean_val:.1f}')
+ax.axvline(np.mean(mean_samples), color='green', linewidth=2, label=f'Inferred: {np.mean(mean_samples):.1f}')
+ax.set_xlabel('Mean Velocity (km/s)')
+ax.set_ylabel('Posterior Samples')
+ax.set_title('Posterior: Mean')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+# Dispersion
+ax = axes[1]
+ax.hist(std_samples, bins=40, alpha=0.7, edgecolor='black', color='coral')
+ax.axvline(true_std_val, color='red', linestyle='--', linewidth=2.5, label=f'True: {true_std_val:.1f}')
+ax.axvline(np.mean(std_samples), color='green', linewidth=2, label=f'Inferred: {np.mean(std_samples):.1f}')
+ax.set_xlabel('Dispersion (km/s)')
+ax.set_ylabel('Posterior Samples')
+ax.set_title('Posterior: Dispersion')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+# Skewness
+ax = axes[2]
+ax.hist(skew_samples, bins=40, alpha=0.7, edgecolor='black', color='gold')
+ax.axvline(true_skew_val, color='red', linestyle='--', linewidth=2.5, label=f'True: {true_skew_val:.2f}')
+ax.axvline(np.mean(skew_samples), color='green', linewidth=2, label=f'Inferred: {np.mean(skew_samples):.2f}')
+ax.set_xlabel('Skewness')
+ax.set_ylabel('Posterior Samples')
+ax.set_title('Posterior: Skewness')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+plt.tight_layout()
+plt.show()
+```
+
+![Example 4 Posterior Moments](images/ex4_posterior_moments.png)
+
+These posteriors show the uncertainty in each statistical moment. The green lines (inferred means) are close to the red dashed lines (true values), demonstrating successful recovery of the asymmetric distribution's properties.
 
 ### Step 6: Publication-Quality Visualization
 
