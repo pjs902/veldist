@@ -366,10 +366,21 @@ class KinematicSolver:
         # Plot Truth
         if true_intrinsic is not None:
             if callable(true_intrinsic):
-                # If function, evaluate and normalize
-                y_true = true_intrinsic(x)
-                y_true /= np.sum(y_true) * dx
-                ax.plot(x, y_true, color="k", ls="--", label="True Intrinsic")
+                # If function, evaluate on a fine grid for smooth curve
+                x_fine = np.linspace(
+                    self.grid["edges"][0],
+                    self.grid["edges"][-1],
+                    500,  # High resolution
+                )
+                y_true = true_intrinsic(x_fine)
+                ax.plot(
+                    x_fine,
+                    y_true,
+                    color="k",
+                    ls="--",
+                    linewidth=1.5,
+                    label="True Intrinsic",
+                )
             else:
                 # If samples, histogram with density=True
                 true_hist, _ = np.histogram(

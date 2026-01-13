@@ -9,9 +9,15 @@ Infer velocity distributions from noisy stellar kinematics.
 
 More generally, do unbiased, non-parametric density estimation.
 
+Not yet ready for general use.
+
 ## TODO
 
 Docs are full of LLM slop. Needs to be cleaned up.
+
+Needs the 2D extension.
+
+Needs some testing or tuning of the hyperparameters and particularly how they might scale with uncertainty levels and number of data points.
 
 ## Installation
 
