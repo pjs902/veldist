@@ -47,6 +47,14 @@ true_velocities = np.random.normal(true_mean, true_std, n_stars)
 measurement_errors = np.ones(n_stars) * 2.0
 observed_velocities = true_velocities + np.random.normal(0, measurement_errors)
 
+
+# Define true PDF function
+def true_pdf_ex1(x):
+    return np.exp(-0.5 * ((x - true_mean) / true_std) ** 2) / (
+        true_std * np.sqrt(2 * np.pi)
+    )
+
+
 # Run inference
 solver = KinematicSolver()
 solver.setup_grid(center=0.0, width=100.0, n_bins=50)
@@ -65,7 +73,7 @@ ax.hist(
     label="Observed Data",
     color="gray",
 )
-solver.plot_result(ax=ax, true_intrinsic=true_velocities)
+solver.plot_result(ax=ax, true_intrinsic=true_pdf_ex1)
 ax.set_title("Recovered Distribution")
 ax.legend()
 
@@ -102,6 +110,14 @@ true_velocities = np.random.normal(true_mean, true_std, n_stars)
 measurement_errors = np.ones(n_stars) * 7.0
 observed_velocities = true_velocities + np.random.normal(0, measurement_errors)
 
+
+# Define true PDF function
+def true_pdf(x):
+    return np.exp(-0.5 * ((x - true_mean) / true_std) ** 2) / (
+        true_std * np.sqrt(2 * np.pi)
+    )
+
+
 # Run inference
 solver = KinematicSolver()
 solver.setup_grid(center=0.0, width=100.0, n_bins=50)
@@ -136,7 +152,7 @@ ax.legend()
 
 # Panel 2: Deconvolved result
 ax = axes[1]
-solver.plot_result(ax=ax, true_intrinsic=true_velocities)
+solver.plot_result(ax=ax, true_intrinsic=true_pdf)
 ax.set_title("Deconvolved Distribution")
 
 # Panel 3: Comparison
@@ -197,6 +213,16 @@ errors = np.concatenate(
 
 observed_velocities = true_velocities + np.random.normal(0, errors)
 
+
+# Define true PDF function (mixture of 3 Gaussians)
+def true_pdf(x):
+    pdf1 = np.exp(-0.5 * ((x - mean1) / std1) ** 2) / (std1 * np.sqrt(2 * np.pi))
+    pdf2 = np.exp(-0.5 * ((x - mean2) / std2) ** 2) / (std2 * np.sqrt(2 * np.pi))
+    pdf3 = np.exp(-0.5 * ((x - mean3) / std3) ** 2) / (std3 * np.sqrt(2 * np.pi))
+    w1, w2, w3 = n1 / (n1 + n2 + n3), n2 / (n1 + n2 + n3), n3 / (n1 + n2 + n3)
+    return w1 * pdf1 + w2 * pdf2 + w3 * pdf3
+
+
 # Run inference
 solver = KinematicSolver()
 solver.setup_grid(center=10.0, width=120.0, n_bins=60)
@@ -242,7 +268,7 @@ ax.legend()
 
 # Panel 2: Inferred distribution
 ax = axes[0, 1]
-solver.plot_result(ax=ax, true_intrinsic=true_velocities)
+solver.plot_result(ax=ax, true_intrinsic=true_pdf)
 ax.plot(centers[peaks], mean_pdf[peaks], "r*", markersize=15, label="Detected Peaks")
 ax.set_title(f"Inferred Distribution ({len(peaks)} components)")
 ax.legend()
@@ -281,9 +307,16 @@ print("\n4. Generating Example 4: Complete Workflow...")
 np.random.seed(789)
 
 # Generate data
-true_velocities = skewnorm.rvs(a=2, loc=5, scale=8, size=400)
+true_a, true_loc, true_scale = 2, 5, 8
+true_velocities = skewnorm.rvs(a=true_a, loc=true_loc, scale=true_scale, size=400)
 errors = 2.0 + 0.1 * np.abs(true_velocities) + np.random.uniform(0, 1, 400)
 observed_velocities = true_velocities + np.random.normal(0, errors)
+
+
+# Define true PDF function
+def true_pdf(x):
+    return skewnorm.pdf(x, a=true_a, loc=true_loc, scale=true_scale)
+
 
 # Grid setup
 data_min, data_max = np.percentile(observed_velocities, [1, 99])
@@ -306,7 +339,7 @@ gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
 
 # Main result
 ax1 = fig.add_subplot(gs[0:2, :])
-solver.plot_result(ax=ax1, true_intrinsic=true_velocities)
+solver.plot_result(ax=ax1, true_intrinsic=true_pdf)
 ax1.hist(
     observed_velocities,
     bins=50,

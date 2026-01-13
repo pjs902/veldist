@@ -9,6 +9,10 @@ Infer velocity distributions from noisy stellar kinematics.
 
 More generally, do unbiased, non-parametric density estimation.
 
+## TODO
+
+Docs are full of LLM slop. Needs to be cleaned up.
+
 ## Installation
 
 (pypi coming soon)
