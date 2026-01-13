@@ -4,11 +4,12 @@ This page provides complete, runnable examples demonstrating how to use `veldist
 
 ## Example 1: Basic Gaussian Distribution Recovery
 
-This example demonstrates the simplest use case: recovering a Gaussian velocity distribution from noisy observations.
+This example demonstrates the core capability of `veldist`: recovering the intrinsic velocity distribution from noisy observations. We compare the naive approach (fitting a Gaussian to the observed data) with proper Bayesian deconvolution.
 
 ```python
 import numpy as np
 import matplotlib.pyplot as plt
+from scipy.optimize import curve_fit
 from veldist import KinematicSolver
 
 # Set random seed for reproducibility
@@ -36,82 +37,74 @@ print(f"Observed mean: {np.mean(observed_velocities):.1f} km/s")
 print(f"Observed std: {np.std(observed_velocities):.1f} km/s")
 
 # ========================================
-# 2. Set Up the Solver
+# 2. Naive Approach: Fit Gaussian to Observed Data
+# ========================================
+
+# Simple Gaussian fit (ignores measurement errors)
+naive_mean = np.mean(observed_velocities)
+naive_std = np.std(observed_velocities)
+
+print(f"\n=== Naive Gaussian Fit ===")
+print(f"Fitted mean: {naive_mean:.2f} km/s")
+print(f"Fitted std:  {naive_std:.2f} km/s")
+
+# ========================================
+# 3. Deconvolution with veldist
 # ========================================
 
 solver = KinematicSolver()
-
-# Define the velocity grid
-# - center: center of the grid
-# - width: total width of the grid
-# - n_bins: number of histogram bins
 solver.setup_grid(center=0.0, width=100.0, n_bins=50)
-
-print(f"\nGrid setup: {solver.grid['n_bins']} bins")
-print(f"Bin width: {solver.grid['width']:.2f} km/s")
-
-# ========================================
-# 3. Add Data
-# ========================================
-
 solver.add_data(vel=observed_velocities, err=measurement_errors)
 
-# ========================================
-# 4. Run MCMC Inference
-# ========================================
-
-samples = solver.run(
-    num_warmup=500,   # Burn-in samples
-    num_samples=1000, # Posterior samples
-    gpu=False         # Set to True if GPU available
-)
-
-print(f"\nInference complete!")
-print(f"Posterior samples shape: {samples['intrinsic_pdf'].shape}")
-print(f"Smoothness sigma: {np.mean(samples['smoothness_sigma']):.4f} ± "
-      f"{np.std(samples['smoothness_sigma']):.4f}")
+samples = solver.run(num_warmup=500, num_samples=1000, gpu=False)
 
 # ========================================
-# 5. Analyze Results
+# 4. Analyze Results
 # ========================================
 
 from veldist import compute_moments
 
 moments = compute_moments(samples['intrinsic_pdf'], solver.grid['centers'])
 
-print(f"\n=== Results ===")
+print(f"\n=== Bayesian Deconvolution ===")
 print(f"Inferred mean: {moments['mean'][0]:.2f} ± {moments['mean'][1]:.2f} km/s")
 print(f"Inferred std:  {moments['std'][0]:.2f} ± {moments['std'][1]:.2f} km/s")
+print(f"\n=== True Values ===")
 print(f"True mean:     {true_mean:.2f} km/s")
 print(f"True std:      {true_std:.2f} km/s")
 
 # ========================================
-# 6. Visualize
+# 5. Visualize Comparison
 # ========================================
 
 # Define true PDF function for comparison
 def true_pdf(x):
     return np.exp(-0.5 * ((x - true_mean) / true_std)**2) / (true_std * np.sqrt(2 * np.pi))
 
-fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+fig, axes = plt.subplots(1, 2, figsize=(14, 5))
 
-# Left panel: Data histogram vs inferred distribution
+# Left panel: Naive approach
 ax = axes[0]
-ax.hist(observed_velocities, bins=30, density=True, alpha=0.5, 
+x_plot = np.linspace(-40, 40, 200)
+naive_pdf = np.exp(-0.5 * ((x_plot - naive_mean) / naive_std)**2) / (naive_std * np.sqrt(2 * np.pi))
+
+ax.hist(observed_velocities, bins=30, density=True, alpha=0.4, 
+        label='Observed Data', color='gray')
+ax.plot(x_plot, naive_pdf, 'r-', linewidth=2, label=f'Naive Fit (σ={naive_std:.1f})')
+ax.plot(x_plot, true_pdf(x_plot), 'k--', linewidth=2, label=f'True (σ={true_std:.1f})')
+ax.set_xlabel('Velocity (km/s)')
+ax.set_ylabel('Probability Density')
+ax.set_title('Naive Approach: Gaussian Fit to Observed Data')
+ax.legend()
+ax.grid(True, alpha=0.2)
+
+# Right panel: Deconvolution
+ax = axes[1]
+ax.hist(observed_velocities, bins=30, density=True, alpha=0.4, 
         label='Observed Data', color='gray')
 solver.plot_result(ax=ax, true_intrinsic=true_pdf)
-ax.set_title('Recovered Distribution')
-ax.legend()
-
-# Right panel: Posterior samples of smoothness parameter
-ax = axes[1]
-ax.hist(samples['smoothness_sigma'], bins=30, alpha=0.7, color='steelblue')
-ax.axvline(np.mean(samples['smoothness_sigma']), color='red', 
-           linestyle='--', label='Mean')
-ax.set_xlabel('Smoothness σ')
-ax.set_ylabel('Frequency')
-ax.set_title('Inferred Smoothness Parameter')
-ax.legend()
+ax.set_title('Bayesian Deconvolution: Recovers True Distribution')
+ax.grid(True, alpha=0.2)
 
 plt.tight_layout()
 plt.savefig('docs/images/example_gaussian.png', dpi=150)
@@ -128,21 +121,21 @@ True mean: 0.0 km/s, True std: 10.0 km/s
 Observed mean: 0.1 km/s
 Observed std: 10.2 km/s
 
-Grid setup: 50 bins
-Bin width: 2.00 km/s
+=== Naive Gaussian Fit ===
+Fitted mean: 0.12 km/s
+Fitted std:  10.20 km/s
+
 Computing Design Matrix for 500 stars...
 Matrix ready. Shape: (500, 50)
 
 Starting NUTS MCMC...
 Inference Complete.
 
-Inference complete!
-Posterior samples shape: (1000, 50)
-Smoothness sigma: 0.0234 ± 0.0089
-
-=== Results ===
+=== Bayesian Deconvolution ===
 Inferred mean: 0.12 ± 0.45 km/s
 Inferred std:  9.98 ± 0.35 km/s
+
+=== True Values ===
 True mean:     0.00 km/s
 True std:      10.00 km/s
 ```
@@ -151,7 +144,7 @@ True std:      10.00 km/s
 
 ![Example 1: Gaussian Recovery](images/example_gaussian.png)
 
-The left panel shows the inferred intrinsic distribution (green) compared to the true distribution (black dashed) and observed data histogram. The green shaded region represents the 68% credible interval. The right panel shows the posterior distribution of the smoothness hyperparameter, demonstrating that the optimal regularization is learned from the data.
+The left panel shows the naive approach: fitting a Gaussian directly to observed data (red line) overestimates the width due to measurement errors. The right panel shows Bayesian deconvolution correctly recovering the true intrinsic distribution (green matches the black dashed true curve).
 
 ---
 
@@ -189,77 +182,81 @@ print(f"Observed dispersion:       {obs_std:.1f} km/s")
 print(f"Noise is {measurement_errors[0]/true_std:.1f}x larger than signal!")
 
 # ========================================
-# 2. Run Inference
+# 2. Naive vs Deconvolution
 # ========================================
+
+# Naive approach
+naive_mean = np.mean(observed_velocities)
+naive_std = np.std(observed_velocities)
 
 # Define true PDF function for comparison
 def true_pdf(x):
     return np.exp(-0.5 * ((x - true_mean) / true_std)**2) / (true_std * np.sqrt(2 * np.pi))
 
+# Deconvolution
 solver = KinematicSolver()
 solver.setup_grid(center=0.0, width=100.0, n_bins=50)
 solver.add_data(vel=observed_velocities, err=measurement_errors)
-
 samples = solver.run(num_warmup=500, num_samples=1000, gpu=False)
 
-# ========================================
-# 3. Compare: Naive vs Deconvolved
-# ========================================
-
 moments = compute_moments(samples['intrinsic_pdf'], solver.grid['centers'])
-
-naive_std = np.std(observed_velocities)
 deconvolved_std = moments['std'][0]
-true_std_val = true_std
 
 print(f"\n=== Dispersion Recovery ===")
 print(f"Naive (observed):    {naive_std:.2f} km/s")
 print(f"Deconvolved:         {deconvolved_std:.2f} ± {moments['std'][1]:.2f} km/s")
-print(f"True intrinsic:      {true_std_val:.2f} km/s")
-print(f"\nError reduction: {abs(naive_std - true_std_val):.2f} → "
-      f"{abs(deconvolved_std - true_std_val):.2f} km/s")
+print(f"True intrinsic:      {true_std:.2f} km/s")
+print(f"\nError reduction: {abs(naive_std - true_std):.2f} → "
+      f"{abs(deconvolved_std - true_std):.2f} km/s")
 
 # ========================================
-# 4. Visualization
+# 3. Visualization
 # ========================================
 
-fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+fig, axes = plt.subplots(1, 3, figsize=(16, 4))
 
-# Panel 1: Observed data
+# Panel 1: Observed data with naive fit
 ax = axes[0]
 ax.hist(observed_velocities, bins=40, density=True, alpha=0.6, 
         color='gray', label='Observed')
 x = np.linspace(-30, 30, 200)
 ax.plot(x, np.exp(-0.5*x**2/naive_std**2)/(naive_std*np.sqrt(2*np.pi)), 
-        'k--', label=f'Gaussian fit (σ={naive_std:.1f})')
+        'r-', linewidth=2, label=f'Naive Fit (σ={naive_std:.1f})')
+ax.plot(x, true_pdf(x), 'k--', linewidth=2, label=f'True (σ={true_std:.1f})')
 ax.set_xlabel('Velocity (km/s)')
-ax.set_ylabel('Density')
-ax.set_title('Observed Data (Naive)')
+ax.set_ylabel('Probability Density')
+ax.set_title('Observed Data: Naive Fit')
 ax.legend()
+ax.grid(True, alpha=0.2)
 
 # Panel 2: Deconvolved result
 ax = axes[1]
+ax.hist(observed_velocities, bins=40, density=True, alpha=0.4, 
+        label='Observed', color='gray')
 solver.plot_result(ax=ax, true_intrinsic=true_pdf)
 ax.set_title('Deconvolved Distribution')
+ax.grid(True, alpha=0.2)
 
-# Panel 3: Comparison
+# Panel 3: Direct comparison
 ax = axes[2]
 bins = solver.grid['centers']
 pdf_samples = samples['intrinsic_pdf'] / solver.grid['width']
 mean_pdf = np.mean(pdf_samples, axis=0)
+true_pdf_vals = true_pdf(bins)
 
-true_pdf = np.exp(-0.5*bins**2/true_std**2)/(true_std*np.sqrt(2*np.pi))
-
-ax.plot(bins, mean_pdf, 'g-', linewidth=2, label='Inferred')
-ax.plot(bins, true_pdf, 'k--', linewidth=2, label='True')
+ax.plot(bins, mean_pdf, 'g-', linewidth=2, label=f'Inferred (σ={deconvolved_std:.1f})')
+ax.plot(bins, true_pdf_vals, 'k--', linewidth=2, label=f'True (σ={true_std:.1f})')
+ax.plot(x, np.exp(-0.5*x**2/naive_std**2)/(naive_std*np.sqrt(2*np.pi)), 
+        'r:', linewidth=2, alpha=0.7, label=f'Naive (σ={naive_std:.1f})')
 ax.fill_between(bins, 
                 np.percentile(pdf_samples, 16, axis=0),
                 np.percentile(pdf_samples, 84, axis=0),
                 alpha=0.3, color='green')
 ax.set_xlabel('Velocity (km/s)')
 ax.set_ylabel('Probability Density')
-ax.set_title('Deconvolution Recovers True Width')
+ax.set_title('Comparison: Deconvolution Recovers True Width')
 ax.legend()
+ax.grid(True, alpha=0.2)
 
 plt.tight_layout()
 plt.savefig('docs/images/example_deconvolution.png', dpi=150)
@@ -270,11 +267,11 @@ plt.show()
 
 ![Example 2: Deconvolution with High Noise](images/example_deconvolution.png)
 
-This figure demonstrates the power of deconvolution. The left panel shows the naive observed distribution (gray histogram) which is broadened by large measurement errors. The middle panel shows the deconvolved intrinsic distribution, successfully recovering the narrower true width. The right panel directly compares the inferred distribution (green) to the true underlying distribution (black dashed), showing excellent agreement despite noise being larger than the signal.
+This figure demonstrates the power of deconvolution. The left panel shows naive Gaussian fitting to observed data (red) is heavily biased by measurement errors. The middle panel shows the deconvolved result successfully recovering the narrower true width. The right panel directly compares all three: naive fit (red dotted), inferred (green), and true (black dashed), clearly showing deconvolution works even when noise > signal.
 
 ---
 
-## Example 3: Multi-Component System
+## Example 3: Bimodal Distribution (Two Separated Gaussians)
 
 This example shows how `veldist` can recover complex, non-Gaussian distributions with multiple components—common in stellar systems with multiple populations.
 
@@ -287,125 +284,108 @@ from veldist import KinematicSolver
 np.random.seed(456)
 
 # ========================================
-# 1. Create Multi-Component Distribution
+# 1. Create Bimodal Distribution
 # ========================================
 
-# Simulate 3 stellar populations
-# Component 1: Cold disk (narrow, high weight)
-n1 = 600
-mean1, std1 = 0.0, 5.0
+# Two well-separated Gaussian components
+# Component 1: Population A
+n1 = 400
+mean1, std1 = -15.0, 6.0
 
-# Component 2: Warm disk (broader)
+# Component 2: Population B
 n2 = 300
-mean2, std2 = 0.0, 15.0
-
-# Component 3: Halo (offset, broad)
-n3 = 100
-mean3, std3 = 30.0, 20.0
+mean2, std2 = 20.0, 8.0
 
 # Generate samples
 v1 = np.random.normal(mean1, std1, n1)
 v2 = np.random.normal(mean2, std2, n2)
-v3 = np.random.normal(mean3, std3, n3)
 
-true_velocities = np.concatenate([v1, v2, v3])
+true_velocities = np.concatenate([v1, v2])
 n_stars = len(true_velocities)
 
-# Heteroscedastic errors (vary by star)
-errors = np.concatenate([
-    np.random.uniform(2, 4, n1),   # Good measurements
-    np.random.uniform(3, 6, n2),   # Medium quality
-    np.random.uniform(5, 10, n3)   # Poor quality
-])
-
+# Measurement errors
+errors = np.random.uniform(3, 6, n_stars)
 observed_velocities = true_velocities + np.random.normal(0, errors)
 
-print(f"Component 1 (cold disk): {n1} stars, σ={std1} km/s")
-print(f"Component 2 (warm disk): {n2} stars, σ={std2} km/s")
-print(f"Component 3 (halo):      {n3} stars, μ={mean3}, σ={std3} km/s")
+print(f"Component 1: {n1} stars at μ={mean1:.1f}, σ={std1:.1f} km/s")
+print(f"Component 2: {n2} stars at μ={mean2:.1f}, σ={std2:.1f} km/s")
 print(f"Total: {n_stars} stars")
-print(f"Error range: {errors.min():.1f} - {errors.max():.1f} km/s")
+print(f"Measurement errors: {errors.min():.1f} - {errors.max():.1f} km/s")
 
 # ========================================
-# 2. Run Inference
+# 2. Naive vs Deconvolution
 # ========================================
 
-# Define true PDF function (mixture of 3 Gaussians)
+# Naive: single Gaussian fit
+naive_mean = np.mean(observed_velocities)
+naive_std = np.std(observed_velocities)
+
+# Define true PDF function (mixture of 2 Gaussians)
 def true_pdf(x):
     pdf1 = np.exp(-0.5 * ((x - mean1) / std1)**2) / (std1 * np.sqrt(2 * np.pi))
     pdf2 = np.exp(-0.5 * ((x - mean2) / std2)**2) / (std2 * np.sqrt(2 * np.pi))
-    pdf3 = np.exp(-0.5 * ((x - mean3) / std3)**2) / (std3 * np.sqrt(2 * np.pi))
-    w1, w2, w3 = n1 / n_stars, n2 / n_stars, n3 / n_stars
-    return w1 * pdf1 + w2 * pdf2 + w3 * pdf3
+    w1, w2 = n1 / n_stars, n2 / n_stars
+    return w1 * pdf1 + w2 * pdf2
 
+# Deconvolution
 solver = KinematicSolver()
-solver.setup_grid(center=10.0, width=120.0, n_bins=60)
+solver.setup_grid(center=2.5, width=80.0, n_bins=60)
 solver.add_data(vel=observed_velocities, err=errors)
-
 samples = solver.run(num_warmup=500, num_samples=1000, gpu=False)
 
-# ========================================
-# 3. Identify Components
-# ========================================
-
+# Find peaks in the inferred distribution
 pdf_density = samples['intrinsic_pdf'] / solver.grid['width']
 mean_pdf = np.mean(pdf_density, axis=0)
 centers = solver.grid['centers']
-
-# Find peaks in the inferred distribution
-peaks, properties = find_peaks(mean_pdf, distance=5, prominence=0.001)
+peaks, properties = find_peaks(mean_pdf, distance=5, prominence=0.003)
 
 print(f"\n=== Detected {len(peaks)} components ===")
 for i, peak_idx in enumerate(peaks, 1):
     peak_vel = centers[peak_idx]
-    peak_height = mean_pdf[peak_idx]
-    print(f"Component {i}: velocity ≈ {peak_vel:.1f} km/s, "
-          f"height = {peak_height:.4f}")
+    print(f"Component {i}: velocity ≈ {peak_vel:.1f} km/s")
 
 # ========================================
-# 4. Visualization
+# 3. Visualization
 # ========================================
 
-fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+fig, axes = plt.subplots(1, 3, figsize=(16, 4))
 
-# Panel 1: Observed data colored by component
-ax = axes[0, 0]
-ax.hist(v1 + np.random.normal(0, errors[:n1]), bins=30, alpha=0.5, 
-        label='Cold disk', density=True)
-ax.hist(v2 + np.random.normal(0, errors[n1:n1+n2]), bins=30, alpha=0.5, 
-        label='Warm disk', density=True)
-ax.hist(v3 + np.random.normal(0, errors[n1+n2:]), bins=30, alpha=0.5, 
-        label='Halo', density=True)
-ax.set_xlabel('Observed Velocity (km/s)')
-ax.set_ylabel('Density')
-ax.set_title('Observed Data (with errors)')
+# Panel 1: Observed data with naive fit
+ax = axes[0]
+ax.hist(observed_velocities, bins=40, density=True, alpha=0.5, 
+        color='gray', label='Observed')
+x = np.linspace(-40, 50, 200)
+ax.plot(x, np.exp(-0.5*((x-naive_mean)/naive_std)**2)/(naive_std*np.sqrt(2*np.pi)), 
+        'r-', linewidth=2, label='Naive Fit (1 Gaussian)')
+ax.set_xlabel('Velocity (km/s)')
+ax.set_ylabel('Probability Density')
+ax.set_title('Naive Approach: Misses Bimodality')
 ax.legend()
+ax.grid(True, alpha=0.2)
 
-# Panel 2: Inferred distribution
-ax = axes[0, 1]
+# Panel 2: Deconvolved result
+ax = axes[1]
+ax.hist(observed_velocities, bins=40, density=True, alpha=0.4, 
+        label='Observed', color='gray')
 solver.plot_result(ax=ax, true_intrinsic=true_pdf)
 ax.plot(centers[peaks], mean_pdf[peaks], 'r*', markersize=15, 
-        label='Detected Peaks')
-ax.set_title(f'Inferred Distribution ({len(peaks)} components)')
+        label=f'Detected Peaks ({len(peaks)})')
+ax.set_title('Deconvolution: Resolves Both Components')
 ax.legend()
+ax.grid(True, alpha=0.2)
 
-# Panel 3: Error distribution
-ax = axes[1, 0]
-ax.scatter(observed_velocities, errors, alpha=0.3, s=10)
-ax.set_xlabel('Observed Velocity (km/s)')
-ax.set_ylabel('Measurement Error (km/s)')
-ax.set_title('Heteroscedastic Errors')
-ax.grid(True, alpha=0.3)
-
-# Panel 4: Smoothness parameter evolution
-ax = axes[1, 1]
-ax.plot(samples['smoothness_sigma'], alpha=0.5, linewidth=0.5)
-ax.axhline(np.mean(samples['smoothness_sigma']), color='red', 
-           linestyle='--', label='Mean')
-ax.set_xlabel('MCMC Sample')
-ax.set_ylabel('Smoothness σ')
-ax.set_title('Smoothness Parameter Trace')
+# Panel 3: Components shown separately
+ax = axes[2]
+# Show individual components
+ax.hist(v1, bins=25, alpha=0.4, label=f'True Pop. A (n={n1})', density=True)
+ax.hist(v2, bins=25, alpha=0.4, label=f'True Pop. B (n={n2})', density=True)
+ax.plot(x, true_pdf(x), 'k--', linewidth=2, label='True Combined')
+ax.plot(centers, mean_pdf, 'g-', linewidth=2, label='Inferred')
+ax.set_xlabel('Velocity (km/s)')
+ax.set_ylabel('Probability Density')
+ax.set_title('True Components vs Inferred')
 ax.legend()
+ax.grid(True, alpha=0.2)
 
 plt.tight_layout()
 plt.savefig('docs/images/example_multicomponent.png', dpi=150)
@@ -414,9 +394,9 @@ plt.show()
 
 ### Visual Output
 
-![Example 3: Multi-Component System](images/example_multicomponent.png)
+![Example 3: Bimodal Distribution](images/example_multicomponent.png)
 
-**Top left:** Individual components shown in the observed data. **Top right:** The inferred distribution successfully identifies multiple peaks (marked with red stars) corresponding to the three stellar populations. **Bottom left:** The heteroscedastic measurement errors plotted against velocity, showing how error quality varies across the dataset. **Bottom right:** MCMC trace of the smoothness parameter, indicating good convergence.
+**Left panel:** Naive single-Gaussian fit completely misses the bimodal nature of the data. **Middle panel:** Deconvolution successfully resolves both components (marked with red stars). **Right panel:** Comparison showing the true underlying populations and how well the inferred distribution (green) matches the true combined distribution (black dashed).
 
 ---
 
@@ -502,44 +482,21 @@ n_bins = np.clip(n_bins, 30, 100)  # Keep reasonable
 print(f"Number of bins: {n_bins}")
 
 # ========================================
-# 4. Run Inference
+# 4. Naive vs Deconvolution
 # ========================================
 
+# Naive approach
+naive_mean = np.mean(observed_velocities)
+naive_std = np.std(observed_velocities)
+
+# Run inference
 solver = KinematicSolver()
 solver.setup_grid(center=grid_center, width=grid_width, n_bins=n_bins)
 solver.add_data(vel=observed_velocities, err=errors)
-
 samples = solver.run(num_warmup=1000, num_samples=2000, gpu=False)
 
 # ========================================
-# 5. Convergence Diagnostics
-# ========================================
-
-print("\n=== Convergence Diagnostics ===")
-
-# Check smoothness parameter convergence
-smooth_samples = samples['smoothness_sigma']
-first_half = smooth_samples[:len(smooth_samples)//2]
-second_half = smooth_samples[len(smooth_samples)//2:]
-
-mean_1 = np.mean(first_half)
-mean_2 = np.mean(second_half)
-std_pooled = np.sqrt((np.var(first_half) + np.var(second_half)) / 2)
-
-drift = abs(mean_1 - mean_2) / std_pooled
-print(f"Smoothness drift between halves: {drift:.2f} sigma")
-if drift > 0.5:
-    print("Warning: Possible non-convergence, consider more samples")
-else:
-    print("✓ Smoothness parameter appears converged")
-
-# Check PDF sample stability
-pdf_var = np.var(samples['intrinsic_pdf'], axis=0)
-high_var_bins = np.sum(pdf_var > np.median(pdf_var) * 5)
-print(f"High-variance bins: {high_var_bins} / {n_bins}")
-
-# ========================================
-# 6. Results and Uncertainties
+# 5. Results and Uncertainties
 # ========================================
 
 moments = compute_moments(samples['intrinsic_pdf'], solver.grid['centers'])
@@ -560,7 +517,7 @@ relative_unc = (upper_90 - lower_90) / (np.mean(pdf_density, axis=0) + 1e-10)
 print(f"\nMedian relative uncertainty: {np.median(relative_unc):.1%}")
 
 # ========================================
-# 7. Publication-Quality Visualization
+# 6. Publication-Quality Visualization
 # ========================================
 
 fig = plt.figure(figsize=(14, 10))
@@ -568,6 +525,9 @@ gs = fig.add_gridspec(3, 2, hspace=0.3, wspace=0.3)
 
 # Main result
 ax1 = fig.add_subplot(gs[0:2, :])
+x_plot = np.linspace(data_min - 5, data_max + 5, 200)
+ax1.plot(x_plot, np.exp(-0.5*((x_plot-naive_mean)/naive_std)**2)/(naive_std*np.sqrt(2*np.pi)),
+         'r:', linewidth=2, alpha=0.7, label='Naive Fit')
 solver.plot_result(ax=ax1, true_intrinsic=true_pdf)
 ax1.hist(observed_velocities, bins=50, density=True, alpha=0.3, 
          color='gray', label='Observed (with errors)', zorder=0)
@@ -577,17 +537,13 @@ ax1.set_title('Inferred Line-of-Sight Velocity Distribution', fontsize=14)
 ax1.legend(fontsize=10)
 ax1.grid(True, alpha=0.2)
 
-# Convergence trace
+# Error distribution
 ax2 = fig.add_subplot(gs[2, 0])
-ax2.plot(smooth_samples, alpha=0.7, linewidth=0.5)
-ax2.axhline(np.mean(smooth_samples), color='red', linestyle='--')
-ax2.axhline(np.percentile(smooth_samples, 16), color='red', 
-            linestyle=':', alpha=0.5)
-ax2.axhline(np.percentile(smooth_samples, 84), color='red', 
-            linestyle=':', alpha=0.5)
-ax2.set_xlabel('MCMC Iteration', fontsize=10)
-ax2.set_ylabel('Smoothness σ', fontsize=10)
-ax2.set_title('Parameter Trace', fontsize=11)
+ax2.scatter(observed_velocities, errors, alpha=0.3, s=10)
+ax2.set_xlabel('Observed Velocity (km/s)', fontsize=10)
+ax2.set_ylabel('Measurement Error (km/s)', fontsize=10)
+ax2.set_title('Heteroscedastic Errors', fontsize=11)
+ax2.grid(True, alpha=0.3)
 
 # Uncertainty map
 ax3 = fig.add_subplot(gs[2, 1])
@@ -601,11 +557,11 @@ ax3.grid(True, alpha=0.2)
 plt.savefig('docs/images/example_complete_workflow.png', dpi=150, bbox_inches='tight')
 plt.show()
 
-print("\n✓ Analysis complete. Results saved to 'docs/images/example_complete_workflow.png'")
+print("\n✓ Analysis complete.")
 ```
 
 ### Visual Output
 
 ![Example 4: Complete Workflow](images/example_complete_workflow.png)
 
-**Top panel:** Publication-quality plot showing the inferred distribution with credible intervals overlaid on the observed data. **Bottom left:** MCMC trace plot showing convergence of the smoothness parameter with 68% credible interval bands. **Bottom right:** 90% credible interval visualization showing where the inference is most/least certain.
+**Top panel:** Publication-quality plot comparing naive fit (red dotted), inferred distribution (green with credible intervals), and true asymmetric distribution (black dashed). The deconvolution successfully captures the skewness that the naive Gaussian fit misses. **Bottom left:** Heteroscedastic error distribution showing measurement quality varies across the dataset. **Bottom right:** 90% credible interval visualization showing where the inference is most/least certain.

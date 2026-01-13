@@ -1,6 +1,6 @@
 # Methodology
 
-`vdist` infers the intrinsic velocity distribution of a stellar system using a **grid-based Bayesian deconvolution**.
+`veldist` infers the intrinsic velocity distribution of a stellar system using a **grid-based Bayesian deconvolution**.
 
 Instead of assuming the velocity distribution follows a specific distribution (like a Gaussian, or Gauss-Hermite series), we solve for the height of every bin in a discretized histogram. To make this mathematically tractable and robust against noise, we use two specific techniques: a **Linear Response Matrix** to handle measurement errors, and a **Smoothing Prior** to handle regularization.
 
@@ -57,7 +57,7 @@ $$ \mathcal{L} = \mathbf{M} \cdot \mathbf{w} $$
 
 $$ \log \mathcal{L}_{\text{total}} = \sum_{i=1}^{N} \log \left( [\mathbf{M} \cdot \mathbf{w}]_i \right) $$
 
-This operation moves the expensive operations (exponentials/integrals/convolutions) **outside** the inference loop. The MCMC sampler only needs to perform linear algebra, allowing `vdist` to scale to large datasets efficiently and to handle 2D or even 3D velocity distributions.
+This operation moves the expensive operations (exponentials/integrals/convolutions) **outside** the inference loop. The MCMC sampler only needs to perform linear algebra, allowing `veldist` to scale to large datasets efficiently and to handle 2D or even 3D velocity distributions.
 
 We note that the addition of a smoothing prior means that the likelihood is no longer strictly linear, so it cannot be solved with matrix inversion techniques. Instead, we use MCMC sampling to explore the posterior distribution. The core deconvolution step remains a fast matrix multiplication.
 
@@ -76,12 +76,12 @@ This method combines specific concepts from at least three prior works in the li
 
 1. **Maximum Penalized Likelihood (MPL):**
     * *Reference: Merritt (1997); Saha & Williams (1994).*
-    * MPL introduced the concept of solving $\mathbf{y} = \mathbf{M} \cdot \mathbf{w}$ subject to a roughness penalty. `vdist` uses this formulation but replaces the manual penalty term ($\lambda$) with a marginalized prior, eliminating the need to hand-tune the smoothing.
+    * MPL introduced the concept of solving $\mathbf{y} = \mathbf{M} \cdot \mathbf{w}$ subject to a roughness penalty. `veldist` uses this formulation but replaces the manual penalty term ($\lambda$) with a marginalized prior, eliminating the need to hand-tune the smoothing.
 
 2. **Extreme Deconvolution (XD):**
     * *Reference: Bovy, Hogg, & Roweis (2011).*
-    * XD introduced the treatment of heteroscedastic errors via individual likelihood evaluation. XD assumes the intrinsic distribution is a Mixture of Gaussians. `vdist` replaces the Gaussian mixture with a non-parametric grid, allowing it to recover shapes (like flat-topped cores or asymmetric tails) that Gaussians cannot fit efficiently.
+    * XD introduced the treatment of heteroscedastic errors via individual likelihood evaluation. XD assumes the intrinsic distribution is a Mixture of Gaussians. `veldist` replaces the Gaussian mixture with a non-parametric grid, allowing it to recover shapes (like flat-topped cores or asymmetric tails) that Gaussians cannot fit efficiently.
 
 3. **BayesLOSVD:**
     * *Reference: Falcón-Barroso & Martig (2021).*
-    * BayesLOSVD introduced a Bayesian framework for non-parametric LOSVD extraction from IFU data using MCMC sampling. `vdist` uses a similar sampling approach and regularization strategy, but focuses on discrete stellar kinematics with heteroscedastic errors rather than integrated light spectra.
+    * BayesLOSVD introduced a Bayesian framework for non-parametric LOSVD extraction from IFU data using MCMC sampling. `veldist` uses a similar sampling approach and regularization strategy, but focuses on discrete stellar kinematics with heteroscedastic errors rather than integrated light spectra.
