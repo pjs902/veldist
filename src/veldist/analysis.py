@@ -30,36 +30,31 @@ def compute_moments(pdf_samples, grid_centers):
         - 'skewness': (mean, std) tuple
         - 'kurtosis': (mean, std) tuple for excess kurtosis
     """
-    pdf_samples = np.asarray(pdf_samples)
-    grid_centers = np.asarray(grid_centers)
+    pdf_samples = np.asarray(pdf_samples)  # (n_samples, n_bins)
+    grid_centers = np.asarray(grid_centers)  # (n_bins,)
 
-    n_samples = pdf_samples.shape[0]
-    means = np.zeros(n_samples)
-    stds = np.zeros(n_samples)
-    skews = np.zeros(n_samples)
-    kurts = np.zeros(n_samples)
+    # --- Mean velocity for each posterior sample ---
+    # Shape: (n_samples,)
+    means = pdf_samples @ grid_centers
 
-    for i in range(n_samples):
-        pdf = pdf_samples[i]
-        # Mean
-        mean = np.sum(grid_centers * pdf)
-        means[i] = mean
+    # --- Centered residuals ---
+    # Broadcast: (n_samples, n_bins) - (n_samples, 1)  ->  (n_samples, n_bins)
+    delta = grid_centers[np.newaxis, :] - means[:, np.newaxis]
 
-        # Variance and std
-        variance = np.sum(((grid_centers - mean) ** 2) * pdf)
-        stds[i] = np.sqrt(variance)
+    # --- Variance and standard deviation ---
+    # einsum 'ij,ij->i' is a row-wise dot product: sum_j(pdf[i,j] * delta[i,j]^2)
+    variance = np.einsum("ij,ij->i", pdf_samples, delta**2)
+    stds = np.sqrt(variance)
 
-        # Skewness
-        if stds[i] > 0:
-            skews[i] = np.sum(((grid_centers - mean) ** 3) * pdf) / (stds[i] ** 3)
-        else:
-            skews[i] = 0
+    # --- Skewness and excess kurtosis ---
+    # Divide by std^3 / std^4 only where std > 0; set 0 elsewhere.
+    safe_stds = np.where(stds > 0, stds, 1.0)
 
-        # Excess kurtosis
-        if stds[i] > 0:
-            kurts[i] = (np.sum(((grid_centers - mean) ** 4) * pdf) / (stds[i] ** 4)) - 3
-        else:
-            kurts[i] = 0
+    skews = np.einsum("ij,ij->i", pdf_samples, delta**3) / safe_stds**3
+    skews = np.where(stds > 0, skews, 0.0)
+
+    kurts = np.einsum("ij,ij->i", pdf_samples, delta**4) / safe_stds**4 - 3
+    kurts = np.where(stds > 0, kurts, 0.0)
 
     return {
         "mean": (np.mean(means), np.std(means)),
