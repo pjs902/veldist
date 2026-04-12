@@ -56,6 +56,43 @@ samples = solver.run(num_warmup=500, num_samples=1000)
 solver.plot_result()
 ```
 
+## Batch fitting and Dynamite export
+
+The latest API adds a batch pipeline for Voronoi-binned data and a writer for
+Dynamite `BayesLOSVD` input files.
+
+```python
+from veldist import fit_all_bins, write_dynamite_kinematics
+
+# 1) Solve all bins (skips bins with too few stars as None)
+solvers = fit_all_bins(
+    bin_data_list,  # [{'vel': ..., 'err': ...}, ...]
+    grid_kwargs={"center": 0.0, "width": 600.0, "n_bins": 60},
+    run_kwargs={"num_warmup": 500, "num_samples": 1000, "gpu": False, "seed": 5567},
+    min_stars=10,
+)
+
+# 2) Optional post-processing per bin (only if needed)
+# for s in solvers:
+#     if s is not None:
+#         s.truncate_losvd(n_sigma=3.0)
+
+# 3) Write Dynamite inputs (ECSV + aperture.dat + bins.dat)
+write_dynamite_kinematics(
+    solvers=solvers,
+    output_dir="dynamite_input",
+    voronoi_bin_metadata=voronoi_bin_metadata,
+    bin_flux_mode="nstars",  # or "uniform" / "custom"
+)
+```
+
+Notes:
+
+- `fit_all_bins` uses `seed + bin_index` internally to avoid chain correlation across bins.
+- `clip_uncertainties()` is run as part of the batch pipeline and enforces a floor on LOSVD uncertainties.
+- `truncate_losvd()` is optional and intended only for diagnosed tail contamination cases.
+- `write_dynamite_kinematics` requires `astropy` (now included in project dependencies).
+
 ## License
 
 MIT License - see LICENSE file for details.
