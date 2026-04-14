@@ -1,8 +1,15 @@
 # veldist
 
-Infer velocity distributions from noisy stellar kinematics.
+Non-parametric Bayesian inference of the line-of-sight velocity distribution
+(LOSVD) from discrete stellar velocities.
 
-More generally, do unbiased, non-parametric density estimation.
+Given individual stellar velocities and per-star measurement uncertainties,
+`veldist` recovers the intrinsic LOSVD as a histogram posterior, marginalising
+over a smoothing hyperparameter that adapts to the signal-to-noise of the
+data.  Designed for resolved stellar kinematics in globular clusters, dwarf
+galaxies, and the extended halos of nearby galaxies.  Includes a batch
+pipeline for Voronoi-binned data and a writer for the Dynamite `histLOSVD` /
+BayesLOSVD input format.
 
 ## Installation
 
@@ -65,14 +72,10 @@ write_dynamite_kinematics(
 )
 ```
 
-Important details:
-
-- `fit_all_bins` skips under-populated bins (`None`) and those are masked automatically in `bins.dat`.
-- `clip_uncertainties()` is applied to enforce non-zero LOSVD uncertainties for robust downstream NNLS behavior.
-- `truncate_losvd()` is available as an optional diagnostic fix for tail contamination; it is not part of the default batch pipeline.
-- The Dynamite writer requires `astropy`.
-
-For complete, runnable examples covering various use cases, see the [Examples](examples) page.
+Bins with fewer than `min_stars` stars are returned as `None` and written as
+masked pixels in `bins.dat`.  The Dynamite writer requires `astropy`.  See
+the [Examples](examples) page for a complete walkthrough including spatial
+map extraction.
 
 ```{toctree}
 :hidden:

@@ -1,87 +1,188 @@
 # Methodology
 
-`veldist` infers the intrinsic velocity distribution of a stellar system using a **grid-based Bayesian deconvolution**.
+## Overview
 
-Instead of assuming the velocity distribution follows a specific distribution (like a Gaussian, or Gauss-Hermite series), we solve for the height of every bin in a discretized histogram. To make this mathematically tractable and robust against noise, we use two specific techniques: a **Linear Response Matrix** to handle measurement errors, and a **Smoothing Prior** to handle regularization.
+`veldist` recovers the intrinsic line-of-sight velocity distribution (LOSVD)
+from a discrete set of stellar velocities, each measured with its own
+uncertainty.  The approach is non-parametric: rather than assuming the LOSVD
+follows a Gaussian or Gauss-Hermite expansion, we solve for the probability
+mass in each bin of a fixed velocity histogram.  Regularisation is provided
+by a Gaussian random walk prior, whose smoothing scale is treated as a free
+hyperparameter and marginalised over during inference.  Measurement errors
+enter the likelihood exactly, with no assumptions about their distribution
+across stars.
+
+The method is closest in spirit to the penalised-likelihood approach of
+Merritt (1997) and Saha & Williams (1994), but replaces the manual smoothing
+penalty with a marginalised Bayesian prior and uses MCMC sampling rather than
+optimisation.
+
+---
 
 ## The Model
 
-We model the intrinsic Velocity Distribution Function (VDF) as a vector of weights $\mathbf{w}$ on a fixed grid.
+### Histogram representation
 
-### 1. The Latent Random Walk
+We represent the intrinsic LOSVD as a vector of probability masses
+$\mathbf{w} \in \mathbb{R}^K$ on a fixed velocity grid with $K$ bins,
+where $\sum_j w_j = 1$.  The grid is defined by a central velocity, total
+width, and number of bins.  The bin width $\Delta v$ is chosen to be
+comparable to the typical measurement uncertainty, so that the data can
+resolve individual bins.
 
-We generate a latent vector $\mathbf{u}$ using an autoregressive process (a Gaussian Random Walk). The value of bin $i$ is conditioned on the value of bin $i-1$:
+### Smoothing prior
 
-$$ u_i \sim \mathcal{N}(u_{i-1}, \sigma_{\text{smooth}}) $$
+A flat histogram is not a useful prior for stellar kinematics: real LOSVDs
+are smooth.  We impose this by generating the histogram weights through a
+latent Gaussian random walk.  The latent variable $u_i$ for bin $i$ is
+drawn from a normal distribution centred on the previous bin value:
 
-The parameter $\sigma_{\text{smooth}}$ controls the "stiffness" of the distribution:
+$$
+u_0 \sim \mathcal{N}(0, \sigma_\mathrm{smooth}),
+\qquad
+u_i \sim \mathcal{N}(u_{i-1},\, \sigma_\mathrm{smooth}), \quad i > 0.
+$$
 
-* **Low $\sigma$:** The random walk takes tiny steps. The resulting distribution is stiff and smooth.
-* **High $\sigma$:** The random walk takes large steps. The resulting distribution is flexible and can fit sharp peaks.
+The weight vector $\mathbf{w}$ is then obtained by applying the softmax
+transformation to $\mathbf{u}$, which ensures positivity and unit normalisation.
 
-Crucially, **we do not set $\sigma_{\text{smooth}}$ manually.** It is a free hyperparameter in the Bayesian model. The MCMC sampler infers the optimal smoothness from the signal-to-noise ratio of the data.
+The smoothing scale $\sigma_\mathrm{smooth}$ controls the typical step size
+between adjacent bins.  A small value forces the inferred LOSVD to vary
+slowly; a large value allows sharp features.  Crucially, $\sigma_\mathrm{smooth}$
+is not fixed by the user — it is a free hyperparameter with a weakly
+informative prior, and its posterior is marginalised during sampling.  The
+sampler therefore adapts the smoothness to the signal-to-noise of the data
+automatically: a bin with many stars will support more structure than one
+with few.
 
-<!-- ### B. The Link Function (Softmax)
+![Samples from the Gaussian random walk prior at three smoothing scales](images/fig_prior.png)
 
-The latent vector $\mathbf{u}$ exists in log-space and is unconstrained. To convert it into a valid probability density function (where all bins are positive and sum to 1), we apply the Softmax function:
+*Prior realisations at $\sigma_\mathrm{smooth} = 0.02$ (left), $0.1$ (centre), and $0.5$ (right).  Lighter values of $\sigma_\mathrm{smooth}$ enforce smoother LOSVDs; larger values allow the prior to explore more structured shapes.  In practice the sampler marginalises over this parameter.*
 
-$$ w_i = \frac{e^{u_i}}{\sum_{k} e^{u_k}} $$
+---
 
-This vector $\mathbf{w}$ represents the **Intrinsic Probability Mass** in each bin. 
+## The Likelihood: Design Matrix
 
-TODO: Work on this once we decide on this whole softmax vs dirichlet thing.
+### The deconvolution problem
 
--->
+The central difficulty is that every star has a different measurement
+uncertainty $\varepsilon_i$.  The observed velocity $y_i$ of star $i$ is
+drawn from a distribution that is the convolution of the intrinsic LOSVD
+with the star's measurement error kernel:
 
-### 2. The Likelihood (The Response Matrix)
+$$
+p(y_i \mid \mathbf{w}) = \sum_{j=1}^{K} w_j \,
+  \mathcal{N}\!\left(y_i \,\big|\, c_j,\, \varepsilon_i^2\right)
+$$
 
-The core computational challenge in deconvolution is that astronomical data is **heteroscedastic**: every star has a unique measurement error $\sigma_i$. This means that for every evaluation of the likelihood, we would need to compute $N_{\text{stars}}$ integrals over $K_{\text{bins}}$ (involving exponentials), resulting in an $O(N \times K)$ operation that scales poorly for large datasets.
+where $c_j$ is the centre of bin $j$.  Evaluating this naïvely for all $N$
+stars at every MCMC step is an $O(N K)$ operation that involves $N K$
+exponential evaluations — expensive for large samples.
 
-We solve this by pre-computing the physics of the measurement errors into a static **Response Matrix** (we also call this the Design Matrix), denoted as $\mathbf{M}$.
+### Pre-computing the design matrix
 
-#### A. Matrix Construction
+We avoid this by pre-computing the $N \times K$ **design matrix** $\mathbf{M}$
+before inference begins.  Entry $M_{ij}$ is the probability that star $i$
+would be observed in its measured position, given that it originates from
+intrinsic bin $j$.  Since $y_i \sim \mathcal{N}(c_j, \varepsilon_i^2)$, this
+is the integral of the Gaussian error kernel over the bin extent
+$[c_j - \Delta v/2,\, c_j + \Delta v/2]$:
 
-The matrix has dimensions $(N_{\text{stars}} \times K_{\text{bins}})$. Each entry $M_{ij}$ calculates the probability that Star $i$ would be observed at its current location, *conditional* on it originating from Intrinsic Bin $j$.
+$$
+M_{ij} = \Phi\!\left(\frac{c_j + \Delta v/2 - y_i}{\varepsilon_i}\right)
+        - \Phi\!\left(\frac{c_j - \Delta v/2 - y_i}{\varepsilon_i}\right)
+$$
 
-We calculate this using **Box Integration** (CDF Difference). Instead of evaluating the Gaussian error PDF at the center of the bin, we integrate the error distribution over the width of the bin:
+where $\Phi$ is the standard normal CDF.  This is computed once from the
+observed velocities and errors, and held fixed throughout inference.
 
-$$ M_{ij} = \int_{\text{edge}_j}^{\text{edge}_{j+1}} \mathcal{N}(v \mid y_i^{\text{obs}}, \sigma_i^{\text{err}}) \, dv $$
+Each row of $\mathbf{M}$ corresponds to one star and has the shape of a
+Gaussian centred at $y_i$ with width $\varepsilon_i$, sampled at the grid
+bins.  Stars with large errors have broad, flat rows; stars with small errors
+have narrow, peaked rows concentrated in one or two bins.
 
-$$ M_{ij} = \text{CDF}_i(\text{edge}_{j+1}) - \text{CDF}_i(\text{edge}_j) $$
+![Design matrix visualisation](images/fig_design_matrix.png)
 
-#### B. The Likelihood Evaluation
+*Left: the full $\mathbf{M}$ matrix for a small example dataset, with stars
+ordered by measurement error.  Right: three individual rows, showing how
+the per-star error kernel is integrated over the velocity bins.  Stars with
+large $\varepsilon_i$ (top row) contribute broad constraints; stars with small
+$\varepsilon_i$ (bottom row) constrain a narrow range of bins.*
 
-Once $\mathbf{M}$ is constructed, the "blurring" step of deconvolution becomes a simple Matrix-Vector multiplication. The likelihood of the observed dataset $\mathbf{y}$ given the intrinsic weights $\mathbf{w}$ is:
+### Likelihood evaluation
 
-$$ \mathcal{L} = \mathbf{M} \cdot \mathbf{w} $$
+Once $\mathbf{M}$ is available, the likelihood of the observed data given the
+weight vector $\mathbf{w}$ is:
 
-$$ \log \mathcal{L}_{\text{total}} = \sum_{i=1}^{N} \log \left( [\mathbf{M} \cdot \mathbf{w}]_i \right) $$
+$$
+\ln \mathcal{L}(\mathbf{w}) = \sum_{i=1}^{N} \ln \left( [\mathbf{M}\mathbf{w}]_i \right)
+$$
 
-This operation moves the expensive operations (exponentials/integrals/convolutions) **outside** the inference loop. The MCMC sampler only needs to perform linear algebra, allowing `veldist` to scale to large datasets efficiently and to handle 2D or even 3D velocity distributions.
+The product $\mathbf{M}\mathbf{w}$ is a single matrix–vector multiplication:
+an $O(NK)$ operation with no exponential evaluations inside the MCMC loop.
+This is the key computational advantage of the design-matrix approach: the
+expensive integrals are computed once at setup time, and inference itself
+requires only linear algebra.
 
-We note that the addition of a smoothing prior means that the likelihood is no longer strictly linear, so it cannot be solved with matrix inversion techniques. Instead, we use MCMC sampling to explore the posterior distribution. The core deconvolution step remains a fast matrix multiplication.
+---
 
-### 3. Handling 2D and Missing Data
+## Inference
 
-#### 2D Covariance
+Posterior sampling is performed with the No-U-Turn Sampler (NUTS; Hoffman &
+Gelman 2014) as implemented in NumPyro (Phan et al. 2019).  NUTS is a
+gradient-based Hamiltonian Monte Carlo variant that adapts its step size and
+trajectory length automatically, making it well suited to the high-dimensional
+posteriors that arise for fine velocity grids.
 
-For 2D distributions (Proper Motions $\mu_\alpha, \mu_\delta$), the Response Matrix becomes 3D conceptually (a stack of 2D images).
+The sampler simultaneously infers $\mathbf{u}$ (the latent random walk,
+from which $\mathbf{w}$ is derived) and $\sigma_\mathrm{smooth}$.  The
+posterior over $\mathbf{w}$ therefore marginalises over the smoothing scale,
+propagating its uncertainty into all derived quantities.  Users can run on
+GPU by passing `gpu=True` to `KinematicSolver.run()`, which can reduce wall
+time by an order of magnitude for large batches.
 
-$$ \mathbf{L}_{N} = \mathbf{M}_{(N \times K^2)} \cdot \mathbf{w}_{(K^2 \times 1)} $$
-This allows the method to account for the full error covariance matrix ($\rho$) of Gaia data, which creates "tilted" probability constraints that standard binning cannot capture.
+The default chain settings (500 warmup, 1000 samples) are sufficient for
+typical globular-cluster or dwarf galaxy bins with $\gtrsim 30$ stars.
+For bins with $N_\star \lesssim 20$ or for grids finer than $\Delta v \sim
+\varepsilon_\mathrm{typ}$, the posterior will be prior-dominated; this is
+expected behaviour and the uncertainty intervals will reflect it.
 
-### 4. Relationship to Previous Work
+---
 
-This method combines specific concepts from at least three prior works in the literature:
+## Relationship to Prior Work
 
-1. **Maximum Penalized Likelihood (MPL):**
-    * *Reference: Merritt (1997); Saha & Williams (1994).*
-    * MPL introduced the concept of solving $\mathbf{y} = \mathbf{M} \cdot \mathbf{w}$ subject to a roughness penalty. `veldist` uses this formulation but replaces the manual penalty term ($\lambda$) with a marginalized prior, eliminating the need to hand-tune the smoothing.
+### Merritt (1997); Saha & Williams (1994)
 
-2. **Extreme Deconvolution (XD):**
-    * *Reference: Bovy, Hogg, & Roweis (2011).*
-    * XD introduced the treatment of heteroscedastic errors via individual likelihood evaluation. XD assumes the intrinsic distribution is a Mixture of Gaussians. `veldist` replaces the Gaussian mixture with a non-parametric grid, allowing it to recover shapes (like flat-topped cores or asymmetric tails) that Gaussians cannot fit efficiently.
+Both papers introduced the design-matrix formulation for LOSVD recovery from
+discrete stellar velocities, with regularisation through a roughness penalty
+applied to $\mathbf{w}$ (penalised likelihood).  The penalty scale $\lambda$
+was chosen by the user or estimated from the data.  `veldist` replaces the
+fixed penalty with a Gaussian random walk prior whose scale is marginalised
+during sampling; this avoids manual tuning and provides formal uncertainty
+estimates on the smoothing scale itself.
 
-3. **BayesLOSVD:**
-    * *Reference: Falcón-Barroso & Martig (2021).*
-    * BayesLOSVD introduced a Bayesian framework for non-parametric LOSVD extraction from IFU data using MCMC sampling. `veldist` uses a similar sampling approach and regularization strategy, but focuses on discrete stellar kinematics with heteroscedastic errors rather than integrated light spectra.
+### Falcón-Barroso & Martig (2021) — BayesLOSVD
+
+BayesLOSVD introduced a Bayesian, non-parametric LOSVD extraction framework
+for IFU spectra, using MCMC regularisation and a similar random walk prior.
+The key difference is the data model: BayesLOSVD operates on integrated-light
+spectra and requires a template stellar library and a deconvolution step with
+the instrumental line-spread function.  `veldist` targets discrete stellar
+velocities, where the data are individual measurements with per-star error
+bars — no template is needed.  The design-matrix likelihood is specific to
+this regime and cannot be used for spectral fitting.
+
+`veldist` uses the BayesLOSVD ECSV file format for Dynamite input, which
+allows the two codes to be used in sequence: `veldist` extracts LOSVDs from
+resolved stellar data, which are then passed to Dynamite's `histLOSVD`
+kinematics handler.
+
+### Bovy, Hogg & Roweis (2011) — Extreme Deconvolution
+
+Extreme Deconvolution (XD) also handles heteroscedastic per-object errors,
+but models the intrinsic distribution as a mixture of Gaussians rather than
+a non-parametric histogram.  The mixture representation is efficient when the
+distribution is approximately Gaussian or a small sum of Gaussians, but
+cannot represent flat-topped, asymmetric, or multimodal LOSVDs without a
+large number of components.  `veldist` makes no shape assumption; the prior
+simply favours smooth solutions over rough ones.

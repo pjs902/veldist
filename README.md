@@ -1,23 +1,23 @@
 # veldist
 
-<!-- Add tests status badges, readthedocs badge, license badge -->
 [![Tests](https://github.com/pjs902/veldist/actions/workflows/tests.yml/badge.svg)](https://github.com/pjs902/veldist/actions/workflows/tests.yml)
 [![Documentation Status](https://readthedocs.org/projects/veldist/badge/?version=latest)](https://veldist.readthedocs.io/en/latest/?badge=latest)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-Infer velocity distributions from noisy stellar kinematics.
+Non-parametric Bayesian inference of the line-of-sight velocity distribution
+(LOSVD) from discrete stellar velocities.
 
-More generally, do unbiased, non-parametric density estimation.
+Given a set of individual stellar velocities and their per-star measurement
+uncertainties, `veldist` recovers the intrinsic LOSVD as a histogram
+posterior, marginalising over a smoothing hyperparameter that adapts to the
+signal-to-noise of the data.  Output is a full MCMC posterior over the LOSVD
+shape, from which scalar summaries ($V$, $\sigma$, skewness, kurtosis, tail
+weight) and their uncertainties are derived without additional assumptions.
 
-Not yet ready for general use.
-
-## TODO
-
-Docs are full of LLM slop. Needs to be cleaned up.
-
-Needs the 2D extension.
-
-Needs some testing or tuning of the hyperparameters and particularly how they might scale with uncertainty levels and number of data points.
+Designed for resolved stellar kinematics in globular clusters, dwarf
+galaxies, and the extended halos of nearby galaxies.  Includes a batch
+pipeline for Voronoi-binned IFU-like data and a writer for the Dynamite
+`histLOSVD` / BayesLOSVD input format.
 
 ## Installation
 

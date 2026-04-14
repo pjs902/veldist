@@ -328,7 +328,7 @@ class KinematicSolver:
         nuts_kernel = NUTS(model)
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
 
-        rng_key = jax.random.PRNGKey(seed)
+        rng_key = jax.random.PRNGKey(int(seed))
         mcmc.run(rng_key, matrix=self.matrix, n_bins=self.grid["n_bins"])
 
         self.samples = mcmc.get_samples()
