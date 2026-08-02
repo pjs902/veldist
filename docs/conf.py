@@ -3,10 +3,13 @@ import sys
 sys.path.insert(0, os.path.abspath('../src'))
 
 project = 'veldist'
-copyright = '2025, Peter Smith'
+copyright = '2025-2026, Peter Smith'
 author = 'Peter Smith'
-version = '0.1.0'
-release = '0.1.0'
+
+# Single source of truth is pyproject.toml — do not hardcode.
+from importlib.metadata import version as _v
+release = _v('veldist')
+version = '.'.join(release.split('.')[:2])
 
 extensions = [
     'sphinx.ext.autodoc',

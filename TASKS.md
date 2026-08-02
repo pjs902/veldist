@@ -1,6 +1,25 @@
 # Tasks
 
+Detailed implementation plans for everything below: **`PLAN.md`**.
+Suggested execution order is the table at the end of that file.
+
 ## Now
+
+- **[P0] Model correctness fixes** (`PLAN.md` §0)
+  Found in the code sweep, not previously tracked:
+  `total_flux` is an incomplete extended-Poisson likelihood (missing the `−Φ`
+  term; posterior biased ~1.6×) and has zero influence on `intrinsic_pdf` —
+  delete it. The random-walk prior is not translation-invariant (bin 0 is
+  pinned, `Var ∝ k`) — replace with an intrinsic RW1 GMRF, which is also the
+  1D case of the 2D prior below. `smoothness_sigma`'s prior is grid-resolution
+  dependent. `run(gpu=True)` default crashes on GPU-less machines.
+
+- **[P0] Statistical validation framework** (`PLAN.md` §1)
+  We have no test that would detect a wrong posterior. Three layers:
+  analytic unit tests for `analysis.py` (closed-form answers, no MCMC);
+  simulation-based calibration (SBC) on derived scalars; frequentist coverage
+  of the reported 68% CIs over repeated mocks. Write SBC *before* the §0 fixes
+  so we see it fail first.
 
 - **[P0] Test coverage for `analysis.py` and the batch/export pipeline**
   `compute_summary`, `compute_summary_maps`, `truncate_losvd`,
@@ -33,9 +52,11 @@
   Conditional on the 2D solver above actually needing it — don't build
   speculatively.
 
-- **[P2] Rewrite veldist docs**
-  Currently LLM-placeholder text. Also confirm no lingering
-  `compute_moments` references in examples (prefer `compute_summary`).
+- **[P2] Docs cleanup** (`PLAN.md` §4.3 — smaller than previously thought)
+  `theory.md` and `examples.md` are real prose, not placeholder text. The
+  actual debt: `generate_example_images.py` and `generate_all_example_images.py`
+  are near-duplicates and both still use legacy `compute_moments`. Plus a new
+  "Validation" page once SBC/coverage results exist.
 
 ## Someday (long-term, not active)
 
