@@ -1,11 +1,24 @@
 # Tasks
 
-Migrated from beads (`bd`) on 2026-08-02. Open items below; a completed-work
-log follows for history.
+## Now
 
-## Open
+- **[P0] Test coverage for `analysis.py` and the batch/export pipeline**
+  `compute_summary`, `compute_summary_maps`, `truncate_losvd`,
+  `clip_uncertainties`, `fit_all_bins`, and `write_dynamite_kinematics` have
+  zero tests — only the core single-bin NUTS solver path is covered. Add a
+  round-trip test: mock bins → `fit_all_bins` → `write_dynamite_kinematics`
+  → read back ECSV.
 
-- **[P2, blocked] 2D solver: `KinematicSolver2D` for bivariate PM distributions**
+- **[P1] Fix ruff lint violations**
+  8 EM101/EM102 violations (raw string/f-string literals in `raise`) in
+  `veldist.py` and `analysis.py`. `ruff check --fix`.
+
+- **[P1] Resolve in-code TODOs**
+  `veldist.py:161` (Dirichlet vs. current prior on weights — undecided) and
+  `veldist.py:358` (whether to work in density space internally). Make the
+  call and delete the comments, or write the tradeoff down here properly.
+
+- **[P1] 2D solver: `KinematicSolver2D` for bivariate PM distributions**
   Design is settled: square K×K grid, (N, K²) design matrix using centre-point
   bivariate Gaussian PDF × bin area, 2D GMRF prior with 8-connectivity
   (separable 1D random walks ruled out — can't represent genuine covariance).
@@ -13,33 +26,25 @@ log follows for history.
   `z ~ N(0, I_K²)`, `x = σ_smooth · L⁻ᵀ z`. Start with K=20. Test on mock
   tilted bivariate Gaussian. Defer: 4-corner box integration, marginalisation
   over missing PM axis, Dynamite 2D output.
-  Blocked on: SVI/Pathfinder fallback below (only if NUTS proves too slow at
-  K²=400 — worth trying NUTS first before committing to that dependency).
+  Try NUTS first — K²=400 with a sparse GMRF prior should be fine. Only
+  reach for SVI/Pathfinder (below) if that measurably stalls.
 
-- **[P3] SVI / Pathfinder as NUTS fallback for large parameter spaces**
-  If NUTS proves too slow for the K² parameter space in `KinematicSolver2D`,
-  implement NumPyro SVI with mean-field or structured guide, or the
-  Pathfinder algorithm, as a faster alternative.
+- **[P2] SVI / Pathfinder as NUTS fallback**
+  Conditional on the 2D solver above actually needing it — don't build
+  speculatively.
 
-- **[P3] Rewrite veldist docs (currently LLM-generated placeholder text)**
-  Needs a proper rewrite once the API stabilises. Also update end-to-end
-  examples to use `compute_summary` instead of the deprecated
-  `compute_moments`.
+- **[P2] Rewrite veldist docs**
+  Currently LLM-placeholder text. Also confirm no lingering
+  `compute_moments` references in examples (prefer `compute_summary`).
 
-- **[P3] Multiple kinematically distinct tracers**
-  Support for multiple stellar populations with distinct kinematics.
-  Requires separate design matrices per tracer population. Useful for all
-  resolved stellar systems with known multiple components.
+## Someday (long-term, not active)
 
-- **[P4] PyPI packaging**
-  README lists PyPI install as "coming soon". Not blocking science, but
-  needed for broader adoption.
-
-- **[P4] Spatially coherent velocity distribution inference (joint across bins)**
-  Joint inference across spatial bins with a shared smoothness scale-length.
-  Uncertain feasibility — data may be either too well-constrained per bin
-  (making joint inference redundant) or not well-sampled spatially. Deferred
-  until single-bin inference is mature.
+- Multiple kinematically distinct tracers: separate design matrices per
+  stellar population
+- PyPI packaging
+- Spatially coherent velocity distribution inference (joint across bins,
+  shared smoothness scale-length) — feasibility unclear, revisit once 2D
+  solver and export pipeline are both tested and stable
 
 ## Completed
 
