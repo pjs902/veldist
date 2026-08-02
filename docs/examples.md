@@ -235,6 +235,15 @@ and are diagnostic of features that GH fitting cannot represent — heavy tails
 in the radially-anisotropic regime and genuinely bimodal LOSVDs from
 kinematically distinct populations.
 
+> **Known issue:** `kurtosis` currently carries a systematic positive bias
+> (roughly +1.6 to +2.5 in excess-kurtosis units, observed even for a
+> Gaussian truth) caused by the smoothness prior leaking a small amount of
+> probability mass into the outermost velocity-grid bins — kurtosis's
+> fourth-power weighting amplifies that residual mass far out of proportion
+> to its size. This is unaddressed as of writing; see the warning on
+> `compute_summary`'s docstring and `PLAN.md` §1.3 for the full
+> investigation. `skewness` was not observed to show this bias.
+
 ![Summary metrics on two example LOSVDs](images/fig_summary_metrics.png)
 
 *Left: a symmetric, leptokurtic LOSVD (heavy tails — a radial-anisotropy

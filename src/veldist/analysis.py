@@ -365,6 +365,24 @@ def compute_summary(pdf_samples, grid_centers):
             a Gaussian.  GH analogue: *h₄* ≈ *κ* / √24.  Positive
             (leptokurtic) → radially anisotropic; negative (platykurtic) →
             tangentially anisotropic / flat-topped.
+
+            .. warning::
+                **Known positive bias.** Frequentist coverage testing found
+                that ``kurtosis`` is systematically biased positive
+                (+1.6 to +2.5 excess kurtosis observed) even for a *Gaussian*
+                truth. Cause: the RW1 smoothness prior leaks a small amount
+                of posterior mass into far-edge velocity-grid bins, and
+                kurtosis's fourth-power weighting amplifies that residual
+                mass enormously (a bin at 5σ carries ~625× the weight of a
+                bin at 1σ). ``truncate_losvd()`` exists to suppress this kind
+                of tail leakage but currently only patches ``clipped_samples``
+                (the Dynamite export path) — it is **not** applied to the raw
+                posterior samples this function consumes. Treat reported
+                ``kurtosis`` values as having an unquantified-but-real
+                positive offset until this is fixed; ``skewness`` and the
+                other metrics were not observed to show this bias. See
+                ``PLAN.md`` §1.3 and ``tests/test_coverage.py`` (marked
+                ``xfail``) for the full investigation.
         ``'tail_weight'``
             Fraction of probability mass outside ±1*σ* of the mean.
             Gaussian reference: 0.3173.  A more direct anisotropy diagnostic

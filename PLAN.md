@@ -415,6 +415,58 @@ features. This is not a bug — it is the bias-variance trade the prior buys us.
 The value of the test is quantifying it so we can state it in the paper, and
 so we notice if it ever gets *worse*.
 
+**ACTUAL outcome (broader than predicted above — implemented and run):**
+`tests/test_coverage.py` exists and this prediction undersold the effect.
+`kurtosis` coverage is catastrophically low (near 0%) not just on the
+non-Gaussian truths but on a plain **Gaussian** truth too, where there is no
+sharp feature for the smoothness prior to shrink away — the predicted
+mechanism above doesn't explain this case. Independently re-derived (not
+just trusted from the subagent that first found it):
+
+- The Gaussian truth's *binned* representation (on the same 20-bin grid used
+  by the test) has excess kurtosis ≈ −0.0007 — i.e. binning alone is not the
+  cause.
+- The fitted posterior carries roughly **2×** the true Gaussian's expected
+  tail mass beyond 2.5σ (~2.2–2.7% observed vs. ~1.24% expected), with
+  nonzero mass sitting in the outermost grid bins (~5σ out).
+- Because kurtosis weights deviations by the 4th power, that small residual
+  edge-bin mass is amplified enormously (`(5)^4 = 625×`), which is enough on
+  its own to produce the observed +1.6 to +2.5 excess-kurtosis bias.
+
+This is **tail leakage from the RW1 prior** — the same phenomenon
+`truncate_losvd()` (§ existing code, `veldist.py`) was already built to
+suppress, per its own docstring ("random-walk prior leaking into
+unconstrained tails"). The catch: `truncate_losvd()` only patches
+`clipped_samples` (the Dynamite export path) — it is never applied to the
+raw posterior samples that `compute_summary()` consumes. So this bias is
+currently **live and unmitigated** for any `analysis.py` user, and was
+invisible until this coverage test was built (SBC does not catch it: SBC
+validates calibration against draws from the model's *own* prior, whose
+"kurtosis" is whatever a random smooth RW1 curve's kurtosis happens to be —
+not against an external truth like an actual Gaussian, which is a much
+stricter and more relevant check for real use).
+
+`tests/test_coverage.py::test_coverage_over_mock_realisations` is marked
+`@pytest.mark.xfail(strict=False, reason=...)` rather than adjusted to pass
+— per the overriding rule at the top of this document. It stays red-but-
+expected in perpetuity until someone addresses the root cause. If it ever
+starts passing (XPASS) that is a signal the fix landed and the marker should
+be removed, not silenced.
+
+**Fix directions for a future session** (not implemented, deliberately out
+of scope for this pass — this needs its own investigation, not a quick
+patch):
+1. Extend `truncate_losvd`-style tail suppression (or a softer taper) to the
+   raw-sample path `compute_summary` consumes, not just `clipped_samples`.
+2. Investigate whether a wider grid margin (more σ of headroom before the
+   edge bins) meaningfully reduces the leaked mass, and if so, whether
+   `setup_grid`'s guidance/defaults should change.
+3. Consider a `kurtosis`-specific caveat in the docs (`theory.md`) stating
+   this bias exists and is currently unaddressed for `analysis.py` users,
+   independent of whether (1) or (2) gets built — users doing science with
+   `compute_summary`'s kurtosis today should know about this now, not only
+   once it's fixed.
+
 ### 1.4 Design-matrix correctness (fast)
 
 `precompute_design_matrix` is the one piece where a silent off-by-half-a-bin

@@ -5,23 +5,28 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
-- **[P0] Frequentist coverage tests** (`PLAN.md` §1.3)
-  Last piece of the statistical validation framework. SBC (§1.2) validates
-  the sampler against the model; coverage validates the model against
-  reality — whether the reported ±half-68CI error bars mean what we tell
-  Dynamite they mean, over repeated mock datasets with fixed physically
-  motivated truths (Gaussian, Student-t, skew-normal, bimodal).
+- **[P0] Fix kurtosis tail-leakage bias in `compute_summary`** (`PLAN.md` §1.3
+  "ACTUAL outcome")
+  Found by the coverage tests: `compute_summary`'s kurtosis is biased
+  +1.6 to +2.5 even for a plain Gaussian truth (should be ~0). Root cause:
+  the RW1 prior leaks a small amount of posterior mass into far-edge grid
+  bins; kurtosis's 4th-power weighting amplifies it ~625×. `truncate_losvd()`
+  already exists to suppress exactly this leakage but only patches
+  `clipped_samples` (Dynamite export), never the raw samples
+  `compute_summary` consumes — so this is currently live and unmitigated for
+  any `analysis.py` user. `tests/test_coverage.py` is marked `xfail` pending
+  this fix. Directions in the plan: extend tail suppression to the raw-sample
+  path, and/or widen grid margin guidance.
 
-- **[P1] 2D solver: `KinematicSolver2D` for bivariate PM distributions**
-  Design is settled: square K×K grid, (N, K²) design matrix using centre-point
-  bivariate Gaussian PDF × bin area, 2D GMRF prior with 8-connectivity
-  (separable 1D random walks ruled out — can't represent genuine covariance).
-  Precision matrix Q shape (K², K²); add ridge ε·I before Cholesky. Latent:
-  `z ~ N(0, I_K²)`, `x = σ_smooth · L⁻ᵀ z`. Start with K=20. Test on mock
-  tilted bivariate Gaussian. Defer: 4-corner box integration, marginalisation
-  over missing PM axis, Dynamite 2D output.
-  Try NUTS first — K²=400 with a sparse GMRF prior should be fine. Only
-  reach for SVI/Pathfinder (below) if that measurably stalls.
+- **[P1] 2D solver: continue `KinematicSolver2D`** (`PLAN.md` §3.3–3.5)
+  Grid, design matrix (box integration + 2×2 Gauss-Legendre for correlated
+  covariance), and GMRF prior (§3.1/§3.2) are done and fast-tested
+  (`src/veldist/veldist2d.py`, `tests/test_veldist2d.py`). Smoke-tested
+  end-to-end (real MCMC recovers a tilted-covariance mean correctly). Still
+  open: the slow recovery tests (tilted/isotropic Gaussian covariance
+  recovery, 1D-marginal consistency), SBC for the 2D model, and the §3.4
+  performance gate. Try NUTS first — K²=225 (K=15) already ran fine in the
+  smoke test; only reach for SVI/Pathfinder if the performance gate fails.
 
 - **[P2] SVI / Pathfinder as NUTS fallback**
   Conditional on the 2D solver above actually needing it — don't build
@@ -56,6 +61,8 @@ Suggested execution order is the table at the end of that file.
   `tests/test_pipeline.py`, `tests/test_model.py`
 - Fix ruff lint violations (P1): `src/` is ruff-clean; `ruff check src/`
   now runs in CI
+- Frequentist coverage tests (P0, `PLAN.md` §1.3): `tests/test_coverage.py`.
+  Found the kurtosis tail-leakage bias above — new P0 item added for the fix
 - Simulation-based calibration (P0, `PLAN.md` §1.2): `tests/test_calibration.py`.
   Caught and led to fixing a real bug: the RW1 prior's `numpyro.factor`
   implementation was invisible to `Predictive`, so SBC's prior draws didn't
