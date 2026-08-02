@@ -23,7 +23,7 @@ def _run_model(matrix, n_bins, bin_width, seed, num_warmup=100, num_samples=200)
 
 
 def test_model_has_no_dead_parameters():
-    """total_flux was removed; only x, smoothness_sigma, intrinsic_pdf remain."""
+    """total_flux was removed; only steps, smoothness_sigma, intrinsic_pdf remain."""
     rng = np.random.default_rng(0)
     obs = rng.normal(0, 5, 40)
     err = np.full(40, 1.0)
@@ -32,7 +32,7 @@ def test_model_has_no_dead_parameters():
 
     samples = _run_model(matrix, 20, bin_width=1.5, seed=0, num_warmup=50, num_samples=50)
 
-    assert set(samples.keys()) == {"x", "smoothness_sigma", "intrinsic_pdf"}
+    assert set(samples.keys()) == {"steps", "smoothness_sigma", "intrinsic_pdf"}
 
 
 def test_intrinsic_pdf_is_mass_not_density():

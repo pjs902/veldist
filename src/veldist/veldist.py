@@ -98,12 +98,47 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     """
     Generates a 1D smooth curve from an intrinsic RW1 (random-walk) GMRF prior.
 
-    Unlike a cumulative-sum construction that pins ``curve[0] = 0``, this is
-    translation-invariant in bin index: every bin is regularised identically
-    by its neighbours, with no special edge bin. This matters because the
-    output is later passed through softmax, which is itself shift-invariant —
-    an asymmetric prior on the un-normalised curve would otherwise bias the
-    *shape* of the inferred LOSVD toward one edge of the velocity grid.
+    Unlike a cumulative-sum construction that pins ``curve[0] = 0`` and
+    leaves it there, this is translation-invariant in bin index: every bin
+    is regularised identically by its neighbours, with no special edge bin.
+    This matters because the output is later passed through softmax, which
+    is itself shift-invariant — an asymmetric prior on the un-normalised
+    curve would otherwise bias the *shape* of the inferred LOSVD toward one
+    edge of the velocity grid.
+
+    The construction is a genuinely *generative* one — every random quantity
+    is drawn via ``numpyro.sample``, and the returned curve is a purely
+    deterministic function of those draws::
+
+        sigma_step = smoothness_sigma * sqrt(bin_width)
+        step[i] ~ Normal(0, sigma_step),  i = 1 .. N_bins - 1
+        raw = concat([0], cumsum(step))              # pinned at bin 0
+        curve = raw - mean(raw)                       # remove the pin
+
+    This is deliberately **not** implemented as a ``numpyro.factor`` penalty
+    on an unconditioned base measure. A factor only reweights the *posterior*
+    density used by NUTS — it has no effect on prior-predictive / ancestral
+    sampling (e.g. ``numpyro.infer.Predictive`` with no data conditioning),
+    which forward-simulates only through ``sample`` sites. A factor-based
+    version of this prior would therefore look correct under real inference
+    (NUTS integrates the full unnormalised density regardless of site
+    structure) while silently drawing the wrong thing under
+    ``Predictive`` — exactly the kind of prior/posterior mismatch that
+    simulation-based calibration (see ``tests/test_calibration.py``) exists
+    to catch, and did catch during development of this function. The
+    increments-then-center construction above sidesteps the issue entirely:
+    ``step`` is what NUTS samples, and its distribution *is* the actual
+    prior, with no separate normalising-constant bookkeeping required
+    (``dist.Normal`` supplies it automatically) and no discrepancy between
+    what NUTS conditions on and what ``Predictive`` draws.
+
+    The final ``curve - mean(curve)`` centering is what makes this
+    translation-invariant rather than reproducing the old pinned-at-bin-0
+    asymmetry: subtracting the sample mean of the pinned random walk
+    produces a bowl-shaped, bin-index-symmetric variance profile (verified
+    numerically — ``Var(curve[k])`` is symmetric under ``k -> N_bins-1-k``),
+    rather than the monotonically increasing ``Var(curve[k]) = k * sigma^2``
+    of the raw pinned walk.
 
     ``smoothness_sigma`` is a *physical* smoothness scale, independent of the
     velocity-grid resolution: the actual per-bin random-walk step scale is
@@ -114,29 +149,6 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     changes what the prior means, since ``smoothness_sigma`` would then be a
     prior on the *per-bin* step regardless of how much velocity each bin
     spans.
-
-    Model (up to the additive normalising constant that does not depend on
-    ``smoothness_sigma`` or ``curve``, which is intentionally omitted since
-    it cannot affect the posterior)::
-
-        curve ~ Normal(0, 10)^N_bins              (vague base measure)
-        sigma_step = smoothness_sigma * sqrt(bin_width)
-        log p(curve | sigma_step) += -0.5 * sum(diff(curve)**2) / sigma_step**2
-                                      - (N_bins - 1) * log(sigma_step)
-
-    The vague ``Normal(0, 10)`` base measure supplies the one direction (the
-    overall level / constant shift) that the pairwise-difference penalty
-    leaves completely unconstrained — the random-walk penalty by itself is an
-    *intrinsic* (improper, rank-deficient) prior. Because softmax removes any
-    constant shift, the specific width (10) is arbitrary as long as it is
-    wide relative to the range spanned by ``curve``; it exists only to keep
-    NUTS's mass-matrix adaptation well-posed in that null-space direction.
-
-    The ``-(N_bins - 1) * log(sigma_step)`` term is the normalising constant
-    of the ``N_bins - 1`` implicit Gaussian increments and **must** be
-    present: without it the likelihood is monotonically increasing as
-    ``sigma_step -> 0``, and the sampler collapses ``smoothness_sigma`` to
-    (numerically) zero, producing a flat, structureless LOSVD.
 
     Parameters
     ----------
@@ -157,15 +169,13 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     curve : jnp.ndarray (N_bins,)
         Latent log-density curve.
     """
-    curve = numpyro.sample(
-        "x", dist.Normal(0.0, 10.0).expand([N_bins]).to_event(1)
-    )
-
     sigma_step = smoothness_sigma * jnp.sqrt(bin_width)
-    rw1_log_prob = -0.5 * jnp.sum(jnp.diff(curve) ** 2) / sigma_step**2 - (
-        N_bins - 1
-    ) * jnp.log(sigma_step)
-    numpyro.factor("rw1_prior", rw1_log_prob)
+
+    steps = numpyro.sample(
+        "steps", dist.Normal(0.0, sigma_step).expand([N_bins - 1]).to_event(1)
+    )
+    raw = jnp.concatenate([jnp.zeros(1), jnp.cumsum(steps)])
+    curve = raw - jnp.mean(raw)
 
     return curve
 
