@@ -94,38 +94,78 @@ def precompute_design_matrix(obs_val, obs_err, bin_centers, bin_width=None):
 # ==============================================================================
 
 
-def generate_smooth_curve(N_bins, smoothness_sigma):
+def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     """
-    Generates a 1D smooth curve using a Gaussian Random Walk.
+    Generates a 1D smooth curve from an intrinsic RW1 (random-walk) GMRF prior.
 
+    Unlike a cumulative-sum construction that pins ``curve[0] = 0``, this is
+    translation-invariant in bin index: every bin is regularised identically
+    by its neighbours, with no special edge bin. This matters because the
+    output is later passed through softmax, which is itself shift-invariant —
+    an asymmetric prior on the un-normalised curve would otherwise bias the
+    *shape* of the inferred LOSVD toward one edge of the velocity grid.
 
-    Model:
-        step[i] ~ Normal(0, sigma)
-        curve[i] = curve[i-1] + step[i]
+    ``smoothness_sigma`` is a *physical* smoothness scale, independent of the
+    velocity-grid resolution: the actual per-bin random-walk step scale is
+    ``smoothness_sigma * sqrt(bin_width)`` (the natural Brownian-motion
+    scaling — a random walk that traverses a fixed velocity range with twice
+    as many, half-width steps has each step scaled by ``sqrt(0.5)``, not
+    ``0.5``). Without this scaling, refining the velocity grid silently
+    changes what the prior means, since ``smoothness_sigma`` would then be a
+    prior on the *per-bin* step regardless of how much velocity each bin
+    spans.
+
+    Model (up to the additive normalising constant that does not depend on
+    ``smoothness_sigma`` or ``curve``, which is intentionally omitted since
+    it cannot affect the posterior)::
+
+        curve ~ Normal(0, 10)^N_bins              (vague base measure)
+        sigma_step = smoothness_sigma * sqrt(bin_width)
+        log p(curve | sigma_step) += -0.5 * sum(diff(curve)**2) / sigma_step**2
+                                      - (N_bins - 1) * log(sigma_step)
+
+    The vague ``Normal(0, 10)`` base measure supplies the one direction (the
+    overall level / constant shift) that the pairwise-difference penalty
+    leaves completely unconstrained — the random-walk penalty by itself is an
+    *intrinsic* (improper, rank-deficient) prior. Because softmax removes any
+    constant shift, the specific width (10) is arbitrary as long as it is
+    wide relative to the range spanned by ``curve``; it exists only to keep
+    NUTS's mass-matrix adaptation well-posed in that null-space direction.
+
+    The ``-(N_bins - 1) * log(sigma_step)`` term is the normalising constant
+    of the ``N_bins - 1`` implicit Gaussian increments and **must** be
+    present: without it the likelihood is monotonically increasing as
+    ``sigma_step -> 0``, and the sampler collapses ``smoothness_sigma`` to
+    (numerically) zero, producing a flat, structureless LOSVD.
 
     Parameters
     ----------
     N_bins : int
         Number of velocity bins.
     smoothness_sigma : float
-        Controls the flexibility of the curve.
+        Physical smoothness scale, independent of grid resolution.
         - Low sigma: Stiff, very smooth.
         - High sigma: Flexible, jagged.
+    bin_width : float
+        Width of one velocity bin, used to rescale ``smoothness_sigma`` into
+        the per-bin step scale actually used by the random walk. Default 1.0
+        (i.e. no rescaling — matches the original per-bin-step convention if
+        the caller does not know or care about physical units).
 
     Returns
     -------
     curve : jnp.ndarray (N_bins,)
         Latent log-density curve.
     """
-    # Sample the *steps* between bins, not the bins themselves.
-    # This enforces the neighbor-to-neighbor correlation.
-    steps = numpyro.sample(
-        "steps", dist.Normal(0.0, smoothness_sigma), sample_shape=(N_bins - 1,)
+    curve = numpyro.sample(
+        "x", dist.Normal(0.0, 10.0).expand([N_bins]).to_event(1)
     )
 
-    # Reconstruct the curve via cumulative sum.
-    # We fix the first bin at 0.0 (relative scale).
-    curve = jnp.concatenate([jnp.array([0.0]), jnp.cumsum(steps)])
+    sigma_step = smoothness_sigma * jnp.sqrt(bin_width)
+    rw1_log_prob = -0.5 * jnp.sum(jnp.diff(curve) ** 2) / sigma_step**2 - (
+        N_bins - 1
+    ) * jnp.log(sigma_step)
+    numpyro.factor("rw1_prior", rw1_log_prob)
 
     return curve
 
@@ -135,7 +175,7 @@ def generate_smooth_curve(N_bins, smoothness_sigma):
 # ==============================================================================
 
 
-def model(matrix, n_bins):
+def model(matrix, n_bins, bin_width=1.0):
     """
     The Model definition for NumPyro.
 
@@ -145,6 +185,12 @@ def model(matrix, n_bins):
         The pre-computed Design Matrix M.
     n_bins : int
         Number of velocity bins.
+    bin_width : float
+        Width of one velocity bin. Used to make ``smoothness_sigma`` a
+        physical smoothness scale independent of grid resolution (see
+        ``generate_smooth_curve``). Default 1.0 preserves the original
+        per-bin-step convention when the caller does not pass a physical
+        bin width.
 
     Returns
     -------
@@ -157,27 +203,15 @@ def model(matrix, n_bins):
     # HalfNormal(0.1) is a relatively conservative prior, favoring smooth curves.
     smoothness_sigma = numpyro.sample("smoothness_sigma", dist.HalfNormal(0.1))
 
-    # We infer the Total Flux (Number of Stars) separately from the shape.
-    # TODO: test this vs simple Dirichlet prior on the weights.
-    N_stars = matrix.shape[0]
-    total_flux = numpyro.sample(
-        "total_flux",
-        dist.TruncatedNormal(
-            loc=float(N_stars), scale=jnp.sqrt(float(N_stars)), low=0.0
-        ),
-    )
-
     # --- Latent Density ---
-    # Generate the log-density curve using the Random Walk prior
-    latent_curve = generate_smooth_curve(n_bins, smoothness_sigma)
-
-    # --- Normalization ---
-
-    # Fix Scale Ambiguity:
-    centered_curve = latent_curve - jnp.mean(latent_curve)
+    # Generate the log-density curve using the Random Walk prior. This is
+    # already translation-invariant (see generate_smooth_curve), so no
+    # separate centering step is needed here — softmax is shift-invariant
+    # regardless.
+    latent_curve = generate_smooth_curve(n_bins, smoothness_sigma, bin_width)
 
     # Convert latent values to valid Probabilities (Sum = 1)
-    intrinsic_pdf = jax.nn.softmax(centered_curve)
+    intrinsic_pdf = jax.nn.softmax(latent_curve)
 
     # Save the PDF for plotting and later use
     numpyro.deterministic("intrinsic_pdf", intrinsic_pdf)
@@ -187,11 +221,12 @@ def model(matrix, n_bins):
     # The probability of observing Star i is the weighted sum of the
     # probabilities of it coming from each bin.
     # P(Star_i) = DotProduct( Row_i, Intrinsic_Weights )
+    # This is a normalised-shape likelihood: intrinsic_pdf sums to 1 by
+    # construction (softmax), so there is no free "total flux" parameter to
+    # infer — the number of stars observed does not carry information about
+    # the *shape* of the LOSVD beyond what per_star_prob already captures.
     per_star_prob = jnp.dot(matrix, intrinsic_pdf)
-
-    # Poisson Log-Likelihood
-    # LogLik = Sum( log( P_i * Flux ) )
-    log_prob = jnp.sum(jnp.log(per_star_prob)) + N_stars * jnp.log(total_flux)
+    log_prob = jnp.sum(jnp.log(per_star_prob))
 
     # Register the likelihood with NumPyro
     numpyro.factor("obs_log_lik", log_prob)
@@ -334,7 +369,12 @@ class KinematicSolver:
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
 
         rng_key = jax.random.PRNGKey(int(seed))
-        mcmc.run(rng_key, matrix=self.matrix, n_bins=self.grid["n_bins"])
+        mcmc.run(
+            rng_key,
+            matrix=self.matrix,
+            n_bins=self.grid["n_bins"],
+            bin_width=self.grid["width"],
+        )
 
         self.samples = mcmc.get_samples()
         # Invalidate any previously computed clipped summary when re-running.
@@ -357,10 +397,11 @@ class KinematicSolver:
         ax : matplotlib.axes.Axes
             The plot axes.
         """
-        # The model returns "Probability Mass" (sum = 1).
-        # We need "Probability Density" (integral = 1) for plotting.
+        # intrinsic_pdf is always probability MASS internally (each row sums
+        # to 1) — this is what the likelihood, the simplex constraint, and
+        # the Dynamite ECSV writer all expect. Density is purely a plotting
+        # convention, so the Mass -> Density conversion happens here only.
         # Density = Mass / Bin_Width
-        # TODO: decide if we want to work in density space internally
         pdf_samples_mass = self.samples["intrinsic_pdf"]
         dx = self.grid["width"]
 
