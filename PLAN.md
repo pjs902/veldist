@@ -303,6 +303,44 @@ order of how often each one bites:
   with no conditioning. If you find yourself writing `sigma = rng.halfnormal(...)`
   to mirror what the model does, stop: that mirror will drift out of sync the
   first time the model changes.
+- **`numpyro.factor`-based priors are invisible to `Predictive`.** This is
+  not hypothetical — it is exactly what SBC caught in this codebase during
+  §0.2's implementation. The original §0.2 fix expressed the RW1 penalty as
+  `numpyro.factor("rw1_prior", -0.5*sum(diff(x)**2)/sigma**2 - ...)` applied
+  to an unconditioned `x ~ Normal(0, 10)^K` base. This is *correct* for NUTS
+  (the potential function integrates factor terms along with sample-site log
+  densities, so the posterior is right), but `Predictive` with no data
+  conditioning does pure ancestral sampling through `sample` sites only — it
+  has no mechanism to account for a `factor` term, since a factor is not a
+  distribution you can forward-sample from. The result: `Predictive` drew `x`
+  as plain i.i.d. `Normal(0, 10)` noise (RW1 penalty completely ignored),
+  producing an unregularized, near-one-hot `intrinsic_pdf` as the SBC "truth"
+  — a draw from a *different* distribution than the one the posterior was
+  actually conditioning against. Symptom: `smoothness_sigma`'s rank was ~0 in
+  every single simulation (KS p≈0.0000), while quantities less sensitive to
+  the spike (`v_mean`) still passed — a partial failure pattern that is easy
+  to misdiagnose as "some other bug in just this one quantity."
+
+  **The fix, and the general rule: build priors generatively, not via
+  `factor`.** Reparameterise so every random quantity is an actual
+  `numpyro.sample` site and the returned value is a deterministic function of
+  those draws — e.g. sample the RW1 *increments* directly
+  (`steps ~ Normal(0, sigma_step)`, `K-1` of them), then `x = cumsum(steps)
+  - mean(cumsum(steps))` (the mean-centering is what restores translation
+  invariance relative to the naive pinned-at-zero cumsum — verified
+  numerically that this produces a bin-index-symmetric variance profile).
+  This is simultaneously simpler than the factor version (no manual
+  normalising-constant term — `dist.Normal` supplies it), correct under both
+  NUTS and `Predictive`, and requires no vague base-measure hack for an
+  unconstrained null-space direction (there isn't one; the parameterisation
+  is already full-rank in `steps`). **This is the same lesson the 2D solver's
+  §3.2 design already follows** (`z ~ N(0, I_K²)` sample site,
+  `x = σ·L⁻ᵀz` as a deterministic transform) — do not "simplify" it into a
+  `factor`-based GMRF penalty on an unconditioned base measure, even though
+  that looks more directly like the textbook GMRF density. If a prior *must*
+  be expressed as a `factor` for some reason, it cannot be validated by
+  `Predictive`-based SBC at all — fall back to coverage testing (§1.3) for
+  that component instead.
 - **Autocorrelated posterior draws.** Un-thinned NUTS output produces
   ∪-shaped rank histograms that look exactly like an overconfident posterior.
   **Always check `ESS > L` before ranking**, and thin to at most `ESS/2` draws.
@@ -901,6 +939,8 @@ When something breaks, check here before debugging from scratch.
 | SBC ranks are ∪-shaped | Check ESS **first** — autocorrelated draws mimic overconfidence. Only if ESS is fine is the posterior genuinely too narrow (§1.2) |
 | SBC ranks show a monotone ramp | Genuine bias. Suspect the prior asymmetry (§0.2) or a design-matrix half-bin offset (§1.4) |
 | SBC passes suspiciously easily on first write | Prior draw is probably hand-rolled and out of sync with the model (§1.2) |
+| SBC rank ~0 (or ~L) in nearly every simulation for one specific quantity, others pass | A `numpyro.factor`-based prior term — `Predictive` cannot forward-sample through it, so the SBC "truth" is drawn from the wrong distribution. Rewrite the prior generatively (real `sample` sites + deterministic transform), not as a `factor` penalty. This actually happened during §0.2's implementation — see the §1.2 gotcha for the full story (§0.2, §1.2, §3.2) |
+| Single SBC simulation fails with "inadequate ESS" | Normal NUTS variability at small `n_sims`/`num_samples`, not necessarily a bug — but don't just drop it silently. First increase `num_warmup`/`num_samples` a bit and see if it goes away before suspecting the model (§1.2) |
 | Coverage under-nominal for `kurtosis`/`tail_weight` only | Expected — smoothness-prior shrinkage. Quantify and document, do not "fix" (§1.3) |
 | `clip_uncertainties` assertion `mean_sum ≈ 1.0` fires | Test fixture is not producing valid simplex rows (§2) |
 | Marginal medians sum to ~0.9 | **Correct and expected.** Independent marginals of a joint simplex posterior. Do not renormalise (§2) |
