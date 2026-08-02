@@ -18,15 +18,15 @@ Suggested execution order is the table at the end of that file.
   this fix. Directions in the plan: extend tail suppression to the raw-sample
   path, and/or widen grid margin guidance.
 
-- **[P1] 2D solver: continue `KinematicSolver2D`** (`PLAN.md` §3.3–3.5)
-  Grid, design matrix (box integration + 2×2 Gauss-Legendre for correlated
-  covariance), and GMRF prior (§3.1/§3.2) are done and fast-tested
-  (`src/veldist/veldist2d.py`, `tests/test_veldist2d.py`). Smoke-tested
-  end-to-end (real MCMC recovers a tilted-covariance mean correctly). Still
-  open: the slow recovery tests (tilted/isotropic Gaussian covariance
-  recovery, 1D-marginal consistency), SBC for the 2D model, and the §3.4
-  performance gate. Try NUTS first — K²=225 (K=15) already ran fine in the
-  smoke test; only reach for SVI/Pathfinder if the performance gate fails.
+- **[P1] 2D solver: §3.4 performance gate** (`PLAN.md` §3.4)
+  `KinematicSolver2D` is now feature-complete for "minimally working" per
+  the plan's own acceptance criterion (recovering ρ from a tilted bivariate
+  Gaussian — done, passing) and has its own SBC harness (passing, 6/6
+  quantities). What's left: the formal §3.4 performance gate (measure NUTS
+  wall time / ESS / r_hat at production-scale K before deciding whether
+  SVI/Pathfinder is ever needed — don't build it speculatively), and the
+  explicitly-deferred §3.5 items (PM-axis marginalisation, 3D, Dynamite 2D
+  output format).
 
 - **[P2] SVI / Pathfinder as NUTS fallback**
   Conditional on the 2D solver above actually needing it — don't build
@@ -48,6 +48,19 @@ Suggested execution order is the table at the end of that file.
 
 ## Completed
 
+- 2D solver core (P1, `PLAN.md` Part 3): `src/veldist/veldist2d.py` —
+  grid, design matrix (box integration + 2×2 Gauss-Legendre for correlated
+  covariance), GMRF prior (generative `z ~ N(0,I)` + Cholesky whitening
+  transform — confirmed Predictive-compatible on first attempt, no factor-
+  based bug like 1D's), `KinematicSolver2D`. Tests: `tests/test_veldist2d.py`
+  (fast structural tests + slow tilted/isotropic covariance recovery +
+  1D/2D marginal consistency, all passing) and `tests/test_calibration_2d.py`
+  (SBC, 6/6 quantities pass, 0/30 failed sims). One finding along the way:
+  recovery tests needed `n_stars=2000` rather than the plan's suggested
+  200–400 — at smaller N the GMRF prior induces a measurable finite-sample
+  shrinkage bias in recovered variance (same underlying mechanism as the
+  kurtosis bug above: many free grid cells relative to star count). Fixed by
+  raising N (a real mitigation), not by loosening tolerances.
 - Model correctness fixes (P0): removed the broken `total_flux` term
   (incomplete extended-Poisson likelihood, zero influence on `intrinsic_pdf`);
   replaced the pinned-cumsum random-walk prior with a translation-invariant,
