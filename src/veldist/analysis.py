@@ -537,7 +537,8 @@ def compute_summary_maps(solvers):
     # Infer the full set of metric keys from the first solved bin.
     first = next((s for s in solvers if s is not None), None)
     if first is None:
-        raise ValueError("All solvers are None — no bins to summarise.")
+        msg = "All solvers are None — no bins to summarise."
+        raise ValueError(msg)
 
     ref_summary = compute_summary(first.samples["intrinsic_pdf"], first.grid["centers"])
     metric_keys = list(ref_summary.keys())

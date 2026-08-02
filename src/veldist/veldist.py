@@ -294,7 +294,7 @@ class KinematicSolver:
         )
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=True, seed=5567):
+    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567):
         """
         Run the NUTS sampler.
 
@@ -304,8 +304,11 @@ class KinematicSolver:
             Number of warmup (burn-in) steps.
         num_samples : int
             Number of MCMC samples to draw.
-        gpu : bool
-            Whether to use GPU acceleration (if available).
+        gpu : bool or None
+            If True, request GPU acceleration via
+            ``numpyro.set_platform("gpu")`` (raises if none is available).
+            If False, force CPU. If None (default), leave the platform
+            untouched — i.e. whatever was configured before calling ``run()``.
         seed : int
             RNG seed for the NUTS sampler. Default 5567 (kept for backwards
             compatibility). When running many bins in a batch, pass distinct
@@ -321,8 +324,10 @@ class KinematicSolver:
             msg = "No data added."
             raise ValueError(msg)
 
-        if gpu:
+        if gpu is True:
             numpyro.set_platform("gpu")
+        elif gpu is False:
+            numpyro.set_platform("cpu")
 
         print("Starting NUTS MCMC...")
         nuts_kernel = NUTS(model)
@@ -463,8 +468,9 @@ class KinematicSolver:
               probability mass; shape (n_bins,).
         """
         if self.samples is None:
+            msg = "No posterior samples found. Call run() before clip_uncertainties()."
             raise ValueError(
-                "No posterior samples found. Call run() before clip_uncertainties()."
+                msg
             )
 
         # Work in probability-mass space throughout.
@@ -475,11 +481,13 @@ class KinematicSolver:
         # Sanity check: the MEAN of valid mass samples must also sum to ~1.
         mean_mass = np.mean(pdf_mass, axis=0)
         mean_sum = np.sum(mean_mass)
-        assert np.isclose(mean_sum, 1.0, rtol=1e-3), (
-            f"Posterior mean LOSVD sums to {mean_sum:.6f}, expected ~1.0. "
-            "Check that self.samples['intrinsic_pdf'] contains valid probability "
-            "mass functions (each row should sum to 1)."
-        )
+        if not np.isclose(mean_sum, 1.0, rtol=1e-3):
+            msg = (
+                f"Posterior mean LOSVD sums to {mean_sum:.6f}, expected ~1.0. "
+                "Check that self.samples['intrinsic_pdf'] contains valid probability "
+                "mass functions (each row should sum to 1)."
+            )
+            raise ValueError(msg)
 
         # Per-bin marginal statistics.
         median_mass = np.percentile(pdf_mass, 50, axis=0)
@@ -542,8 +550,9 @@ class KinematicSolver:
             Updates ``self.clipped_samples`` in-place.
         """
         if self.samples is None:
+            msg = "No posterior samples found. Call run() before truncate_losvd()."
             raise ValueError(
-                "No posterior samples found. Call run() before truncate_losvd()."
+                msg
             )
 
         if self.clipped_samples is None:
@@ -799,9 +808,12 @@ def write_dynamite_kinematics(
     try:
         from astropy.table import Table
     except ImportError as exc:
-        raise ImportError(
+        msg = (
             "astropy is required for write_dynamite_kinematics(). "
             "Install it with: pip install astropy"
+        )
+        raise ImportError(
+            msg
         ) from exc
 
     from pathlib import Path
@@ -816,7 +828,8 @@ def write_dynamite_kinematics(
     n_solved = len(solved_indices)
 
     if n_solved == 0:
-        raise ValueError("No solved bins found (all solvers are None).")
+        msg = "No solved bins found (all solvers are None)."
+        raise ValueError(msg)
 
     ref_solver = solvers[solved_indices[0]]
     vcent = np.asarray(ref_solver.grid["centers"])
@@ -826,10 +839,13 @@ def write_dynamite_kinematics(
     for idx in solved_indices[1:]:
         s = solvers[idx]
         if s.grid["n_bins"] != nvbins or not np.allclose(s.grid["centers"], vcent):
-            raise ValueError(
+            msg = (
                 f"Solver at index {idx} has a different velocity grid than "
                 f"solver at index {solved_indices[0]}. All bins must share "
                 "the same grid (set via setup_grid / fit_all_bins)."
+            )
+            raise ValueError(
+                msg
             )
 
     # ------------------------------------------------------------------
@@ -849,11 +865,13 @@ def write_dynamite_kinematics(
         dlosvd_all[out_i] = solver.clipped_samples["losvd_uncertainty"]
 
     # Guard: no zero uncertainties (would corrupt Dynamite's NNLS matrices).
-    assert np.all(dlosvd_all > 0), (
-        "Zero or negative uncertainty found after clipping. "
-        "This would cause econ zeros in Dynamite. "
-        "Check clip_uncertainties() floor settings."
-    )
+    if not np.all(dlosvd_all > 0):
+        msg = (
+            "Zero or negative uncertainty found after clipping. "
+            "This would cause econ zeros in Dynamite. "
+            "Check clip_uncertainties() floor settings."
+        )
+        raise ValueError(msg)
 
     # ------------------------------------------------------------------
     # Compute v and sigma from normalised median LOSVD (per format spec)
@@ -879,11 +897,14 @@ def write_dynamite_kinematics(
             if solvers[idx].n_stars is None
         ]
         if missing:
-            raise ValueError(
+            msg = (
                 f"bin_flux_mode='nstars' requires that add_data() was called "
                 f"on every solver, but solvers at indices {missing} have "
                 "n_stars=None.  Call add_data() before fit_all_bins(), or "
                 "use bin_flux_mode='uniform' / 'custom' instead."
+            )
+            raise ValueError(
+                msg
             )
         bin_flux_vals = np.array(
             [float(solvers[i].n_stars) for i in solved_indices]
@@ -895,9 +916,12 @@ def write_dynamite_kinematics(
             [float(bin_metas[i].get("bin_flux", 1.0)) for i in solved_indices]
         )
     else:
-        raise ValueError(
+        msg = (
             f"bin_flux_mode must be 'nstars', 'uniform', or 'custom'; "
             f"got {bin_flux_mode!r}."
+        )
+        raise ValueError(
+            msg
         )
     data["bin_flux"] = bin_flux_vals
 
