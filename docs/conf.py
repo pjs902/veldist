@@ -20,12 +20,7 @@ extensions = [
 ]
 
 templates_path = ['_templates']
-exclude_patterns = [
-    '_build', 'Thumbs.db', '.DS_Store',
-    # Standalone README files that are not part of the Sphinx toctree
-    'README_IMAGES.md',
-    'images/README.md',
-]
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
 html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']

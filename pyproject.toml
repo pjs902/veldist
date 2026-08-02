@@ -17,7 +17,7 @@ dependencies = ["numpy>=2.0", "numpyro", "jax", "matplotlib", "scipy", "astropy"
 homepage = "https://github.com/pjs902/veldist"
 
 [project.optional-dependencies]
-dev = ["pytest>=9.0.3", "scipy"]
+dev = ["pytest>=9.0.3", "scipy", "ruff"]
 docs = [
     "sphinx>=8.1.3",
     "sphinx-book-theme>=1.0",

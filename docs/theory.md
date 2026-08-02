@@ -33,27 +33,41 @@ resolve individual bins.
 ### Smoothing prior
 
 A flat histogram is not a useful prior for stellar kinematics: real LOSVDs
-are smooth.  We impose this by generating the histogram weights through a
-latent Gaussian random walk.  The latent variable $u_i$ for bin $i$ is
-drawn from a normal distribution centred on the previous bin value:
+are smooth.  We impose this via an intrinsic first-order random-walk (RW1)
+Gaussian Markov Random Field on a latent curve $\mathbf{u} \in \mathbb{R}^K$,
+penalising the differences between adjacent bins:
 
 $$
-u_0 \sim \mathcal{N}(0, \sigma_\mathrm{smooth}),
-\qquad
-u_i \sim \mathcal{N}(u_{i-1},\, \sigma_\mathrm{smooth}), \quad i > 0.
+\log p(\mathbf{u} \mid \sigma_\mathrm{smooth}) = -\frac{1}{2\sigma_\mathrm{step}^2}
+\sum_{i=1}^{K-1} (u_i - u_{i-1})^2 - (K-1)\log\sigma_\mathrm{step} + \mathrm{const.}
 $$
 
-The weight vector $\mathbf{w}$ is then obtained by applying the softmax
-transformation to $\mathbf{u}$, which ensures positivity and unit normalisation.
+This is deliberately *not* implemented as a directed walk with $u_0$ pinned
+at a fixed value: pinning one endpoint makes the prior asymmetric in bin
+index (bins near the pinned edge are regularised more tightly than bins far
+from it), which would bias the inferred LOSVD's *shape* toward one edge of
+the velocity grid. The RW1 form above treats every bin identically — it
+depends only on the differences between neighbours, so no bin is special.
+Because this penalty alone leaves the overall level of $\mathbf{u}$
+completely unconstrained (any constant shift leaves all differences
+unchanged), a wide but proper $\mathcal{N}(0, 10)$ base prior is placed on
+$\mathbf{u}$ purely to keep the sampler well-posed in that direction; it has
+no effect on the result because the weight vector $\mathbf{w}$, obtained by
+applying the softmax transformation to $\mathbf{u}$, is itself invariant to
+constant shifts.
 
 The smoothing scale $\sigma_\mathrm{smooth}$ controls the typical step size
-between adjacent bins.  A small value forces the inferred LOSVD to vary
-slowly; a large value allows sharp features.  Crucially, $\sigma_\mathrm{smooth}$
-is not fixed by the user — it is a free hyperparameter with a weakly
-informative prior, and its posterior is marginalised during sampling.  The
-sampler therefore adapts the smoothness to the signal-to-noise of the data
-automatically: a bin with many stars will support more structure than one
-with few.
+between adjacent bins, rescaled by $\sqrt{\Delta v}$ (i.e.
+$\sigma_\mathrm{step} = \sigma_\mathrm{smooth}\sqrt{\Delta v}$) so that its
+meaning does not depend on how finely the velocity grid is subdivided — a
+grid refined to twice as many, half-as-wide bins should not, by itself,
+change how smooth the inferred LOSVD is.  A small value forces the inferred
+LOSVD to vary slowly; a large value allows sharp features.  Crucially,
+$\sigma_\mathrm{smooth}$ is not fixed by the user — it is a free
+hyperparameter with a weakly informative prior, and its posterior is
+marginalised during sampling.  The sampler therefore adapts the smoothness
+to the signal-to-noise of the data automatically: a bin with many stars will
+support more structure than one with few.
 
 ![Samples from the Gaussian random walk prior at three smoothing scales](images/fig_prior.png)
 

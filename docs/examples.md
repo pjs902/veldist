@@ -5,6 +5,14 @@
 The simplest use case is a single spatial bin containing $N$ stars with
 individual velocity measurements and uncertainties.
 
+![The core deconvolution problem](images/fig_deconvolution.png)
+
+*(a) The intrinsic LOSVD together with a sample of individual per-star error
+kernels. (b) The observed velocity distribution — the convolution of the
+intrinsic LOSVD with those error kernels — which is all that is directly
+measured. (c) The posterior LOSVD recovered by `veldist`, compared against
+the true intrinsic distribution from panel (a).*
+
 ```python
 import numpy as np
 from veldist import KinematicSolver
@@ -78,7 +86,7 @@ noisy.*
 
 For IFU-style data where stellar velocities have been Voronoi-binned, use
 `fit_all_bins` to run inference across all bins and `write_dynamite_kinematics`
-to produce the three files expected by Dynamite's `histLOSVD` kinematics
+to produce the three files expected by Dynamite's `BayesLOSVD` kinematics
 handler.
 
 ### Preparing the input
@@ -226,6 +234,14 @@ The `tail_weight` metric and the `bimodality_score` have no GH analogues
 and are diagnostic of features that GH fitting cannot represent — heavy tails
 in the radially-anisotropic regime and genuinely bimodal LOSVDs from
 kinematically distinct populations.
+
+![Summary metrics on two example LOSVDs](images/fig_summary_metrics.png)
+
+*Left: a symmetric, leptokurtic LOSVD (heavy tails — a radial-anisotropy
+analogue) with its scalar summary metrics annotated. Right: an asymmetric,
+skewed LOSVD (a rotation-like analogue). Compare the sign and magnitude of
+`skewness`/`kurtosis` against the shapes shown here when interpreting a new
+fit.*
 
 ![Kinematic maps from veldist](images/fig_kin_maps.png)
 

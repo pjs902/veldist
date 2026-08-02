@@ -44,7 +44,7 @@ Slow tests (`@pytest.mark.slow`) run actual NUTS sampling and take minutes each.
 **Key data flow:**
 1. `KinematicSolver.setup_grid(center, width, n_bins)` — defines the velocity histogram grid
 2. `KinematicSolver.add_data(vel, err)` → `precompute_design_matrix` — bakes observations into M once (avoids recomputing per MCMC step)
-3. `KinematicSolver.run()` → NUTS on `model(matrix, n_bins)` — infers `intrinsic_pdf` (probability mass per bin, each sample sums to 1) and `smoothness_sigma` (hyperparameter on the random-walk prior)
+3. `KinematicSolver.run()` → NUTS on `model(matrix, n_bins, bin_width)` — infers the latent curve `x`, `smoothness_sigma` (physical, resolution-independent hyperparameter on the intrinsic RW1 random-walk prior — see `docs/theory.md`), and the `intrinsic_pdf` deterministic (probability mass per bin, each sample sums to 1, `= softmax(x)`)
 4. `KinematicSolver.clip_uncertainties()` — post-processes samples into per-bin median + half-68CI, with uncertainty floors (prevents Dynamite NNLS failures from zero-uncertainty bins)
 5. `write_dynamite_kinematics(solvers, output_dir, voronoi_bin_metadata)` — writes three Dynamite input files: ECSV kinematics, `aperture.dat`, `bins.dat`
 

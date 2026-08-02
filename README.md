@@ -17,7 +17,7 @@ weight) and their uncertainties are derived without additional assumptions.
 Designed for resolved stellar kinematics in globular clusters, dwarf
 galaxies, and the extended halos of nearby galaxies.  Includes a batch
 pipeline for Voronoi-binned IFU-like data and a writer for the Dynamite
-`histLOSVD` / BayesLOSVD input format.
+`BayesLOSVD` input format.
 
 ## Installation
 
