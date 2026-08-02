@@ -5,37 +5,11 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
-- **[P0] Model correctness fixes** (`PLAN.md` §0)
-  Found in the code sweep, not previously tracked:
-  `total_flux` is an incomplete extended-Poisson likelihood (missing the `−Φ`
-  term; posterior biased ~1.6×) and has zero influence on `intrinsic_pdf` —
-  delete it. The random-walk prior is not translation-invariant (bin 0 is
-  pinned, `Var ∝ k`) — replace with an intrinsic RW1 GMRF, which is also the
-  1D case of the 2D prior below. `smoothness_sigma`'s prior is grid-resolution
-  dependent. `run(gpu=True)` default crashes on GPU-less machines.
-
 - **[P0] Statistical validation framework** (`PLAN.md` §1)
-  We have no test that would detect a wrong posterior. Three layers:
-  analytic unit tests for `analysis.py` (closed-form answers, no MCMC);
-  simulation-based calibration (SBC) on derived scalars; frequentist coverage
-  of the reported 68% CIs over repeated mocks. Write SBC *before* the §0 fixes
-  so we see it fail first.
-
-- **[P0] Test coverage for `analysis.py` and the batch/export pipeline**
-  `compute_summary`, `compute_summary_maps`, `truncate_losvd`,
-  `clip_uncertainties`, `fit_all_bins`, and `write_dynamite_kinematics` have
-  zero tests — only the core single-bin NUTS solver path is covered. Add a
-  round-trip test: mock bins → `fit_all_bins` → `write_dynamite_kinematics`
-  → read back ECSV.
-
-- **[P1] Fix ruff lint violations**
-  8 EM101/EM102 violations (raw string/f-string literals in `raise`) in
-  `veldist.py` and `analysis.py`. `ruff check --fix`.
-
-- **[P1] Resolve in-code TODOs**
-  `veldist.py:161` (Dirichlet vs. current prior on weights — undecided) and
-  `veldist.py:358` (whether to work in density space internally). Make the
-  call and delete the comments, or write the tradeoff down here properly.
+  Analytic unit tests for `analysis.py` and design-matrix correctness: done
+  (`tests/test_analysis.py`, `tests/test_design_matrix.py`). SBC harness
+  (`tests/test_calibration.py`) in progress against the now-corrected model.
+  Still open: §1.3 frequentist coverage over repeated mocks.
 
 - **[P1] 2D solver: `KinematicSolver2D` for bivariate PM distributions**
   Design is settled: square K×K grid, (N, K²) design matrix using centre-point
@@ -52,11 +26,10 @@ Suggested execution order is the table at the end of that file.
   Conditional on the 2D solver above actually needing it — don't build
   speculatively.
 
-- **[P2] Docs cleanup** (`PLAN.md` §4.3 — smaller than previously thought)
-  `theory.md` and `examples.md` are real prose, not placeholder text. The
-  actual debt: `generate_example_images.py` and `generate_all_example_images.py`
-  are near-duplicates and both still use legacy `compute_moments`. Plus a new
-  "Validation" page once SBC/coverage results exist.
+- **[P2] Validation page in docs**
+  Once §1.2 SBC and §1.3 coverage results exist, add a short "Validation"
+  page to the docs reporting them — cheap once the tests exist, since the
+  tests emit the numbers.
 
 ## Someday (long-term, not active)
 
@@ -69,6 +42,26 @@ Suggested execution order is the table at the end of that file.
 
 ## Completed
 
+- Model correctness fixes (P0): removed the broken `total_flux` term
+  (incomplete extended-Poisson likelihood, zero influence on `intrinsic_pdf`);
+  replaced the pinned-cumsum random-walk prior with a translation-invariant
+  intrinsic RW1 GMRF; made `smoothness_sigma` grid-resolution-invariant;
+  `run(gpu=...)` now defaults to leaving the platform untouched instead of
+  crashing on GPU-less machines
+- Test coverage for `analysis.py` and the batch/export pipeline (P0):
+  `tests/test_analysis.py`, `tests/test_design_matrix.py`,
+  `tests/test_pipeline.py`, `tests/test_model.py`
+- Fix ruff lint violations (P1): `src/` is ruff-clean; `ruff check src/`
+  now runs in CI
+- Resolve in-code TODOs (P1): both resolved by the model correctness fixes
+  above (density-space TODO resolved as "stay in mass space", documented in
+  `plot_result`'s docstring)
+- Docs cleanup (P2): removed the orphaned `generate_*_images.py` script pair
+  and 15 unreferenced PNGs; referenced the two live-API figure scripts
+  (`fig_deconvolution.py`, `fig_summary_metrics.py`) from `examples.md`;
+  fixed stale `histLOSVD`/`BayesLOSVD` naming, `docs/conf.py` version
+  hardcoding, `.readthedocs.yaml` redundant install step, `.gitignore` beads
+  leftovers
 - Fix NNLS with multiple kinematic datasets: figure out correct stacking (P1)
 - Apply perspective rotation correction to all Gaia PM data (P1)
 - SDSS-V data integration and prep pipeline (P1)
