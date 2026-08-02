@@ -5,11 +5,12 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
-- **[P0] Statistical validation framework** (`PLAN.md` §1)
-  Analytic unit tests for `analysis.py` and design-matrix correctness: done
-  (`tests/test_analysis.py`, `tests/test_design_matrix.py`). SBC harness
-  (`tests/test_calibration.py`) in progress against the now-corrected model.
-  Still open: §1.3 frequentist coverage over repeated mocks.
+- **[P0] Frequentist coverage tests** (`PLAN.md` §1.3)
+  Last piece of the statistical validation framework. SBC (§1.2) validates
+  the sampler against the model; coverage validates the model against
+  reality — whether the reported ±half-68CI error bars mean what we tell
+  Dynamite they mean, over repeated mock datasets with fixed physically
+  motivated truths (Gaussian, Student-t, skew-normal, bimodal).
 
 - **[P1] 2D solver: `KinematicSolver2D` for bivariate PM distributions**
   Design is settled: square K×K grid, (N, K²) design matrix using centre-point
@@ -44,8 +45,10 @@ Suggested execution order is the table at the end of that file.
 
 - Model correctness fixes (P0): removed the broken `total_flux` term
   (incomplete extended-Poisson likelihood, zero influence on `intrinsic_pdf`);
-  replaced the pinned-cumsum random-walk prior with a translation-invariant
-  intrinsic RW1 GMRF; made `smoothness_sigma` grid-resolution-invariant;
+  replaced the pinned-cumsum random-walk prior with a translation-invariant,
+  generatively-sampled intrinsic RW1 prior (increments + mean-centering, not
+  a `numpyro.factor` penalty — factors are invisible to `Predictive`, see
+  SBC note below); made `smoothness_sigma` grid-resolution-invariant;
   `run(gpu=...)` now defaults to leaving the platform untouched instead of
   crashing on GPU-less machines
 - Test coverage for `analysis.py` and the batch/export pipeline (P0):
@@ -53,6 +56,12 @@ Suggested execution order is the table at the end of that file.
   `tests/test_pipeline.py`, `tests/test_model.py`
 - Fix ruff lint violations (P1): `src/` is ruff-clean; `ruff check src/`
   now runs in CI
+- Simulation-based calibration (P0, `PLAN.md` §1.2): `tests/test_calibration.py`.
+  Caught and led to fixing a real bug: the RW1 prior's `numpyro.factor`
+  implementation was invisible to `Predictive`, so SBC's prior draws didn't
+  match what NUTS actually conditioned against. Fixed by rewriting the prior
+  generatively (see Model correctness fixes below); now passes cleanly
+  (6/6 quantities, p=0.52–0.97, n_sims=30)
 - Resolve in-code TODOs (P1): both resolved by the model correctness fixes
   above (density-space TODO resolved as "stay in mass space", documented in
   `plot_result`'s docstring)
