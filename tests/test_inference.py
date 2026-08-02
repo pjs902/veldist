@@ -2,7 +2,6 @@
 
 import numpy as np
 import pytest
-from scipy import stats
 
 from tests.helpers import (
     make_gaussian_distribution,
@@ -10,7 +9,6 @@ from tests.helpers import (
     make_bimodal_distribution,
     make_mixture_distribution,
     generate_mock_data,
-    compute_ks_test,
     check_moment_recovery,
 )
 
