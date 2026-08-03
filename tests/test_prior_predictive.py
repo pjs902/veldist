@@ -316,3 +316,32 @@ def test_gaussian_core_deviation_has_unit_marginal_sd(n_bins):
         f"n_bins={n_bins}: deviation generalised SD is {generalised_sd:.4g}, "
         "expected ~1. If this is ~0.004 the Sorbye-Rue scaling is not wired in."
     )
+
+
+def test_gaussian_core_prior_spans_nongaussian_shapes():
+    """The PC prior must make non-Gaussian LOSVDs reachable a priori.
+
+    Two failure modes bracketed here. Too tight (the original bug): every
+    prior draw is a Gaussian, excess kurtosis is ~0 everywhere, and the
+    likelihood can never pull the posterior away from Gaussian. Too loose:
+    draws saturate the softmax into spiky near-delta functions, which shows
+    up as an enormous kurtosis tail.
+
+    This test pins SIGMA3_RATE. If it fails, change SIGMA3_RATE rather than
+    the bounds, and record the implied P(sigma3 > 1) in its comment.
+    """
+    n_bins = 40
+    centers, bin_width = _grid(n_bins)
+    pdfs = _prior_predictive_pdfs(model_gaussian_core, n_bins, centers, bin_width, num_samples=4000)
+    _, excess_kurtosis = _moments(pdfs, centers)
+    finite = excess_kurtosis[np.isfinite(excess_kurtosis)]
+    p90 = float(np.percentile(np.abs(finite), 90))
+
+    assert p90 > 0.3, (
+        f"prior-predictive |excess kurtosis| p90 = {p90:.4g}; the prior is too "
+        "tight to represent non-Gaussian LOSVDs at all"
+    )
+    assert p90 < 10.0, (
+        f"prior-predictive |excess kurtosis| p90 = {p90:.4g}; the prior is so "
+        "loose it is producing near-delta functions"
+    )

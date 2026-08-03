@@ -34,7 +34,7 @@ __all__ = [
 # Defined by P(sigma3 > 1) = 0.1, i.e. rate = -ln(0.1). After Sorbye-Rue
 # standardisation sigma3 is the typical log-density departure from a Gaussian
 # LOSVD, so sigma3 = 1 means a departure of a factor ~e at typical velocities.
-# Provisional until pinned by test_gaussian_core_prior_spans_nongaussian_shapes.
+# Pinned by test_gaussian_core_prior_spans_nongaussian_shapes (p90 |kurtosis| = 1.361).
 SIGMA3_RATE = 2.302585092994046
 
 # ==============================================================================
