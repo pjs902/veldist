@@ -477,7 +477,7 @@ class KinematicSolver:
         self.matrix = precompute_design_matrix(vel, err, self.grid["centers"], bin_width=self.grid["width"])
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="rw1"):
+    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="gaussian_core"):
         """
         Run the NUTS sampler.
 
@@ -498,15 +498,14 @@ class KinematicSolver:
             seeds per bin to avoid any correlation in the sampling chains; a
             simple convention is ``seed + bin_index`` (see ``fit_all_bins``).
         prior : {"rw1", "gaussian_core"}
-            Which smoothness prior to use. ``"rw1"`` (default) is the
-            original first-difference random walk, whose infinite-smoothing
-            limit is a *uniform* LOSVD over the velocity grid; it is known
-            to bias kurtosis high by ~+1.1 and dispersion high by ~4-8%,
-            with the dispersion bias growing with ``n_bins``.
-            ``"gaussian_core"`` uses
+            Which smoothness prior to use. ``"gaussian_core"`` (default) uses
             :func:`generate_gaussian_core_curve`, whose infinite-smoothing
             limit is a Gaussian (Merritt 1997, AJ, 114, 228) and which does
-            not show those biases.
+            not show the kurtosis/velocity-dispersion biases of the RW1
+            prior. ``"rw1"`` is the original first-difference random walk,
+            retained for comparison; its infinite-smoothing limit is a
+            *uniform* LOSVD over the velocity grid, known to bias kurtosis
+            high by ~+1.1 and dispersion high by ~4-8%.
 
         Returns
         -------
