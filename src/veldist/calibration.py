@@ -58,13 +58,13 @@ class ObservingProfile:
     """
 
     name: str
-    n_stars: int           # stars per spatial bin (the science target)
-    err_median: float      # median measurement error, km/s
-    err_log_sigma: float   # log-normal width of the error distribution
-    sigma_max: float       # largest LOSVD dispersion in the field
-    sigma_min: float       # smallest; sets the worst-case informative fraction
+    n_stars: int  # stars per spatial bin (the science target)
+    err_median: float  # median measurement error, km/s
+    err_log_sigma: float  # log-normal width of the error distribution
+    sigma_max: float  # largest LOSVD dispersion in the field
+    sigma_min: float  # smallest; sets the worst-case informative fraction
     rotation_span: float  # full spread of mean velocity across spatial bins
-    n_sigma_grid: float = 4.0    # grid half-width, in sigma_max
+    n_sigma_grid: float = 4.0  # grid half-width, in sigma_max
     bins_per_error: float = 2.0  # bin width, in median measurement error
 
     @property
@@ -102,8 +102,7 @@ class ObservingProfile:
     def err_over_sigma(self) -> tuple:
         """Deconvolution difficulty. Amorisco & Evans (2012) show the
         attenuation of non-Gaussian signal depends on this ratio alone."""
-        return (self.median_error / self.sigma_max,
-                self.median_error / self.sigma_min)
+        return (self.median_error / self.sigma_max, self.median_error / self.sigma_min)
 
     def informative_fraction(self, sigma: float) -> float:
         """Fraction of grid bins carrying mass for a LOSVD of this width."""
@@ -124,15 +123,27 @@ class ObservingProfile:
             "h4": 1.0 / np.sqrt(2 * n),
         }
 
+    def matched_grid(self, sigma):
+        """Grid width and bin count matched to a single dispersion.
+
+        DYNAMITE requires one shared grid across all spatial bins, but that
+        constraint is on the *output*. Nothing stops veldist fitting each bin
+        on a grid matched to its own dispersion and aggregating the posterior
+        samples onto the shared output grid afterwards. If the fitted grid is
+        at least as fine as the output grid and their edges align, that
+        aggregation is exact -- it is just summing mass within output bins,
+        per sample -- so uncertainties propagate correctly.
+        """
+        width = 2.0 * self.n_sigma_grid * sigma
+        return width, int(round(width / self.bin_width))
+
     def report(self) -> str:
         p = self.moment_precision()
         lo, hi = self.err_over_sigma
         lines = [
             f"ObservingProfile: {self.name}",
-            f"  {self.n_stars} stars/bin, log-normal errors "
-            f"(median {self.err_median:.1f}, s={self.err_log_sigma})",
-            f"  LOSVD sigma {self.sigma_min}-{self.sigma_max} km/s, "
-            f"rotation span {self.rotation_span} km/s",
+            f"  {self.n_stars} stars/bin, log-normal errors " f"(median {self.err_median:.1f}, s={self.err_log_sigma})",
+            f"  LOSVD sigma {self.sigma_min}-{self.sigma_max} km/s, " f"rotation span {self.rotation_span} km/s",
             f"  grid: {self.grid_width:.0f} km/s / {self.n_bins} bins "
             f"= {self.bin_width:.1f} km/s "
             f"({self.bins_per_error:.1f}x median error)",
@@ -171,8 +182,8 @@ class Truth:
 
     name: str
     note: str
-    _pdf: Callable          # unit-ish pdf, arbitrary location/scale
-    _rvs: Callable          # matching sampler
+    _pdf: Callable  # unit-ish pdf, arbitrary location/scale
+    _rvs: Callable  # matching sampler
     _cache: dict = field(default_factory=dict, repr=False)
 
     def _standardise(self):
@@ -202,12 +213,14 @@ def _uniform_gauss(a, s):
     """Uniform(-a, a) convolved with a Gaussian -- the Sanders & Evans (2020)
     negative-excess-kurtosis kernel. Excess kurtosis is -1.2 r^2 where r is the
     fraction of variance carried by the uniform part; -1.2 is the hard floor."""
+
     def pdf(x):
         x = np.asarray(x, dtype=float)
         return (stats.norm.cdf((x + a) / s) - stats.norm.cdf((x - a) / s)) / (2 * a)
 
     def rvs(n, rng):
         return rng.uniform(-a, a, size=n) + rng.normal(0.0, s, size=n)
+
     return pdf, rvs
 
 
@@ -216,6 +229,7 @@ def _split_uniform_gauss(a1, a2, s):
     of zero, convolved with a Gaussian: the SE20 skewness option. Note a
     *shifted* uniform is still symmetric about its own midpoint and gives no
     skewness at all -- the widths must differ."""
+
     def pdf(x):
         x = np.asarray(x, dtype=float)
         left = (stats.norm.cdf((x + a1) / s) - stats.norm.cdf(x / s)) / a1
@@ -227,6 +241,7 @@ def _split_uniform_gauss(a1, a2, s):
         d = rng.uniform(0.0, a2, size=n)
         d[left] = rng.uniform(-a1, 0.0, size=left.sum())
         return d + rng.normal(0.0, s, size=n)
+
     return pdf, rvs
 
 
@@ -240,6 +255,7 @@ def _mixture(locs, scales, weights):
     def rvs(n, rng):
         comp = rng.choice(len(locs), size=n, p=list(weights))
         return rng.normal(np.array(locs)[comp], np.array(scales)[comp])
+
     return pdf, rvs
 
 
@@ -251,35 +267,66 @@ def make_truths():
     |h4| <~ 0.05-0.1). Physical motivation for each is in its ``note``.
     """
     t = []
-    t.append(Truth("gaussian", "isotropic, no rotation: the null case",
-                   stats.norm(0, 1).pdf,
-                   lambda n, rng: rng.normal(0, 1, size=n)))
-    t.append(Truth("student_t_h4", "radial anisotropy, h4 > 0; excess kurtosis 1.0",
-                   stats.t(df=10).pdf,
-                   lambda n, rng: stats.t(df=10).rvs(size=n, random_state=rng)))
-    t.append(Truth("mild_radial_h4", "weak radial anisotropy, the inner-region case",
-                   stats.t(df=19).pdf,
-                   lambda n, rng: stats.t(df=19).rvs(size=n, random_state=rng)))
-    t.append(Truth("skew_normal_h3", "rotation, h3 != 0",
-                   stats.skewnorm(a=2).pdf,
-                   lambda n, rng: stats.skewnorm(a=2).rvs(size=n, random_state=rng)))
-    t.append(Truth("flat_top_tangential", "tangential anisotropy, h4 < 0",
-                   *_uniform_gauss(28.1, 5.0)))
-    t.append(Truth("rotating_tangential", "rotation AND tangential anisotropy",
-                   *_split_uniform_gauss(34.0, 13.0, 6.0)))
-    t.append(Truth("cold_disk_component",
-                   "van de Ven+06 disk-like component, 4% of mass, kinematically cold",
-                   *_mixture((0.0, 26.0), (17.0, 5.0), (0.96, 0.04))))
-    t.append(Truth("two_population",
-                   "Norris+97 metal-poor hot/rotating + metal-rich cool/static",
-                   *_mixture((4.0, -2.0), (19.0, 12.0), (0.65, 0.35))))
-    t.append(Truth("bimodal_counter_rotation", "counter-rotating populations",
-                   *_mixture((-18.0, 18.0), (10.0, 10.0), (0.5, 0.5))))
+    t.append(
+        Truth(
+            "gaussian",
+            "isotropic, no rotation: the null case",
+            stats.norm(0, 1).pdf,
+            lambda n, rng: rng.normal(0, 1, size=n),
+        )
+    )
+    t.append(
+        Truth(
+            "student_t_h4",
+            "radial anisotropy, h4 > 0; excess kurtosis 1.0",
+            stats.t(df=10).pdf,
+            lambda n, rng: stats.t(df=10).rvs(size=n, random_state=rng),
+        )
+    )
+    t.append(
+        Truth(
+            "mild_radial_h4",
+            "weak radial anisotropy, the inner-region case",
+            stats.t(df=19).pdf,
+            lambda n, rng: stats.t(df=19).rvs(size=n, random_state=rng),
+        )
+    )
+    t.append(
+        Truth(
+            "skew_normal_h3",
+            "rotation, h3 != 0",
+            stats.skewnorm(a=2).pdf,
+            lambda n, rng: stats.skewnorm(a=2).rvs(size=n, random_state=rng),
+        )
+    )
+    t.append(Truth("flat_top_tangential", "tangential anisotropy, h4 < 0", *_uniform_gauss(28.1, 5.0)))
+    t.append(Truth("rotating_tangential", "rotation AND tangential anisotropy", *_split_uniform_gauss(34.0, 13.0, 6.0)))
+    t.append(
+        Truth(
+            "cold_disk_component",
+            "van de Ven+06 disk-like component, 4% of mass, kinematically cold",
+            *_mixture((0.0, 26.0), (17.0, 5.0), (0.96, 0.04)),
+        )
+    )
+    t.append(
+        Truth(
+            "two_population",
+            "Norris+97 metal-poor hot/rotating + metal-rich cool/static",
+            *_mixture((4.0, -2.0), (19.0, 12.0), (0.65, 0.35)),
+        )
+    )
+    t.append(
+        Truth(
+            "bimodal_counter_rotation",
+            "counter-rotating populations",
+            *_mixture((-18.0, 18.0), (10.0, 10.0), (0.5, 0.5)),
+        )
+    )
     return t
 
 
 METRICS = ["v_mean", "sigma", "skewness", "kurtosis", "tail_weight"]
-NOMINAL_BAND = (0.440, 0.920)   # binom(25, 0.68) 99% band
+NOMINAL_BAND = (0.440, 0.920)  # binom(25, 0.68) 99% band
 CATASTROPHIC = 0.30
 
 
@@ -313,8 +360,8 @@ class CalibrationResult:
 
     profile: ObservingProfile
     sigma: float
-    coverage: dict      # {truth: {metric: fraction}}
-    medians: dict       # {truth: {metric: [per-realisation posterior medians]}}
+    coverage: dict  # {truth: {metric: fraction}}
+    medians: dict  # {truth: {metric: [per-realisation posterior medians]}}
     truth_values: dict
 
     @staticmethod
@@ -357,8 +404,7 @@ class CalibrationResult:
         out = [
             f"{self.profile.name} @ sigma={self.sigma:.0f} km/s, "
             f"N={self.profile.n_stars}, {self.profile.n_bins} bins",
-            f"  in-band {s['in_band']}/{s['n_entries']}, "
-            f"catastrophic {s['catastrophic']}",
+            f"  in-band {s['in_band']}/{s['n_entries']}, " f"catastrophic {s['catastrophic']}",
             f"  efficiency: v_mean {e['v_mean']:.2f}x, sigma {e['sigma']:.2f}x",
         ]
         for name, d in self.coverage.items():
@@ -366,9 +412,19 @@ class CalibrationResult:
         return "\n".join(out)
 
 
-def calibrate(profile, truths, sigma=None, *, n_real=25, prior="gaussian_core",
-              n_bins=None, seed=20260803, num_warmup=300, num_samples=600,
-              n_sigma_truncate=None):
+def calibrate(
+    profile,
+    truths,
+    sigma=None,
+    *,
+    n_real=25,
+    prior="gaussian_core",
+    n_bins=None,
+    seed=20260803,
+    num_warmup=300,
+    num_samples=600,
+    n_sigma_truncate=None,
+):
     """Fit mock realisations of each truth; measure coverage and efficiency.
 
     ``sigma`` defaults to the profile's widest LOSVD. **Run it at
@@ -399,11 +455,10 @@ def calibrate(profile, truths, sigma=None, *, n_real=25, prior="gaussian_core",
             solver = KinematicSolver()
             solver.setup_grid(center=0.0, width=profile.grid_width, n_bins=n_bins)
             solver.add_data(obs, err)
-            solver.run(num_warmup=num_warmup, num_samples=num_samples,
-                       seed=seed + i, prior=prior)
-            summ = compute_summary(solver.samples["intrinsic_pdf"],
-                                   solver.grid["centers"],
-                                   n_sigma_truncate=n_sigma_truncate)
+            solver.run(num_warmup=num_warmup, num_samples=num_samples, seed=seed + i, prior=prior)
+            summ = compute_summary(
+                solver.samples["intrinsic_pdf"], solver.grid["centers"], n_sigma_truncate=n_sigma_truncate
+            )
             for m in METRICS:
                 med, h68 = summ[m]
                 meds[m].append(med)
