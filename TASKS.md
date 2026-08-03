@@ -18,8 +18,12 @@ Suggested execution order is the table at the end of that file.
   roughly unchanged) — a fixed `n_sigma` cut trades away real tail mass for
   these truths along with the leaked mass. `tests/test_coverage.py` remains
   marked `xfail` (reason string updated) pending a fix for this remaining
-  case. Directions in the plan: wider grid margin for heavy-tailed truths,
-  or an adaptive/softer truncation instead of a fixed hard cut.
+  case. Directions in the plan: wider grid margin for heavy-tailed truths
+  (**tried, follow-up session — negative result**: bias got worse, not
+  better, roughly linearly with grid width for both `student_t_h4` and
+  `bimodal_counter_rotation`; see `PLAN.md` §1.3 item 2 for numbers; no
+  code changed, this direction is closed), or an adaptive/softer
+  truncation instead of a fixed hard cut (untried, remaining direction).
 
 - **[P1] 2D solver: §3.5 deferred items** (`PLAN.md` §3.5)
   `KinematicSolver2D` is now feature-complete for "minimally working" per

@@ -486,10 +486,39 @@ for another. `tests/test_coverage.py`'s xfail marker was kept (not removed)
 with its reason string updated to reflect this; the test does not XPASS.
 
 **Remaining fix directions for a future session:**
-2. Investigate whether a wider grid margin (more σ of headroom before the
+2. ~~Investigate whether a wider grid margin (more σ of headroom before the
    edge bins) meaningfully reduces the leaked mass for heavy-tailed truths
    specifically, and if so, whether `setup_grid`'s guidance/defaults should
-   change.
+   change.~~ **Tried (follow-up session) — NEGATIVE result, does not help,
+   makes it substantially worse.** No truncation applied (isolating this
+   variable). Method: `student_t_h4` (baseline `grid=(0,360)`, `n_bins=20`,
+   scale=18) and `bimodal_counter_rotation` (baseline `grid=(0,320)`,
+   `n_bins=20`) at 1.0x/1.5x/2.0x grid width with `n_bins` scaled
+   proportionally (20/30/40) to hold bin width roughly fixed; n=8 mock
+   realisations per configuration (ad-hoc, not the full N_REAL=25 suite),
+   same `KinematicSolver` settings as `tests/test_coverage.py`
+   (`N_STARS=150`, `NUM_WARMUP=300`, `NUM_SAMPLES=600`). Median excess
+   kurtosis bias (fit − true):
+
+   | truth | 1.0x (baseline) | 1.5x | 2.0x |
+   |---|---|---|---|
+   | student_t_h4 (true excess kurt 2.82) | fit 6.67, bias **+3.85** | fit 13.93, bias **+11.11** | fit 22.49, bias **+19.66** |
+   | bimodal_counter_rotation (true excess kurt −1.59) | fit −1.14, bias **+0.45** | fit −0.56, bias **+1.03** | fit 0.30, bias **+1.89** |
+
+   Bias grows roughly linearly with grid width/bin count for both truths —
+   the opposite of the hoped-for direction. Mechanism: widening the grid
+   while keeping bin width fixed adds more far-edge bins, each an
+   independent site for the RW1 prior to leak a small amount of mass into;
+   more edge bins means *more* total leaked mass, not less, and kurtosis's
+   4th-power weighting amplifies every additional far bin (a bin at 8σ from
+   a 2.0x-width grid carries far more (Δv)⁴ weight than one at 4σ on the
+   baseline grid). A wider margin does not give the RW1 prior "room to
+   settle down" the way it might for a mitigation aimed at a genuinely
+   different failure mode — here it directly increases the artifact's
+   surface area. Conclusion: do not widen `student_t_h4` or
+   `bimodal_counter_rotation`'s grids as a kurtosis-bias mitigation;
+   `tests/test_coverage.py` and its truths were left unchanged. This
+   direction is closed; see (3) for the remaining untried direction.
 3. Investigate an adaptive/per-truth-shape truncation (e.g. informed by
    `bimodality_score`, or a softer taper instead of a hard cut) that
    doesn't uniformly discard real tail mass for non-Gaussian truths.
