@@ -209,14 +209,10 @@ _GAUSSIAN_CORE_XFAIL_REASON = (
 @pytest.mark.parametrize(
     "prior",
     [
-        pytest.param(
-            "rw1", marks=pytest.mark.xfail(reason=_RW1_XFAIL_REASON, strict=False)
-        ),
+        pytest.param("rw1", marks=pytest.mark.xfail(reason=_RW1_XFAIL_REASON, strict=False)),
         pytest.param(
             "gaussian_core",
-            marks=pytest.mark.xfail(
-                reason=_GAUSSIAN_CORE_XFAIL_REASON, strict=False
-            ),
+            marks=pytest.mark.xfail(reason=_GAUSSIAN_CORE_XFAIL_REASON, strict=False),
         ),
     ],
 )
@@ -254,15 +250,12 @@ def test_coverage_over_mock_realisations(prior):
         hits = {m: round(result.coverage[truth.name][m] * N_REAL) for m in METRICS}
 
         report_lines.append(f"\n=== {truth.name} [{prior}] (n_real={N_REAL}) ===")
-        report_lines.append(
-            "true values: " + ", ".join(f"{m}={true_vals[m]:.4f}" for m in METRICS)
-        )
+        report_lines.append("true values: " + ", ".join(f"{m}={true_vals[m]:.4f}" for m in METRICS))
         _, rvs = truth.scaled(PROFILE.sigma_ref)
         achievable = _achievable_moments(rvs, N_STARS)
         report_lines.append(
             "  finite-sample achievable (median of sample estimator at "
-            f"N={N_STARS}): "
-            + ", ".join(f"{m}={achievable[m]:.3f}" for m in METRICS)
+            f"N={N_STARS}): " + ", ".join(f"{m}={achievable[m]:.3f}" for m in METRICS)
         )
         report_lines.append(f"nominal-coverage binom({N_REAL},0.68) 99% band: [{band_lo:.3f}, {band_hi:.3f}]")
 
@@ -300,11 +293,7 @@ def test_coverage_over_mock_realisations(prior):
         report += "\n\nExpected shrinkage (not failures):\n" + "\n".join(soft_warnings)
 
     if hard_failures:
-        failure_msg = (
-            report
-            + "\n\nHARD FAILURES (coverage outside acceptable range):\n"
-            + "\n".join(hard_failures)
-        )
+        failure_msg = report + "\n\nHARD FAILURES (coverage outside acceptable range):\n" + "\n".join(hard_failures)
         pytest.fail(failure_msg)
 
     print(report)
@@ -331,12 +320,12 @@ def _achievable_moments(rvs, n_stars, n_trials=2000, seed=7):
         v = rvs(n_stars, rng)
         mean = v.mean()
         d = v - mean
-        var = (d ** 2).mean()
+        var = (d**2).mean()
         sigma = np.sqrt(var)
         acc["v_mean"][t] = mean
         acc["sigma"][t] = sigma
-        acc["skewness"][t] = (d ** 3).mean() / sigma ** 3
-        acc["kurtosis"][t] = (d ** 4).mean() / var ** 2 - 3.0
+        acc["skewness"][t] = (d**3).mean() / sigma**3
+        acc["kurtosis"][t] = (d**4).mean() / var**2 - 3.0
         acc["tail_weight"][t] = np.mean(np.abs(d) > sigma)
     return {m: float(np.median(acc[m])) for m in METRICS}
 
@@ -366,4 +355,46 @@ def test_population_kurtosis_is_unreachable_for_heavy_tailed_truths():
         "expected the sample kurtosis estimator to badly under-report the "
         f"heavy tail at N={N_STARS}: achievable={achievable['kurtosis']:.2f}, "
         f"population={population['kurtosis']:.2f}"
+    )
+
+
+@pytest.mark.slow
+@pytest.mark.xfail(
+    reason="21.4 sigma bias over 200 bins (per-bin bias -0.273 vs scatter 0.181). "
+    "The gaussian_core prior shrinks skewness toward zero; averaged over a "
+    "~200-bin map this produces a spurious ~21-sigma detection, not acceptable "
+    "shrinkage.",
+    strict=False,
+)
+def test_map_level_bias_is_small_against_the_map_uncertainty():
+    """A per-bin bias that is negligible alone is not negligible 200 times.
+
+    With N_MAP spatial bins observing the same underlying shape, the mean
+    recovered skewness has uncertainty per_bin_sigma / sqrt(N_MAP). A
+    systematic offset that is a modest fraction of one bin's scatter becomes
+    many sigma at the map level, and would be interpreted as a real
+    kinematic feature rather than as shrinkage.
+    """
+    n_map = 200
+    truths = {t.name: t for t in make_truths()}
+    t = truths["skew_normal_h3"]
+    result = calibrate(PROFILE, [t], n_real=N_REAL, prior="gaussian_core")
+
+    meds = np.asarray(result.medians[t.name]["skewness"])
+    truth = result.truth_values[t.name]["skewness"]
+    per_bin_sigma = 0.5 * (np.percentile(meds, 84) - np.percentile(meds, 16))
+    bias = float(np.mean(meds) - truth)
+    map_sigma = per_bin_sigma / np.sqrt(n_map)
+    significance = abs(bias) / map_sigma
+
+    print(
+        f"\nper-bin bias {bias:+.4f}, per-bin scatter {per_bin_sigma:.4f}, "
+        f"map-level significance {significance:.1f} sigma over {n_map} bins"
+    )
+
+    assert significance < 3.0, (
+        f"map-level bias is {significance:.1f} sigma over {n_map} bins "
+        f"(per-bin bias {bias:+.3f} against per-bin scatter "
+        f"{per_bin_sigma:.3f}). Averaged over a map this is a spurious "
+        "detection, not acceptable shrinkage."
     )
