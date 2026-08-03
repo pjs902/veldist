@@ -17,7 +17,7 @@ import numpy as np
 import pytest
 from numpyro.infer import Predictive
 
-from veldist.veldist import model, model_gaussian_core
+from veldist.veldist import model, model_gaussian_core, generate_gaussian_core_curve
 
 # Grid used throughout: 400 km/s wide, centred on 200.
 GRID_CENTER = 200.0
@@ -216,10 +216,10 @@ def test_gaussian_core_prior_is_resolution_invariant():
     """Refining the velocity grid must not change what the prior means.
 
     The repo already guarantees this for the RW1 prior via a sqrt(bin_width)
-    step scaling. A triple-integrated random walk accumulates as t**2.5 over
-    a fixed physical range, so it needs bin_width**2.5 instead. If that
-    exponent is wrong, the prior-predictive dispersion will drift
-    systematically as n_bins changes.
+    step scaling. The Gaussian-core prior instead standardises the deviation
+    to unit generalised variance (Sorbye & Rue), which is resolution-invariant
+    by construction. If that standardisation is wrong, the prior-predictive
+    dispersion will drift systematically as n_bins changes.
     """
     medians = []
     for n_bins in (20, 40, 80):
@@ -278,3 +278,41 @@ def test_rw3_deviation_scale_is_cached():
     _rw3_deviation_scale(40)
     _rw3_deviation_scale(40)
     assert _rw3_deviation_scale.cache_info().hits >= 1
+
+
+@pytest.mark.parametrize("n_bins", [20, 40, 80])
+def test_gaussian_core_deviation_has_unit_marginal_sd(n_bins):
+    """With sigma3 = 1, the deviation must have marginal SD ~1 in
+    log-density units.
+
+    This is the regression test for the collapse bug: before the Sorbye-Rue
+    scaling landed, the deviation's marginal SD was ~0.0036, far too small
+    for the likelihood to see, so the posterior reverted to the pure
+    Gaussian null space no matter what the data said.
+    """
+    import jax
+    from numpyro.handlers import seed, substitute
+
+    from veldist.veldist import generate_gaussian_core_curve
+
+    centers, bin_width = _grid(n_bins)
+    rng = np.random.default_rng(0)
+    n_draws = 400
+
+    deviations = np.empty((n_draws, n_bins))
+    for i in range(n_draws):
+        fixed = {
+            "v0": GRID_CENTER,
+            "s0": 1e8,  # flattens the quadratic core to ~0 over this grid
+            "sigma3": 1.0,
+            "d3": rng.normal(size=n_bins),
+        }
+        model_fn = substitute(seed(generate_gaussian_core_curve, jax.random.PRNGKey(i)), data=fixed)
+        deviations[i] = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width))
+
+    per_bin_var = deviations.var(axis=0)
+    generalised_sd = np.sqrt(np.exp(np.mean(np.log(per_bin_var))))
+    assert 0.8 < generalised_sd < 1.25, (
+        f"n_bins={n_bins}: deviation generalised SD is {generalised_sd:.4g}, "
+        "expected ~1. If this is ~0.004 the Sorbye-Rue scaling is not wired in."
+    )

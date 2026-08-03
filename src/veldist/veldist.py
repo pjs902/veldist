@@ -30,6 +30,12 @@ __all__ = [
     "write_dynamite_kinematics",
 ]
 
+# Penalised-complexity prior rate for the Gaussian-core deviation scale.
+# Defined by P(sigma3 > 1) = 0.1, i.e. rate = -ln(0.1). After Sorbye-Rue
+# standardisation sigma3 is the typical log-density departure from a Gaussian
+# LOSVD, so sigma3 = 1 means a departure of a factor ~e at typical velocities.
+# Provisional until pinned by test_gaussian_core_prior_spans_nongaussian_shapes.
+SIGMA3_RATE = 2.302585092994046
 
 # ==============================================================================
 # Design Matrix
@@ -261,16 +267,26 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
     ``Normal(0, sigma3)`` directly, which would produce Neal's funnel and
     divergences.
 
-    ``sigma3`` is scaled by the *dimensionless* ratio
-    ``(bin_width / span) ** 2.5``. A triple-integrated random walk over
-    ``n = span / bin_width`` steps accumulates as ``n ** 2.5``, so this
-    ratio is what makes the deviation both O(1) in log-density units and
-    independent of grid resolution. Using a dimensional ``bin_width ** 2.5``
-    instead is a serious bug: at ``bin_width = 10`` over 40 bins it produces
-    a deviation of order ``10 ** 2.5 * 40 ** 2.5 ~ 3e6``, which saturates
-    the softmax and turns every prior draw into a delta function.
-    (Compare ``generate_smooth_curve``, where a singly-integrated Brownian
-    walk needs ``sqrt(bin_width)``.)
+    ``sigma3`` is standardised so that the *generalised variance* of the
+    projected deviation -- the geometric mean of its per-bin marginal
+    variances -- is exactly 1 (see :func:`_rw3_deviation_scale`). This is the
+    standard Sorbye & Rue (2014) treatment for intrinsic GMRFs, and it makes
+    ``sigma3`` directly interpretable as the typical log-density departure
+    from a Gaussian LOSVD, independent of grid resolution.
+
+    An earlier version instead multiplied by ``(bin_width / span) ** 2.5``.
+    That exponent correctly cancels the resolution dependence -- the measured
+    deviation scale drifts only ~11% between 20 and 120 bins -- but it lands
+    on a constant of ~0.0036 rather than 1. A deviation that small is
+    invisible to the likelihood, so the posterior collapsed onto the pure
+    Gaussian null space regardless of the data. Do not reintroduce a
+    dimensional or hand-tuned constant here; the standardisation is exact.
+
+    The prior on ``sigma3`` is a penalised-complexity prior (Simpson et al.):
+    an ``Exponential`` whose base model, ``sigma3 = 0``, is exactly a Gaussian
+    LOSVD. The rate is set by ``SIGMA3_RATE``. This shrinks toward
+    Gaussianity, which is the physically right default, while leaving
+    strongly non-Gaussian shapes reachable when the data demand them.
 
     Parameters
     ----------
@@ -280,8 +296,11 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
         Physical centres of the velocity bins. Required because the Gaussian
         core is quadratic in *velocity*, not in bin index.
     bin_width : float
-        Width of one velocity bin, used to make ``sigma3`` independent of
-        grid resolution. Default 1.0 (no rescaling).
+        Unused by this prior -- the Sorbye-Rue standardisation is already
+        resolution-invariant, and the latent curve is in dimensionless
+        log-mass units, so no physical scale enters the deviation. Retained
+        for signature compatibility with ``generate_smooth_curve`` and
+        ``model_gaussian_core``.
 
     Returns
     -------
@@ -304,7 +323,7 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
     core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
 
     # --- penalised non-Gaussian deviation ---
-    sigma3 = numpyro.sample("sigma3", dist.HalfNormal(1.0)) * (bin_width / span) ** 2.5
+    sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw3_deviation_scale(N_bins)
     d3 = numpyro.sample("d3", dist.Normal(0.0, 1.0).expand([N_bins]).to_event(1))
     w = jnp.cumsum(jnp.cumsum(jnp.cumsum(d3 * sigma3)))
 
