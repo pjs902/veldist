@@ -9,6 +9,7 @@ linear design matrix and a hierarchical smoothness prior.
 """
 
 import warnings
+from functools import lru_cache
 
 import numpy as np
 import jax
@@ -174,6 +175,35 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     curve = raw - jnp.mean(raw)
 
     return curve
+
+
+@lru_cache(maxsize=None)
+def _rw3_deviation_scale(n_bins):
+    """Sorbye-Rue scaling constant for the constrained RW3 deviation.
+
+    Returns the factor that makes the generalised variance -- the geometric
+    mean of the per-bin marginal variances -- of the projected triple-
+    integrated random walk equal to 1. Multiplying ``sigma3`` by this
+    constant makes ``sigma3`` mean "marginal standard deviation of the
+    non-Gaussian deviation, in log-density units", independent of grid
+    resolution. This is the standard treatment for intrinsic GMRFs
+    (Sorbye & Rue 2014, Spatial Statistics 8, 39; ``scale.model=TRUE`` in
+    R-INLA).
+
+    Depends only on ``n_bins``: the normalised coordinate ``u`` removes all
+    dependence on the physical grid, and ``setup_grid`` is always uniform.
+    Cached because it costs an O(n^3) QR and matrix product, and because it
+    is evaluated at JAX trace time where the result is constant-folded.
+    """
+    idx = np.arange(n_bins, dtype=float)
+    u = (idx - idx.mean()) / (n_bins - 1)
+    basis = np.stack([np.ones_like(u), u, u**2], axis=1)
+    q, _ = np.linalg.qr(basis)
+    proj = np.eye(n_bins) - q @ q.T
+    lo = np.tril(np.ones((n_bins, n_bins)))
+    a = lo @ lo @ lo  # triple-cumsum operator
+    var = np.clip(np.diag(proj @ (a @ a.T) @ proj.T), 1e-300, None)
+    return float(1.0 / np.sqrt(np.exp(np.mean(np.log(var)))))
 
 
 def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):

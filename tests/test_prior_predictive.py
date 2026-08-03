@@ -37,8 +37,7 @@ def _grid(n_bins):
     return centers, bin_width
 
 
-def _prior_predictive_pdfs(model_fn, n_bins, centers, bin_width,
-                           num_samples=2000, seed=0):
+def _prior_predictive_pdfs(model_fn, n_bins, centers, bin_width, num_samples=2000, seed=0):
     """Draw `num_samples` LOSVDs from `model_fn`'s prior, with no data.
 
     A dummy one-star design matrix is required rather than `matrix=None`.
@@ -65,10 +64,10 @@ def _moments(pdf_samples, centers):
     centers = np.asarray(centers, dtype=float)
     mean = pdf_samples @ centers
     delta = centers[np.newaxis, :] - mean[:, np.newaxis]
-    var = np.einsum("ij,ij->i", pdf_samples, delta ** 2)
-    m4 = np.einsum("ij,ij->i", pdf_samples, delta ** 4)
+    var = np.einsum("ij,ij->i", pdf_samples, delta**2)
+    m4 = np.einsum("ij,ij->i", pdf_samples, delta**4)
     with np.errstate(divide="ignore", invalid="ignore"):
-        excess_kurtosis = m4 / var ** 2 - 3.0
+        excess_kurtosis = m4 / var**2 - 3.0
     return np.sqrt(var), excess_kurtosis
 
 
@@ -114,8 +113,7 @@ def test_gaussian_core_prior_is_not_uniform(n_bins):
 
     degenerate_fraction = float(np.mean(sigma[finite] < GRID_WIDTH / n_bins))
     assert degenerate_fraction < 0.25, (
-        f"n_bins={n_bins}: {degenerate_fraction:.1%} of prior draws put all "
-        "their mass within a single bin"
+        f"n_bins={n_bins}: {degenerate_fraction:.1%} of prior draws put all " "their mass within a single bin"
     )
 
 
@@ -164,12 +162,10 @@ def test_gaussian_core_curve_is_exactly_quadratic_when_deviation_is_zero():
     fixed = {
         "v0": 210.0,
         "s0": 45.0,
-        "sigma3": 0.0,          # kills the deviation entirely
+        "sigma3": 0.0,  # kills the deviation entirely
         "d3": np.zeros(n_bins),
     }
-    model_fn = substitute(
-        seed(generate_gaussian_core_curve, jax.random.PRNGKey(0)), data=fixed
-    )
+    model_fn = substitute(seed(generate_gaussian_core_curve, jax.random.PRNGKey(0)), data=fixed)
     curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width))
 
     # Fit a parabola in velocity and require an essentially perfect fit.
@@ -205,17 +201,14 @@ def test_gaussian_core_deviation_is_orthogonal_to_quadratics():
         "sigma3": 1.0,
         "d3": rng.normal(size=n_bins),
     }
-    model_fn = substitute(
-        seed(generate_gaussian_core_curve, jax.random.PRNGKey(1)), data=fixed
-    )
+    model_fn = substitute(seed(generate_gaussian_core_curve, jax.random.PRNGKey(1)), data=fixed)
     curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width))
 
     u = (centers - centers.mean()) / (centers.max() - centers.min())
-    basis = np.stack([np.ones_like(u), u, u ** 2], axis=1)
+    basis = np.stack([np.ones_like(u), u, u**2], axis=1)
     projection = basis @ np.linalg.lstsq(basis, curve, rcond=None)[0]
     assert np.max(np.abs(projection)) < 1e-5 * max(1.0, np.max(np.abs(curve))), (
-        "deviation term has a non-zero projection onto {1, u, u^2}; the QR "
-        "projection is not working"
+        "deviation term has a non-zero projection onto {1, u, u^2}; the QR " "projection is not working"
     )
 
 
@@ -231,9 +224,7 @@ def test_gaussian_core_prior_is_resolution_invariant():
     medians = []
     for n_bins in (20, 40, 80):
         centers, bin_width = _grid(n_bins)
-        pdfs = _prior_predictive_pdfs(
-            model_gaussian_core, n_bins, centers, bin_width, num_samples=3000
-        )
+        pdfs = _prior_predictive_pdfs(model_gaussian_core, n_bins, centers, bin_width, num_samples=3000)
         sigma, _ = _moments(pdfs, centers)
         medians.append(float(np.median(sigma[np.isfinite(sigma)])))
 
@@ -244,3 +235,46 @@ def test_gaussian_core_prior_is_resolution_invariant():
         f"spread {spread:.2f}); the bin_width scaling exponent on sigma3 is "
         "probably wrong -- it should be (bin_width / span) ** 2.5"
     )
+
+
+def _rw3_scale_via_structure_matrix(n_bins):
+    """Independent route to the Sorbye-Rue constant, via pinv(D3' D3).
+
+    The implementation builds the constrained covariance as (L^3)(L^3)' with
+    L lower-triangular ones. This builds it instead as the pseudo-inverse of
+    the third-difference structure matrix. Same object, different arithmetic,
+    so agreement is not circular.
+    """
+    d3 = np.zeros((n_bins - 3, n_bins))
+    for i in range(n_bins - 3):
+        d3[i, i : i + 4] = [-1.0, 3.0, -3.0, 1.0]
+    r = d3.T @ d3
+    idx = np.arange(n_bins, dtype=float)
+    u = (idx - idx.mean()) / (n_bins - 1)
+    basis = np.stack([np.ones_like(u), u, u**2], axis=1)
+    q, _ = np.linalg.qr(basis)
+    proj = np.eye(n_bins) - q @ q.T
+    cov = proj @ np.linalg.pinv(r) @ proj.T
+    var = np.clip(np.diag(cov), 1e-300, None)
+    return float(1.0 / np.sqrt(np.exp(np.mean(np.log(var)))))
+
+
+@pytest.mark.parametrize("n_bins", [20, 40, 55, 80])
+def test_rw3_deviation_scale_matches_structure_matrix(n_bins):
+    """The scaling constant must equal the Sorbye-Rue constant for a
+    constrained RW3 intrinsic GMRF, computed independently."""
+    from veldist.veldist import _rw3_deviation_scale
+
+    got = _rw3_deviation_scale(n_bins)
+    want = _rw3_scale_via_structure_matrix(n_bins)
+    assert np.isclose(got, want, rtol=1e-6), f"n_bins={n_bins}: scale {got:.6g} != structure-matrix value {want:.6g}"
+
+
+def test_rw3_deviation_scale_is_cached():
+    """The constant costs an O(n^3) pinv/QR; it must not be recomputed."""
+    from veldist.veldist import _rw3_deviation_scale
+
+    _rw3_deviation_scale.cache_clear()
+    _rw3_deviation_scale(40)
+    _rw3_deviation_scale(40)
+    assert _rw3_deviation_scale.cache_info().hits >= 1
