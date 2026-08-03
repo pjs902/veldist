@@ -31,7 +31,7 @@ import pytest
 from numpyro.infer import MCMC, NUTS, Predictive
 from scipy import stats
 
-from veldist.veldist import model, precompute_design_matrix
+from veldist.veldist import model, model_gaussian_core, precompute_design_matrix
 from veldist.analysis import tail_weight as _tail_weight
 
 # ---------------------------------------------------------------------------
@@ -64,6 +64,31 @@ QUANTITY_NAMES = [
 
 MAX_FAILURE_FRACTION = 0.02
 
+# Which prior to run SBC against. Both must be well-calibrated: SBC checks
+# the sampler against the model, so a correct implementation of *either*
+# prior should pass regardless of which one is a better description of real
+# LOSVDs.
+SBC_PRIORS = ["rw1", "gaussian_core"]
+
+# The one prior-specific hyperparameter site ranked alongside the five
+# shared LOSVD-shape quantities. rw1's is `smoothness_sigma`; gaussian_core
+# has no such site, so its closest analogue -- the deviation-term scale --
+# is `sigma3` instead.
+HYPERPARAM_SITE = {"rw1": "smoothness_sigma", "gaussian_core": "sigma3"}
+
+
+def _model_and_kwargs(prior, matrix, n_bins, centers, bin_width):
+    """Return (model_fn, kwargs) for the requested prior.
+
+    Mirrors the dispatch in KinematicSolver.run so SBC exercises exactly the
+    same model the solver runs.
+    """
+    kwargs = {"matrix": matrix, "n_bins": n_bins, "bin_width": bin_width}
+    if prior == "gaussian_core":
+        kwargs["centers"] = jnp.asarray(centers)
+        return model_gaussian_core, kwargs
+    return model, kwargs
+
 
 def _moments_from_pdf_samples(pdf_samples, grid_centers):
     """Per-sample v_mean, sigma, skewness, kurtosis, tail_weight.
@@ -92,7 +117,7 @@ def _moments_from_pdf_samples(pdf_samples, grid_centers):
     return means, stds, skews, kurts, tw
 
 
-def _draw_prior(rng_key, n_stars_dummy):
+def _draw_prior(rng_key, n_stars_dummy, prior):
     """Draw a single prior sample of theta_tilde from the model's own prior.
 
     Uses numpyro.infer.Predictive with NO conditioning -- this is the
@@ -110,8 +135,9 @@ def _draw_prior(rng_key, n_stars_dummy):
     and `smoothness_sigma`). We pass a dummy zeros matrix of the right shape.
     """
     dummy_matrix = jnp.zeros((n_stars_dummy, N_BINS))
-    predictive = Predictive(model, num_samples=1)
-    prior_sample = predictive(rng_key, matrix=dummy_matrix, n_bins=N_BINS, bin_width=BIN_WIDTH)
+    model_fn, kwargs = _model_and_kwargs(prior, dummy_matrix, N_BINS, BIN_CENTERS, BIN_WIDTH)
+    predictive = Predictive(model_fn, num_samples=1)
+    prior_sample = predictive(rng_key, **kwargs)
     return prior_sample
 
 
@@ -128,14 +154,16 @@ def _simulate_observations(rng, intrinsic_pdf, n_stars):
     return obs_vel, errs
 
 
-def _run_one_sbc_iteration(sim_idx, base_seed=20260802):
+def _run_one_sbc_iteration(sim_idx, prior, base_seed=20260802):
     """Run a single SBC simulation. Returns dict of ranks, or None on failure."""
+    hyperparam_site = HYPERPARAM_SITE[prior]
+
     key = jax.random.PRNGKey(base_seed + sim_idx)
     prior_key, mcmc_key = jax.random.split(key)
 
-    prior_sample = _draw_prior(prior_key, N_STARS)
+    prior_sample = _draw_prior(prior_key, N_STARS, prior)
     true_intrinsic_pdf = np.asarray(prior_sample["intrinsic_pdf"][0])  # (N_BINS,)
-    true_smoothness_sigma = float(np.asarray(prior_sample["smoothness_sigma"][0]))
+    true_smoothness_sigma = float(np.asarray(prior_sample[hyperparam_site][0]))
 
     if not np.all(np.isfinite(true_intrinsic_pdf)) or not np.isfinite(
         true_smoothness_sigma
@@ -149,7 +177,8 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260802):
     if not np.all(np.isfinite(np.asarray(matrix))):
         return None
 
-    nuts_kernel = NUTS(model)
+    model_fn, kwargs = _model_and_kwargs(prior, matrix, N_BINS, BIN_CENTERS, BIN_WIDTH)
+    nuts_kernel = NUTS(model_fn)
     mcmc = MCMC(
         nuts_kernel,
         num_warmup=NUM_WARMUP,
@@ -157,13 +186,13 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260802):
         progress_bar=False,
     )
     try:
-        mcmc.run(mcmc_key, matrix=matrix, n_bins=N_BINS, bin_width=BIN_WIDTH)
+        mcmc.run(mcmc_key, **kwargs)
     except Exception:
         return None
 
     samples = mcmc.get_samples()
     pdf_samples = np.asarray(samples["intrinsic_pdf"])
-    smoothness_samples = np.asarray(samples["smoothness_sigma"])
+    smoothness_samples = np.asarray(samples[hyperparam_site])
 
     if not np.all(np.isfinite(pdf_samples)) or not np.all(
         np.isfinite(smoothness_samples)
@@ -171,13 +200,14 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260802):
         return None
 
     # --- ESS check + thinning (gotcha #2: autocorrelated draws -> spurious
-    # U-shape). Compute ESS on smoothness_sigma (scalar site; cheap and a
-    # decent proxy for overall chain mixing) and thin to at most ESS.
+    # U-shape). Compute ESS on the prior-specific hyperparameter site
+    # (scalar; cheap and a decent proxy for overall chain mixing) and thin
+    # to at most ESS.
     samples_by_chain = mcmc.get_samples(group_by_chain=True)
     ess = float(
         np.asarray(
             numpyro.diagnostics.effective_sample_size(
-                np.asarray(samples_by_chain["smoothness_sigma"])
+                np.asarray(samples_by_chain[hyperparam_site])
             )
         )
     )
@@ -224,13 +254,18 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260802):
 
 
 @pytest.mark.slow
-def test_sbc_calibration():
+@pytest.mark.parametrize("prior", SBC_PRIORS)
+def test_sbc_calibration(prior):
     """
     Simulation-Based Calibration of the veldist NUTS model.
 
     Runs N_SIMS independent prior-draw -> simulate -> refit -> rank cycles
     and checks each test quantity's rank distribution against Uniform{0..L}
     via a Bonferroni-adjusted KS test, per PLAN.md §1.2.
+
+    Parameterised over both priors: SBC checks the sampler against the
+    model, so a correct implementation of either prior should pass
+    regardless of which one is a better description of real LOSVDs.
 
     Note on `log p(theta_tilde | y)`: the plan lists this as an optional
     catch-all quantity, explicitly the hardest to extract cleanly and
@@ -246,7 +281,7 @@ def test_sbc_calibration():
     n_failed = 0
 
     for sim_idx in range(N_SIMS):
-        result = _run_one_sbc_iteration(sim_idx)
+        result = _run_one_sbc_iteration(sim_idx, prior)
         if result is None:
             n_failed += 1
             continue
