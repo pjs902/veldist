@@ -214,6 +214,68 @@ def test_bimodal_distribution_recovery():
     assert any(abs(p - 15) < 5 for p in peak_locations), "Right peak not found"
 
 
+@pytest.mark.slow
+def test_skewed_shoulder_distribution_recovery():
+    """
+    Recover the "Gaussian core + shoulder" LOSVD from docs/fig_deconvolution.py.
+
+    Same shape as the documentation example: a dominant Gaussian at v=5,
+    std=24, plus a smaller Gaussian shoulder at v=-35, std=15, amplitude
+    0.30 relative to the core peak. Converting those peak amplitudes to
+    area-normalised mixture weights (weight ~ amplitude * std) gives the
+    equivalent `make_mixture_distribution` components used here.
+    """
+    from veldist import KinematicSolver, compute_summary
+
+    core_area = 1.0 * 24.0
+    shoulder_area = 0.30 * 15.0
+    total_area = core_area + shoulder_area
+
+    true_pdf = make_mixture_distribution(
+        [
+            {"mean": 5.0, "std": 24.0, "weight": core_area / total_area},
+            {"mean": -35.0, "std": 15.0, "weight": shoulder_area / total_area},
+        ]
+    )
+
+    # True moments of the mixture (computed on a fine grid, matching the docs figure).
+    v = np.linspace(-120, 120, 3000)
+    pdf_vals = true_pdf(v)
+    true_mean = np.trapezoid(v * pdf_vals, v)
+    true_std = np.sqrt(np.trapezoid((v - true_mean) ** 2 * pdf_vals, v))
+    true_kurt = (
+        np.trapezoid(((v - true_mean) / true_std) ** 4 * pdf_vals, v) - 3.0
+    )
+
+    data = generate_mock_data(
+        true_pdf, n_stars=400, obs_errors=10.0, grid_range=(-120, 120), seed=2024
+    )
+
+    solver = KinematicSolver()
+    solver.setup_grid(center=0.0, width=240.0, n_bins=55)
+    solver.add_data(vel=data["observed_velocities"], err=data["errors"])
+    samples = solver.run(num_warmup=600, num_samples=1200, gpu=False)
+
+    summary = compute_summary(samples["intrinsic_pdf"], solver.grid["centers"])
+
+    v_mean, v_mean_unc = summary["v_mean"]
+    sigma, sigma_unc = summary["sigma"]
+    kurt, kurt_unc = summary["kurtosis"]
+
+    mean_z = abs(v_mean - true_mean) / v_mean_unc
+    std_z = abs(sigma - true_std) / sigma_unc
+    kurt_z = abs(kurt - true_kurt) / kurt_unc
+
+    assert mean_z < 3, f"Mean not recovered: z-score = {mean_z:.2f}"
+    assert std_z < 3, f"Std not recovered: z-score = {std_z:.2f}"
+    # The mean/std are absorbed by the model's free Gaussian core (v0, s0)
+    # regardless of whether the non-Gaussian deviation term is doing anything,
+    # so they can't catch a collapse to a pure Gaussian posterior. Kurtosis is
+    # only non-zero if the shoulder's platykurtic shape is actually recovered,
+    # so it is the discriminating check here (true_kurt ~= -0.35).
+    assert kurt_z < 3, f"Kurtosis not recovered: z-score = {kurt_z:.2f} (recovered {kurt:.3f} +/- {kurt_unc:.3f}, true {true_kurt:.3f})"
+
+
 # ==============================================================================
 # Test 2: Edge Cases & Robustness
 # ==============================================================================
