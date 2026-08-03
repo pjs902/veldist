@@ -5,6 +5,34 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
+- **[P0] SBC regression from the RW3 scaling fix** (`tests/test_calibration.py`)
+  `test_sbc_calibration[gaussian_core]` passes on `main` and **fails on
+  `fix/rw3-deviation-scaling`**: 2/30 simulations fail (NaN posterior, sampler
+  exception, or inadequate ESS) against a 2% budget. The implementation plan's
+  test matrix did not include SBC, so this was not caught.
+  The `main` pass was vacuous — with the deviation inert, `sigma3` did not
+  affect the simulated data, so its posterior reproduced its prior and ranks
+  were uniform by construction. This is the first informative run of the test.
+  Likely cause is the `Exponential` PC prior's upper tail: prior-predictive
+  draws reach `|skewness|` p99 = 12.2 with `sigma3` ~3–4, saturating the
+  softmax into near-delta functions. `SIGMA3_RATE` was pinned on
+  `|excess kurtosis|` p90 alone, which is blind to that tail.
+  **Blocks calling this prior science-ready.** Numbers in
+  `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
+
+- **[P1] Skew-normal LOSVDs are recovered as symmetric at N~150**
+  Measured: posterior median skewness +0.038 against a true +0.851, with a
+  half-68CI of 0.078 — the posterior is *confidently* symmetric, missing by
+  ten interval half-widths. Not a resolution artefact (n_bins=55 is no
+  better). The model is consistent — posterior `sigma3` goes 0.277 → 0.943 →
+  3.396 and recovered skewness +0.001 → +0.111 → +0.760 as n_stars goes
+  150 → 400 → 2000 — so this is prior shrinkage dominating a weak likelihood,
+  not an inability to express skew (15.5% of prior draws exceed |skew| 0.85).
+  Science impact: at 150 stars per Voronoi bin, which is realistic, genuine
+  h3 signal is erased and reported with small error bars. Fixing this and the
+  SBC regression is likely one design change, not two: both point at the
+  shape of the `sigma3` prior.
+
 - **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
   The RW3 deviation scaling fix improved coverage broadly but did not close it.
   `test_coverage_over_mock_realisations[gaussian_core]` still fails, as it did
