@@ -81,10 +81,51 @@ Suggested execution order is the table at the end of that file.
   - **Reduce `n_bins`.** At N=150 over 40 bins there are ~3.75 stars per bin;
     20 bins gives 7.5 and halves the dimensionality mismatch at no modelling
     cost. Cheapest thing to try and not yet tested against *coverage*.
-  Note the sweep so far optimised z-scores (bias / interval width). The target
-  is coverage, which a wider interval can reach without reducing bias — a
-  different and easier objective. Re-sweep against coverage on the recalibrated
-  harness.
+  **Sweep done** (12 configs, n_bins × Exponential rate, scored on coverage +
+  efficiency; full table in the measurements doc). Established:
+  - The current prior is worst or near-worst on every axis at every n_bins:
+    26/45 in-band, 11–13 catastrophic entries, ~zero h3/h4 coverage, and the
+    worst σ efficiency in its row (2.69× the statistical optimum at n_bins=20,
+    4.27× at 40). Nothing recommends keeping it.
+  - **Coverage is monotone in looseness and never turns over**, so it cannot
+    select an optimum alone. Efficiency and SBC are the binding constraints.
+  - **Empty grid dimensions are expensive**: n_bins=40 sits at 4.2–4.3× σ
+    efficiency regardless of prior strength — the prior cannot rescue it.
+  - Leading candidate `n_bins=20, Exp(0.35)`: 33/45, 5 catastrophic, 1.35× σ
+    efficiency. Direction, not a value to adopt — see the caveat below.
+  **Two caveats that gate adopting any of it.** (a) The n_bins axis is
+  confounded with the empty-bin fraction: the harness grid is a fixed 320 km/s
+  against σ=15–42 truths, so at n_bins=20 only ~6 of 20 bins carry mass, and
+  "20 beats 40" may be reading "fewer empty dimensions". (b) The efficiency
+  numbers are the std of 25 medians and so are outlier-sensitive; the n_bins=30
+  row is non-monotonic (3.11 → 1.20 → 2.99 → 3.27) in a way that looks like bad
+  realisations, not physics. Re-measure with a robust scatter and keep the
+  per-realisation medians.
+
+- **[P0] Size the velocity grid to the data**
+  The current grid is simultaneously too wide and too coarse. At 320 km/s with
+  20 bins the resolution is 16 km/s — **6.4× coarser than the 2–3 km/s
+  measurement errors** — while only ~29% of bins carry any mass. Both are
+  fixed together by sizing to the data.
+  DYNAMITE requires one shared velocity grid for all spatial bins, so it must
+  hold the σ≈20 km/s central dispersion plus the ~10 km/s rotation span in the
+  mean velocity: **160–200 km/s wide, 5 km/s bins (2× the measurement error;
+  finer is unrecoverable since errors convolve it away) → 32–40 bins.** That is
+  3× finer velocity resolution *and* a higher informative fraction than the
+  current setup. Outer bins at σ≈9 will still only use ~45% of the grid — with
+  a factor-2.2 dispersion range some emptiness is structural.
+  This likely also explains `n_sigma_truncate`: it was added to suppress
+  residual mass in far-edge bins, which is the symptom of a grid this wide.
+  Fixing the grid may retire the band-aid.
+  **Possible further win:** the DYNAMITE constraint is on the *output*, not the
+  inference. veldist could fit each spatial bin on a grid matched to its local
+  σ, then aggregate each posterior LOSVD sample onto the shared output grid
+  before taking medians and intervals. If the fitted grid is at least as fine as
+  the output grid and their edges align, that aggregation is exact — just
+  summing mass per sample — so uncertainties propagate correctly. Not yet
+  investigated.
+  Also check whether the harness truths need rescaling: `gaussian` at σ=30 and
+  `bimodal_counter_rotation` at σ=42 are both well outside ω Cen's 9–21 range.
 
 - **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
   The RW3 deviation scaling fix improved coverage broadly but did not close it.
