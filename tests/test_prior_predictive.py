@@ -399,3 +399,75 @@ def test_gaussian_core_prior_spans_nongaussian_shapes():
         f"prior-predictive |excess kurtosis| p90 = {p90:.4g}; the prior is so "
         "loose it is producing near-delta functions"
     )
+
+
+@pytest.mark.parametrize(
+    "rw_order,expect_h3_free,expect_h4_free",
+    [(3, False, False), (4, False, False), (5, False, False)],
+)
+def test_penalty_order_controls_which_moments_are_free(rw_order, expect_h3_free, expect_h4_free):
+    """Raising the penalty order enlarges the null space, and the null space
+    is what the prior does NOT shrink.
+
+    Measured as the ratio of prior-predictive spread at a very tight sigma3
+    to the spread at a loose one. Near 1 means the moment survives with the
+    deviation switched off, i.e. it lives in the null space. Near 0 means it
+    only exists because of the penalised deviation.
+
+    NOTE 2026-08-03: orders 4 and 5 do NOT free h3/h4 as hypothesised.
+    All three orders show strong shrinkage (h3_retained ~0.13-0.16,
+    h4_retained ~0.03-0.04). The null-space enlargement from raising
+    rw_order does not translate into freedom for the third/fourth moments.
+    """
+    import veldist.veldist as vd
+
+    n_bins = 37
+    centers, bin_width = _grid(n_bins)
+
+    def spread(rate):
+        old = vd.SIGMA3_RATE
+        try:
+            vd.SIGMA3_RATE = rate
+            pdfs = _prior_predictive_pdfs(
+                lambda matrix, n_bins, bin_width: model_gaussian_core(
+                    matrix, n_bins, centers, bin_width, rw_order=rw_order
+                ),
+                n_bins,
+                centers,
+                bin_width,
+                num_samples=3000,
+            )
+        finally:
+            vd.SIGMA3_RATE = old
+        m = pdfs @ centers
+        d = centers[None, :] - m[:, None]
+        var = np.einsum("ij,ij->i", pdfs, d**2)
+        sk = np.einsum("ij,ij->i", pdfs, d**3) / var**1.5
+        ku = np.einsum("ij,ij->i", pdfs, d**4) / var**2 - 3.0
+        ok = np.isfinite(sk) & np.isfinite(ku)
+        return (float(np.percentile(np.abs(sk[ok]), 90)), float(np.percentile(np.abs(ku[ok]), 90)))
+
+    sk_tight, ku_tight = spread(50.0)
+    sk_loose, ku_loose = spread(0.35)
+
+    h3_retained = sk_tight / sk_loose
+    h4_retained = ku_tight / ku_loose
+    print(f"\norder {rw_order}: h3 retained {h3_retained:.3f}, " f"h4 retained {h4_retained:.3f}")
+
+    if expect_h3_free:
+        assert h3_retained > 0.30, (
+            f"order {rw_order}: skewness should be in the null space and "
+            f"survive shrinkage, but retained only {h3_retained:.2f} of its "
+            "spread with the deviation switched off"
+        )
+    else:
+        assert h3_retained < 0.20, (
+            f"order {rw_order}: skewness should be penalised, but retained " f"{h3_retained:.2f} with the deviation off"
+        )
+
+    if expect_h4_free:
+        assert h4_retained > 0.30, (
+            f"order {rw_order}: kurtosis should be in the null space, " f"retained only {h4_retained:.2f}"
+        )
+    else:
+        assert h4_retained < 0.15, f"order {rw_order}: kurtosis should be penalised, retained " f"{h4_retained:.2f}"
