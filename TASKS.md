@@ -62,22 +62,29 @@ Suggested execution order is the table at the end of that file.
   far better than any bin constrains itself; see the hierarchical item below.
   See `docs/superpowers/specs/2026-08-03-path-forward.md`.
 
-- **[P1] Joint 3D velocity-distribution model (RV + 2 PM components)**
-  End state is a direct view of the 3D velocity ellipsoid. Two consequences.
-  (a) **h4 is a 4th-moment proxy for anisotropy that is only necessary when
-  LOS data is all you have.** With PMs, anisotropy is a *second*-moment
-  quantity: σ per component has ~5.8% fractional uncertainty at N=150, so a
-  10% anisotropy is ~2σ per bin, where h4 = −0.05 is ~0.9σ. Do not let the
-  h3/h4 work crowd out the 3D structure, which is where the information is.
-  (b) **The sample-size asymmetry is an opportunity**: ~600k stars have HST
-  PMs, ~30k have RVs. At ~200 bins that is ~3000 stars per bin constraining
-  the plane-of-sky distribution and ~150 constraining the third axis. A joint
-  per-star likelihood where each star contributes whatever components it has
-  lets the PM-only majority pin two axes precisely while the RV subset adds
-  v_los and the tilt. The velocity-ellipsoid tilt (⟨v_R v_z⟩ ≠ 0) is only
-  accessible from the combination and is invisible to independent 1D fits.
-  Needs checking first: what DYNAMITE accepts for PM/discrete kinematics in
-  current versions.
+- **[P0] Regularisation strength for our use case** (`generate_gaussian_core_curve`)
+  The output stays the nonparametric histogram LOSVD written as DYNAMITE
+  `BayesLOSVD` — no parametric model is being adopted for inference. The whole
+  problem is therefore setting the deviation prior's strength so the posterior
+  is *calibrated* at N=150–200 with err/σ ≈ 0.15.
+  Measured diagnosis: a single scalar `sigma3` controls all 40 latent
+  dimensions at once, and the low-order modes (which carry h3/h4) and the
+  high-order modes (wiggle) need opposite treatment. Loosen enough to free
+  h3/h4 and the softmax saturates, breaking SBC; tighten enough to control the
+  wiggle and h3/h4 are crushed. Six prior families (Exponential, HalfNormal,
+  Gamma ×2, LogNormal ×2) all hit this, so it is not a matter of picking a
+  better one-parameter prior.
+  Two candidate fixes, both staying nonparametric:
+  - **Split the scale by mode order.** Separate penalties for the low-order
+    deviation modes and the high-order ones, instead of one `sigma3`. Directly
+    targets the measured cause.
+  - **Reduce `n_bins`.** At N=150 over 40 bins there are ~3.75 stars per bin;
+    20 bins gives 7.5 and halves the dimensionality mismatch at no modelling
+    cost. Cheapest thing to try and not yet tested against *coverage*.
+  Note the sweep so far optimised z-scores (bias / interval width). The target
+  is coverage, which a wider interval can reach without reducing bias — a
+  different and easier objective. Re-sweep against coverage on the recalibrated
+  harness.
 
 - **[P2] Hierarchical spatial pooling — the route to beating the baseline**
   (promoted from Someday: "Spatially coherent velocity distribution inference")
@@ -210,6 +217,19 @@ Suggested execution order is the table at the end of that file.
   3D, Dynamite 2D output format).
 
 ## Considered and closed
+
+- **Parametric near-Gaussian model as the inference model — not adopted.**
+  The Sanders & Evans (2020) uniform/Laplace kernel families were proposed as a
+  replacement for the nonparametric LOSVD. Rejected: the output path is
+  DYNAMITE `BayesLOSVD` (histogram), which the existing writer already
+  produces, and converting a parametric posterior into it would either need a
+  GH conversion (no closed form — their eq. 5 is only valid to 10% for
+  |h4| < 0.01) or project a 4-parameter posterior onto ~40 strongly correlated
+  bins that DYNAMITE's χ² would treat as independent.
+  **They remain valuable as mock-data generators**, and are already used that
+  way: `flat_top_tangential` is their uniform kernel (excess kurtosis −1.00)
+  and `rotating_tangential` is the skewed two-piece variant. Their families
+  span −0.188 < h4 < 0.145, so they can generate the full expected range.
 
 - **Within-bin rotation gradient faking tangential anisotropy — not a concern.**
   Amorisco & Evans (2012) §2.3 note a velocity gradient across an aperture
