@@ -232,8 +232,8 @@ def test_gaussian_core_prior_is_resolution_invariant():
     assert spread < 0.15, (
         "prior-predictive median sigma drifts with grid resolution "
         f"({[round(m, 1) for m in medians]} for n_bins=20/40/80, relative "
-        f"spread {spread:.2f}); the bin_width scaling exponent on sigma3 is "
-        "probably wrong -- it should be (bin_width / span) ** 2.5"
+        f"spread {spread:.2f}); the Sorbye-Rue generalised-variance "
+        "standardisation is probably wrong -- check _rw3_deviation_scale"
     )
 
 
