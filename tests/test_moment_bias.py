@@ -36,7 +36,12 @@ N_STARS = 150
 N_REAL = 10
 NUM_WARMUP = 500
 NUM_SAMPLES = 800
-MEASUREMENT_ERROR = 8.0
+# oMEGACat MUSE line-of-sight uncertainties are 2-3 km/s for bright RGB
+# stars; against TRUE_SIGMA = 40 this is err/sigma ~ 0.06. Was 8.0 (err/sigma
+# ~ 0.2), which overstated the deconvolution difficulty relative to the
+# target data. See the "Observational calibration" section of
+# tests/test_coverage.py for the full justification.
+MEASUREMENT_ERROR = 2.5
 
 # Thresholds. The Gaussian-core prior measured +0.00 kurtosis bias in
 # prototyping; 0.35 leaves room for realisation noise at N_REAL=5 while

@@ -20,7 +20,23 @@ Suggested execution order is the table at the end of that file.
   **Blocks calling this prior science-ready.** Numbers in
   `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
 
-- **[P1] Skew-normal LOSVDs are recovered as symmetric at N~150**
+- **[P1] h3/h4 are not recovered at realistic amplitude** (was: skew-normal)
+  The coverage harness has been recalibrated to the science target
+  (`N_STARS=150`, `N_BINS=40`, `ERR_RANGE=(2,3)` km/s, h3≈0.066, h4≈0.051).
+  After that, `v_mean` and `sigma` are in the nominal band for all four
+  truths, and `student_t.tail_weight` came out of catastrophic failure
+  (0.160 → 0.640) purely from using realistic errors — that one was a harness
+  artefact, not a model defect.
+  What remains is a single coherent failure: skew_normal skewness 0.040,
+  skew_normal kurtosis 0.040, student_t kurtosis 0.000. Achievable skewness at
+  N=150 is 0.428 vs a true 0.454, so the information is in the data. The
+  over-coverage entries (gaussian kurtosis 1.000, student_t skewness 1.000)
+  are the same defect from the other side.
+  **Acceptance criterion for the prior fix is now unambiguous:** those three
+  h3/h4 entries must reach the band, and nothing currently in the band may
+  leave it. Detail below.
+
+
   Measured: posterior median skewness +0.038 against a true +0.851, with a
   half-68CI of 0.078 — the posterior is *confidently* symmetric, missing by
   ten interval half-widths. Not a resolution artefact (n_bins=55 is no

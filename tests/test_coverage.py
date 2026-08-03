@@ -19,6 +19,39 @@ loops; the plan explicitly sanctions dropping into the 25-50 range as
 miscalibration (e.g. empirical coverage of ~0.30) while running in a few
 minutes.
 
+Observational calibration
+-------------------------
+`N_STARS`, `N_BINS`, `ERR_RANGE` and the truth amplitudes were recalibrated
+against the actual target dataset (oMEGACat: HST+MUSE within omega Cen's
+half-light radius) rather than being chosen for convenience. The previous
+values were testing a substantially harder problem than the science requires,
+in three separate ways:
+
+- **Measurement errors.** Was `err_range = (4, 14)` km/s against sigma 17-42,
+  i.e. err/sigma ~ 0.5. oMEGACat MUSE gives 2-3 km/s for bright RGB stars,
+  and van de Ven et al. (2006, A&A 445, 513) selected LOS velocities at
+  <2.0 km/s against sigma_z' of 8.8-20.9. Deconvolution difficulty is driven
+  by err/sigma, so this was a ~3-4x overstatement.
+- **Sample size.** Kept at `N_STARS = 150`, which is the science target rather
+  than a convenience value. After quality cuts there are ~30k LOS spectra
+  within r_h (~4.65 arcmin, ~68 sq arcmin), so 150 stars per bin yields ~200
+  Voronoi bins. Raising it to 250 would make the fits measurably easier (~120
+  bins) but coarsens the map exactly where it matters, in the inner MUSE
+  region. The harness therefore holds the sample size fixed at the value the
+  science needs and requires the *model* to meet it, rather than relaxing the
+  target until the current model passes.
+- **Truth amplitudes.** Converting via the standard Gauss-Hermite relations
+  `gamma1 = 4*sqrt(3)*h3` and `gamma2 = 8*sqrt(6)*h4`, the old skew-normal was
+  h3 ~ 0.123 and the old Student-t was h4 ~ 0.153. Real systems run
+  |h3| <~ 0.15 and |h4| <~ 0.05-0.1, so both sat at or past the top of the
+  range. They are now h3 ~ 0.066 and h4 ~ 0.051.
+
+Note that the recalibration does not uniformly make the test easier. The
+milder h3 truth is *harder* to recover than the extreme one, because
+shrinkage bias toward a Gaussian is roughly fixed in absolute skewness units
+and therefore eats a larger fraction of a smaller signal. That is the point:
+these settings test the regime the science actually operates in.
+
 Expected honest outcome (per plan): `kurtosis` and `tail_weight` coverage
 may run under nominal for the non-Gaussian truths, because the RW1
 smoothness prior shrinks the inferred LOSVD toward smoothness and pulls in
@@ -60,10 +93,21 @@ from veldist.analysis import compute_summary
 # ---------------------------------------------------------------------------
 
 N_REAL = 25  # realisations per truth (plan suggests 50; reduced for runtime, see module docstring)
+# Calibrated against the oMEGACat target dataset -- see "Observational
+# calibration" in the module docstring. 150 stars per bin is the science
+# target: it gives ~200 Voronoi bins across r_h, and the finer binning
+# matters specifically in the inner regions of the MUSE map, where spatial
+# resolution is the point. 250 would be easier to fit but coarser on sky.
 N_STARS = 150  # fixed per truth -> matrix shape is constant -> JAX only compiles once per truth
-N_BINS = 20
+N_BINS = 40
 NUM_WARMUP = 300
 NUM_SAMPLES = 600
+
+# MUSE line-of-sight velocity uncertainties for bright RGB stars in oMEGACat
+# are 2-3 km/s. Against the truths below (sigma 15-42 km/s) this gives
+# err/sigma ~ 0.05-0.20, matching van de Ven et al. (2006), who selected LOS
+# velocities at <2.0 km/s against sigma_z' of 8.8-20.9 km/s.
+ERR_RANGE = (2.0, 3.0)
 
 # Truncation applied to raw posterior samples before compute_summary's
 # moments are evaluated, to mitigate RW1 tail-leakage bias in kurtosis (see
@@ -110,36 +154,51 @@ def _make_truths():
             "pdf": rv.pdf,
             "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
             "grid": (0.0, 320.0),
-            "err_range": (4.0, 14.0),
+            "err_range": ERR_RANGE,
         }
     )
 
-    # 2. Student-t, df=6 -- h4>0 radially-anisotropic analogue (heavy tails,
-    # positive excess kurtosis = 6/(df-4) = 3 for df=6).
-    rv = stats.t(df=6, loc=0.0, scale=18.0)
+    # 2. Student-t, df=10 -- h4>0 radially-anisotropic analogue (heavy tails,
+    # positive excess kurtosis = 6/(df-4) = 1.0 for df=10, i.e. h4 ~ +0.051
+    # via gamma2 = 8*sqrt(6)*h4). df=6 was used previously, giving excess
+    # kurtosis 3.0 and h4 ~ 0.153 -- roughly twice the largest h4 seen in real
+    # systems (|h4| <~ 0.05-0.1), so it was testing an unrepresentative
+    # extreme.
+    rv = stats.t(df=10, loc=0.0, scale=18.0)
     truths.append(
         {
             "name": "student_t_h4",
             "pdf": rv.pdf,
             "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
             "grid": (0.0, 360.0),
-            "err_range": (4.0, 14.0),
+            "err_range": ERR_RANGE,
         }
     )
 
-    # 3. Skew-normal -- h3!=0 rotating-side analogue.
-    rv = stats.skewnorm(a=5.0, loc=-18.0, scale=28.0)
+    # 3. Skew-normal -- h3!=0 rotating-side analogue. a=2 gives skewness
+    # ~+0.45, i.e. h3 ~ +0.066 via gamma1 = 4*sqrt(3)*h3, representative of a
+    # strongly rotating system. a=5 was used previously, giving skewness 0.85
+    # and h3 ~ 0.123, at the very top of the observed range (|h3| <~ 0.15).
+    # Note the milder truth is the *harder* test: shrinkage bias toward the
+    # Gaussian is roughly fixed in absolute skewness units, so it consumes a
+    # larger fraction of a smaller signal.
+    rv = stats.skewnorm(a=2.0, loc=-12.0, scale=22.0)
     truths.append(
         {
             "name": "skew_normal_h3",
             "pdf": rv.pdf,
             "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
             "grid": (0.0, 320.0),
-            "err_range": (4.0, 14.0),
+            "err_range": ERR_RANGE,
         }
     )
 
-    # 4. Counter-rotation bimodal -- symmetric two-Gaussian mixture.
+    # 4. Counter-rotation bimodal -- symmetric two-Gaussian mixture. Excess
+    # kurtosis ~-1.59, i.e. h4 ~ -0.081, which is within the observed range
+    # and the right sign for the tangential anisotropy van de Ven et al.
+    # (2006) find in omega Cen's outer region. Kept unchanged: it is the one
+    # truth here that is both realistic in amplitude and a genuine stress
+    # test of multimodality.
     locs, scale, weights = (-40.0, 40.0), 14.0, (0.5, 0.5)
 
     def _mix_rvs(n, rng):
@@ -156,7 +215,7 @@ def _make_truths():
             "pdf": lambda x: _mixture_pdf(x, locs, scale, weights),
             "rvs": _mix_rvs,
             "grid": (0.0, 320.0),
-            "err_range": (4.0, 14.0),
+            "err_range": ERR_RANGE,
         }
     )
 
@@ -285,21 +344,28 @@ _GAUSSIAN_CORE_XFAIL_REASON = (
     "prior null space was the point of that plan. It does not, and it did not "
     "before the scaling fix either -- this parametrisation was already failing "
     "on main, so the marker records a standing known-red result rather than "
-    "pardoning a regression. Measured pre-fix -> post-fix coverage over "
-    "n_real=25: bimodal kurtosis 0.000 -> 0.320 and bimodal tail_weight "
-    "0.000 -> 1.000 (both out of catastrophic failure), student_t_h4 kurtosis "
-    "0.000 -> 0.040 and tail_weight 0.120 -> 0.160 (both still under the 0.30 "
-    "floor), skew_normal_h3 skewness and kurtosis 0.000 -> 0.000 (unchanged, "
-    "0/25 both times). Nine metrics improved and none regressed. The remaining "
-    "blocker is skew_normal_h3: its credible intervals never contain the true "
-    "skewness, and the finite-sample achievable value at N=150 is 0.811 "
-    "against a true 0.851, so this is not an estimator artefact. The Gaussian "
-    "truth's kurtosis coverage is 1.000 both before and after and is evidence "
-    "for nothing -- a posterior collapsed onto a Gaussian covers a Gaussian "
-    "truth perfectly. Cause not yet diagnosed; the earlier 'irreducible "
-    "finite-data limitation' claim was withdrawn because it was made while the "
-    "deviation term was inert. strict=False so that a real fix surfaces as "
-    "XPASS -- remove this marker then. Full table in "
+    "pardoning a regression. "
+    "Numbers below are on the observationally recalibrated harness (see "
+    "'Observational calibration' above): N_STARS=150, N_BINS=40, "
+    "ERR_RANGE=(2,3) km/s, h3~0.066 and h4~0.051 truths. "
+    "What now passes: v_mean and sigma are inside the nominal band for every "
+    "truth; student_t_h4.tail_weight came out of catastrophic failure "
+    "(0.160 -> 0.640) purely from using realistic measurement errors; "
+    "bimodal skewness 0.800 and tail_weight 1.000. "
+    "What still fails, and it is now a single coherent defect rather than a "
+    "scatter of symptoms: the model cannot recover h3/h4 at realistic "
+    "amplitude. skew_normal_h3 skewness 0.040 (1/25) and kurtosis 0.040, "
+    "student_t_h4 kurtosis 0.000 (0/25). The finite-sample achievable "
+    "skewness at N=150 is 0.428 against a true 0.454, so this is not an "
+    "estimator artefact -- the information is in the data and the posterior "
+    "is not extracting it. Root cause is the sigma3 prior's mode at zero "
+    "(= 'the LOSVD is exactly Gaussian'); see TASKS.md and the measurements "
+    "doc for the prior sweep. "
+    "Over-coverage (1.000) on gaussian kurtosis/tail_weight and student_t "
+    "skewness is the same defect seen from the other side: a posterior pinned "
+    "near Gaussian trivially covers a Gaussian-valued truth. "
+    "strict=False so that a real fix surfaces as XPASS -- remove this marker "
+    "then. Full tables in "
     "docs/superpowers/plans/2026-08-03-rw3-measurements.md."
 )
 
