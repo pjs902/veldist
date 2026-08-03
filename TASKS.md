@@ -20,13 +20,45 @@ Suggested execution order is the table at the end of that file.
   **Blocks calling this prior science-ready.** Numbers in
   `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
 
+- **[P1] Rotation gradient across a bin mimics tangential anisotropy**
+  Newly identified systematic, currently untested, and capable of manufacturing
+  exactly the signal we want to measure. Amorisco & Evans (2012) §2.3: "the
+  contribution of apparent rotation is degenerate with the signal produced by
+  tangential anisotropy" — a velocity gradient across an aperture convolves the
+  LOSVD with an arcsine kernel, giving flat-topped and then double-peaked
+  profiles, i.e. spurious negative h4.
+  ω Cen is exposed twice: real internal rotation at V/σ ≈ 0.5 peaking at 0.7
+  (van de Ven et al.), against AE12's finding that h4 is safe only up to
+  V_app/σ ≈ 0.7; and perspective rotation, which reaches 0.8 km/s across the
+  cluster (it spans ~2 full moons) and which van de Ven et al. had to remove
+  before the velocity fields even looked axisymmetric.
+  The induced flat-topping scales with the velocity gradient *within a bin*, so
+  finer bins reduce it — an independent second argument for N=150/~200 bins
+  over N=250/~120. **Add a truth that is an intrinsically Gaussian LOSVD
+  convolved with a within-bin rotation gradient and confirm we do not report it
+  as negative h4.**
+
+- **[P2] Efficiency check against the statistical optimum**
+  Amorisco & Evans (2012) §3.3 show unbinned ML attains StD(μ) = 1/√N and
+  StD(σ) = 1/√(2N), while *binned* Gauss-Hermite does not reach the latter —
+  binning costs precision even in the second moment, before any higher-moment
+  question. Their unbinned gain over binned GH is ≈2 on h4 at N=800 and larger
+  on h3, quoted as a lower bound (measured with zero uncertainty and uniform
+  membership). veldist is unbinned in velocity with exact per-star errors, so
+  it should inherit this. Measuring our StD(σ) against 1/√(2N) is a cheap,
+  sharp test of whether the implementation extracts what the data contain.
+
 - **[P0] External baseline on N — another group's results, not a hard limit**
   Amorisco & Evans (2012, MNRAS 424, 1899): "extremely difficult to measure
   reliably the shape of any velocity distribution with a sample size
   significantly smaller than N = 200". Sanders & Evans (2020, MNRAS 499,
-  5806): negative excess kurtosis needs ~200 stars, positive needs ≳2000, and
-  sign determination is unreliable once the velocity error floor exceeds
-  ~2 km/s (oMEGACat is 2–3, right at that edge).
+  5806): negative excess kurtosis needs ~200 stars, positive needs ≳2000.
+  On the error floor, an earlier note here was too pessimistic: SE20 find
+  sign determination generally needs ≲2 km/s, but **negative excess kurtosis
+  remains detectable to ~5 km/s**. Scaled to ω Cen's σ ≈ 9–21 (their tests are
+  for σ ≈ 11), oMEGACat's 2–3 km/s is comfortably inside the achievable regime
+  for our dominant signal. Full detail and corrections in
+  `docs/superpowers/specs/2026-08-03-discrete-losvd-literature.md`.
   **Treat these as calibration of what has been achieved, not as proven
   bounds.** Neither paper derives a Cramér-Rao bound; both report what their
   own per-bin maximum-likelihood estimators delivered, and both report
