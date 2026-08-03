@@ -485,7 +485,8 @@ class KinematicSolver:
         )
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567):
+    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567,
+            prior="rw1"):
         """
         Run the NUTS sampler.
 
@@ -505,6 +506,16 @@ class KinematicSolver:
             compatibility). When running many bins in a batch, pass distinct
             seeds per bin to avoid any correlation in the sampling chains; a
             simple convention is ``seed + bin_index`` (see ``fit_all_bins``).
+        prior : {"rw1", "gaussian_core"}
+            Which smoothness prior to use. ``"rw1"`` (default) is the
+            original first-difference random walk, whose infinite-smoothing
+            limit is a *uniform* LOSVD over the velocity grid; it is known
+            to bias kurtosis high by ~+1.1 and dispersion high by ~4-8%,
+            with the dispersion bias growing with ``n_bins``.
+            ``"gaussian_core"`` uses
+            :func:`generate_gaussian_core_curve`, whose infinite-smoothing
+            limit is a Gaussian (Merritt 1997, AJ, 114, 228) and which does
+            not show those biases.
 
         Returns
         -------
@@ -515,22 +526,34 @@ class KinematicSolver:
             msg = "No data added."
             raise ValueError(msg)
 
+        if prior not in ("rw1", "gaussian_core"):
+            msg = (
+                f"Unknown prior {prior!r}; expected 'rw1' or 'gaussian_core'."
+            )
+            raise ValueError(msg)
+
         if gpu is True:
             numpyro.set_platform("gpu")
         elif gpu is False:
             numpyro.set_platform("cpu")
 
         print("Starting NUTS MCMC...")
-        nuts_kernel = NUTS(model)
+        model_kwargs = {
+            "matrix": self.matrix,
+            "n_bins": self.grid["n_bins"],
+            "bin_width": self.grid["width"],
+        }
+        if prior == "gaussian_core":
+            model_fn = model_gaussian_core
+            model_kwargs["centers"] = jnp.asarray(self.grid["centers"])
+        else:
+            model_fn = model
+
+        nuts_kernel = NUTS(model_fn)
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
 
         rng_key = jax.random.PRNGKey(int(seed))
-        mcmc.run(
-            rng_key,
-            matrix=self.matrix,
-            n_bins=self.grid["n_bins"],
-            bin_width=self.grid["width"],
-        )
+        mcmc.run(rng_key, **model_kwargs)
 
         self.samples = mcmc.get_samples()
         # Invalidate any previously computed clipped summary when re-running.
