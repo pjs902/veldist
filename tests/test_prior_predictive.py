@@ -217,3 +217,30 @@ def test_gaussian_core_deviation_is_orthogonal_to_quadratics():
         "deviation term has a non-zero projection onto {1, u, u^2}; the QR "
         "projection is not working"
     )
+
+
+def test_gaussian_core_prior_is_resolution_invariant():
+    """Refining the velocity grid must not change what the prior means.
+
+    The repo already guarantees this for the RW1 prior via a sqrt(bin_width)
+    step scaling. A triple-integrated random walk accumulates as t**2.5 over
+    a fixed physical range, so it needs bin_width**2.5 instead. If that
+    exponent is wrong, the prior-predictive dispersion will drift
+    systematically as n_bins changes.
+    """
+    medians = []
+    for n_bins in (20, 40, 80):
+        centers, bin_width = _grid(n_bins)
+        pdfs = _prior_predictive_pdfs(
+            model_gaussian_core, n_bins, centers, bin_width, num_samples=3000
+        )
+        sigma, _ = _moments(pdfs, centers)
+        medians.append(float(np.median(sigma[np.isfinite(sigma)])))
+
+    spread = (max(medians) - min(medians)) / np.mean(medians)
+    assert spread < 0.15, (
+        "prior-predictive median sigma drifts with grid resolution "
+        f"({[round(m, 1) for m in medians]} for n_bins=20/40/80, relative "
+        f"spread {spread:.2f}); the bin_width scaling exponent on sigma3 is "
+        "probably wrong -- it should be (bin_width / span) ** 2.5"
+    )
