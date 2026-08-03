@@ -20,21 +20,41 @@ Suggested execution order is the table at the end of that file.
   **Blocks calling this prior science-ready.** Numbers in
   `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
 
-- **[P0] Detectability floor: N=150 cannot deliver h4** (literature, not a bug)
+- **[P0] External baseline on N — another group's results, not a hard limit**
   Amorisco & Evans (2012, MNRAS 424, 1899): "extremely difficult to measure
   reliably the shape of any velocity distribution with a sample size
   significantly smaller than N = 200". Sanders & Evans (2020, MNRAS 499,
-  5806): negative excess kurtosis needs ~200 stars, **positive excess kurtosis
-  needs ≳2000**, and sign determination is unreliable once the velocity error
-  floor exceeds ~2 km/s — oMEGACat is 2–3 km/s, right at that edge.
-  This explains the measured coverage table as *expected* rather than
-  anomalous: student_t (h4>0) 0.000 at N=150 is 13x short of the required
-  sample; bimodal (h4<0) 0.320 and skew_normal h3 0.040 are marginally short.
-  **Consequence for the science:** h3 is marginally measurable at N≈150–250;
-  h4>0 is not measurable at that sample size at all. Reporting per-bin h4 at
-  N=150 would be reporting the prior. If h4 matters, it needs coarser bins
-  (N≳2000 → ~15 bins across r_h) or the 2D proper-motion dataset (~20x richer).
+  5806): negative excess kurtosis needs ~200 stars, positive needs ≳2000, and
+  sign determination is unreliable once the velocity error floor exceeds
+  ~2 km/s (oMEGACat is 2–3, right at that edge).
+  **Treat these as calibration of what has been achieved, not as proven
+  bounds.** Neither paper derives a Cramér-Rao bound; both report what their
+  own per-bin maximum-likelihood estimators delivered, and both report
+  *significant detection* thresholds, which is a stricter question than
+  posterior calibration. Neither pools information across spatial bins.
+  They do explain our coverage table as expected rather than anomalous:
+  student_t (h4>0) 0.000 at N=150 is 13x short of their required sample.
+  **Near-term stance: target N=200 per bin.** That matches the published
+  baseline and is cheap — 30k spectra still gives ~150 Voronoi bins across
+  r_h, far more than the 27 apertures of van de Ven et al. Beating it is a
+  research question, addressed by the hierarchical item below.
   See `docs/superpowers/specs/2026-08-03-path-forward.md`.
+
+- **[P2] Hierarchical spatial pooling — the route to beating the baseline**
+  (promoted from Someday: "Spatially coherent velocity distribution inference")
+  The N≈200 figure assumes each bin is fitted *independently*. h3 is
+  rotation-driven and rotation is a smooth large-scale field (van de Ven et al.
+  map it as coherent across ω Cen), so per-bin fitting discards real structure.
+  A hierarchical model with a spatial GP/IGMRF prior on h3 and h4 as functions
+  of position has an effective sample size far above 150 per bin: all 30k stars
+  constrain the smooth field while each bin's stars constrain its local
+  departure. This is the most promising route to h3/h4 maps below the per-bin
+  floor, and is a methods-paper result in its own right.
+  Two caveats: the gain is real only where the field is genuinely smooth (the
+  disk-like component van de Ven et al. find at 1–3 arcmin would be
+  over-smoothed, so validation needs a mock containing one), and this must not
+  be attempted before the per-bin model is calibrated — a joint model built on
+  an uncalibrated likelihood would pool a bias.
 
 - **[P1] h3/h4 are not recovered at realistic amplitude** (was: skew-normal)
   **This is a calibration failure, not a detection failure** — the two are
