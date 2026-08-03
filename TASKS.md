@@ -48,6 +48,23 @@ Suggested execution order is the table at the end of that file.
   far better than any bin constrains itself; see the hierarchical item below.
   See `docs/superpowers/specs/2026-08-03-path-forward.md`.
 
+- **[P1] Joint 3D velocity-distribution model (RV + 2 PM components)**
+  End state is a direct view of the 3D velocity ellipsoid. Two consequences.
+  (a) **h4 is a 4th-moment proxy for anisotropy that is only necessary when
+  LOS data is all you have.** With PMs, anisotropy is a *second*-moment
+  quantity: σ per component has ~5.8% fractional uncertainty at N=150, so a
+  10% anisotropy is ~2σ per bin, where h4 = −0.05 is ~0.9σ. Do not let the
+  h3/h4 work crowd out the 3D structure, which is where the information is.
+  (b) **The sample-size asymmetry is an opportunity**: ~600k stars have HST
+  PMs, ~30k have RVs. At ~200 bins that is ~3000 stars per bin constraining
+  the plane-of-sky distribution and ~150 constraining the third axis. A joint
+  per-star likelihood where each star contributes whatever components it has
+  lets the PM-only majority pin two axes precisely while the RV subset adds
+  v_los and the tilt. The velocity-ellipsoid tilt (⟨v_R v_z⟩ ≠ 0) is only
+  accessible from the combination and is invisible to independent 1D fits.
+  Needs checking first: what DYNAMITE accepts for PM/discrete kinematics in
+  current versions.
+
 - **[P2] Hierarchical spatial pooling — the route to beating the baseline**
   (promoted from Someday: "Spatially coherent velocity distribution inference")
   The N≈200 figure assumes each bin is fitted *independently*. h3 is

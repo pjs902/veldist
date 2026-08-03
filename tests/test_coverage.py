@@ -193,7 +193,49 @@ def _make_truths():
         }
     )
 
-    # 4. Counter-rotation bimodal -- symmetric two-Gaussian mixture. Excess
+    # 4. Flat-topped -- tangential anisotropy analogue, h4 < 0. This is the
+    # shape a tangentially anisotropic LOSVD actually has: a *unimodal*
+    # flat/box-topped profile, which is physically distinct from the
+    # counter-rotating bimodal truth below even though both have h4 < 0.
+    # van de Ven et al. (2006) find omega Cen increasingly tangentially
+    # anisotropic outside ~10 arcmin, so this is the dominant expected
+    # non-Gaussianity, and it is the regime Sanders & Evans (2020) report as
+    # detectable at ~200 stars (positive excess kurtosis needs >~2000).
+    #
+    # Constructed as uniform(-A, A) convolved with a Gaussian, i.e. exactly
+    # the Sanders & Evans uniform-kernel family. Excess kurtosis is
+    # -1.2 * r**2 where r is the fraction of variance carried by the uniform
+    # component; r=0.913 gives kappa = -1.0. Note -1.2 (pure uniform) is the
+    # hard floor for this family, and for any unimodal flat-top.
+    #
+    # Caveat on h4: eq (5) of Sanders & Evans, h4 = kappa / (8*sqrt(6)),
+    # would map kappa=-1.0 to h4 ~ -0.051, but they warn it is only good to
+    # 10% for |h4| < 0.01. Measured directly, a GH series with h4 = -0.05 has
+    # actual excess kurtosis -2.15, and h4 = -0.10 gives -12.7 -- the latter
+    # is an artefact of the series going negative, not a physical LOSVD. So
+    # "h4 = -0.1" from a GH-fitting code should be read as "strongly
+    # flat-topped or bimodal", not as a literal kurtosis.
+    FLAT_A, FLAT_S = 28.1, 5.0
+
+    def _flat_pdf(x, _mu=0.0, _a=FLAT_A, _s=FLAT_S):
+        return (
+            stats.norm.cdf((x - _mu + _a) / _s) - stats.norm.cdf((x - _mu - _a) / _s)
+        ) / (2.0 * _a)
+
+    def _flat_rvs(n, rng, _a=FLAT_A, _s=FLAT_S):
+        return rng.uniform(-_a, _a, size=n) + rng.normal(0.0, _s, size=n)
+
+    truths.append(
+        {
+            "name": "flat_top_tangential",
+            "pdf": _flat_pdf,
+            "rvs": _flat_rvs,
+            "grid": (0.0, 320.0),
+            "err_range": ERR_RANGE,
+        }
+    )
+
+    # 5. Counter-rotation bimodal -- symmetric two-Gaussian mixture. Excess
     # kurtosis ~-1.59, i.e. h4 ~ -0.081, which is within the observed range
     # and the right sign for the tangential anisotropy van de Ven et al.
     # (2006) find in omega Cen's outer region. Kept unchanged: it is the one
