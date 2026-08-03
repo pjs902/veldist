@@ -83,7 +83,7 @@ to pass, per PLAN.md's rule against loosening a failing statistical test.
 
 import numpy as np
 import pytest
-from scipy import integrate, stats
+from scipy import stats
 
 from veldist.veldist import KinematicSolver
 from veldist.analysis import compute_summary
@@ -99,7 +99,24 @@ N_REAL = 25  # realisations per truth (plan suggests 50; reduced for runtime, se
 # matters specifically in the inner regions of the MUSE map, where spatial
 # resolution is the point. 250 would be easier to fit but coarser on sky.
 N_STARS = 150  # fixed per truth -> matrix shape is constant -> JAX only compiles once per truth
-N_BINS = 40
+
+# Velocity grid sized to the data rather than chosen for convenience.
+#
+# DYNAMITE requires one shared velocity grid across all spatial bins, so it
+# must hold the largest dispersion in the field. omega Cen's central LOS
+# dispersion is ~20 km/s, falling to ~9 km/s in the outskirts, plus a ~10 km/s
+# span in the mean velocity from rotation. GRID_WIDTH = 200 gives +-4.8 sigma
+# for the central dispersion after allowing for that offset (Gaussian mass
+# outside the grid ~2e-6).
+#
+# The bin width is 2x the 2-3 km/s measurement error. Finer is unrecoverable:
+# the errors convolve away structure below their own scale. The previous
+# setting -- 320 km/s over 20 bins -- gave 16 km/s bins, i.e. 6.4x *coarser*
+# than the data resolves, while leaving ~71% of bins carrying no mass at all.
+# Those empty bins are pure prior-driven latent dimensions and are the likely
+# reason `n_sigma_truncate` was needed to suppress far-edge tail leakage.
+GRID_WIDTH = 200.0
+N_BINS = 40  # -> 5.0 km/s bins
 NUM_WARMUP = 300
 NUM_SAMPLES = 600
 
@@ -147,13 +164,13 @@ def _make_truths():
     truths = []
 
     # 1. Gaussian
-    rv = stats.norm(loc=0.0, scale=30.0)
+    rv = stats.norm(loc=0.0, scale=20.0)  # omega Cen central LOS dispersion
     truths.append(
         {
             "name": "gaussian",
             "pdf": rv.pdf,
             "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
-            "grid": (0.0, 320.0),
+            "grid": (0.0, GRID_WIDTH),
             "err_range": ERR_RANGE,
         }
     )
@@ -170,7 +187,7 @@ def _make_truths():
             "name": "student_t_h4",
             "pdf": rv.pdf,
             "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
-            "grid": (0.0, 360.0),
+            "grid": (0.0, GRID_WIDTH),
             "err_range": ERR_RANGE,
         }
     )
@@ -188,7 +205,7 @@ def _make_truths():
             "name": "skew_normal_h3",
             "pdf": rv.pdf,
             "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
-            "grid": (0.0, 320.0),
+            "grid": (0.0, GRID_WIDTH),
             "err_range": ERR_RANGE,
         }
     )
@@ -230,18 +247,135 @@ def _make_truths():
             "name": "flat_top_tangential",
             "pdf": _flat_pdf,
             "rvs": _flat_rvs,
-            "grid": (0.0, 320.0),
+            "grid": (0.0, GRID_WIDTH),
             "err_range": ERR_RANGE,
         }
     )
 
-    # 5. Counter-rotation bimodal -- symmetric two-Gaussian mixture. Excess
+    # 5. Rotating + tangentially anisotropic -- h3 and h4 together. Real bins
+    # in the outer region have both at once: rotation gives h3, tangential
+    # anisotropy gives h4 < 0. Every other truth here isolates a single
+    # moment, which is not how the data arrives. Built as an *asymmetric*
+    # uniform kernel convolved with a Gaussian, which is the Sanders & Evans
+    # (2020) skewness option for their uniform family.
+    # Note a *shifted* uniform kernel is still symmetric about its own
+    # midpoint and produces no skewness at all -- only a mean offset. The
+    # skewed version needs a two-piece kernel with different widths either
+    # side of zero, carrying equal weight, so the density steps at the
+    # centre. Here the left piece is wider and lower, giving negative h3.
+    ROT_A1, ROT_A2, ROT_S = 34.0, 13.0, 6.0
+
+    def _rot_tan_pdf(x, _a1=ROT_A1, _a2=ROT_A2, _s=ROT_S):
+        x = np.asarray(x, dtype=float)
+        left = (stats.norm.cdf((x + _a1) / _s) - stats.norm.cdf(x / _s)) / _a1
+        right = (stats.norm.cdf(x / _s) - stats.norm.cdf((x - _a2) / _s)) / _a2
+        return 0.5 * (left + right)
+
+    def _rot_tan_rvs(n, rng, _a1=ROT_A1, _a2=ROT_A2, _s=ROT_S):
+        left = rng.random(n) < 0.5
+        draws = rng.uniform(0.0, _a2, size=n)
+        draws[left] = rng.uniform(-_a1, 0.0, size=left.sum())
+        return draws + rng.normal(0.0, _s, size=n)
+
+    truths.append(
+        {
+            "name": "rotating_tangential",
+            "pdf": _rot_tan_pdf,
+            "rvs": _rot_tan_rvs,
+            "grid": (0.0, GRID_WIDTH),
+            "err_range": ERR_RANGE,
+        }
+    )
+
+    # 6. Cold disk component -- omega Cen specific. van de Ven et al. (2006)
+    # find a separate disk-like component between 1 and 3 arcmin contributing
+    # ~4% of the total mass, which is "the kinematically coldest component"
+    # and maximally rotating. A small, cold, offset component on a warm base
+    # is a distinctive shape: sharply peaked core, and neither a pure scale
+    # mixture nor a clean bimodal. This is also the feature a hierarchical
+    # spatial model would be at risk of over-smoothing, so it needs to be in
+    # the suite before that work starts.
+    disk_locs, disk_scales, disk_w = (0.0, 26.0), (17.0, 5.0), (0.96, 0.04)
+
+    def _disk_pdf(x, _l=disk_locs, _s=disk_scales, _w=disk_w):
+        out = 0.0
+        for loc, sc, w in zip(_l, _s, _w):
+            out = out + w * stats.norm(loc=loc, scale=sc).pdf(x)
+        return out
+
+    def _disk_rvs(n, rng, _l=disk_locs, _s=disk_scales, _w=disk_w):
+        comp = rng.random(n) < _w[1]
+        draws = rng.normal(_l[0], _s[0], size=n)
+        draws[comp] = rng.normal(_l[1], _s[1], size=comp.sum())
+        return draws
+
+    truths.append(
+        {
+            "name": "cold_disk_component",
+            "pdf": _disk_pdf,
+            "rvs": _disk_rvs,
+            "grid": (0.0, GRID_WIDTH),
+            "err_range": ERR_RANGE,
+        }
+    )
+
+    # 7. Two stellar populations -- omega Cen specific. Norris et al. (1997)
+    # and van de Ven et al. sec 9.6: the metal-poor population is
+    # kinematically hotter and rotates, the metal-rich population is cooler
+    # and nearly non-rotating. Any Voronoi bin mixes them, giving a scale
+    # mixture with a small relative offset. Distinct from student_t: the
+    # heavy tail here is a genuine two-component superposition, which is what
+    # the data actually contains, rather than an idealised t distribution.
+    pop_locs, pop_scales, pop_w = (4.0, -2.0), (19.0, 12.0), (0.65, 0.35)
+
+    def _pop_pdf(x, _l=pop_locs, _s=pop_scales, _w=pop_w):
+        out = 0.0
+        for loc, sc, w in zip(_l, _s, _w):
+            out = out + w * stats.norm(loc=loc, scale=sc).pdf(x)
+        return out
+
+    def _pop_rvs(n, rng, _l=pop_locs, _s=pop_scales, _w=pop_w):
+        comp = rng.random(n) < _w[1]
+        draws = rng.normal(_l[0], _s[0], size=n)
+        draws[comp] = rng.normal(_l[1], _s[1], size=comp.sum())
+        return draws
+
+    truths.append(
+        {
+            "name": "two_population",
+            "pdf": _pop_pdf,
+            "rvs": _pop_rvs,
+            "grid": (0.0, GRID_WIDTH),
+            "err_range": ERR_RANGE,
+        }
+    )
+
+    # 8. Mild radial anisotropy -- the inner region. van de Ven et al. find
+    # omega Cen only slightly radially anisotropic between about 3 and 5
+    # arcmin, so the realistic positive-h4 case is much weaker than the
+    # student_t_h4 truth above. df=19 gives excess kurtosis 6/(df-4) = 0.4,
+    # i.e. h4 ~ +0.020. Retained alongside the stronger truth because
+    # Sanders & Evans report positive excess kurtosis as the hard sign to
+    # detect (>~2000 stars), so this is expected to be a non-detection and
+    # the test is whether the interval is honest about that.
+    rv = stats.t(df=19, loc=0.0, scale=17.0)
+    truths.append(
+        {
+            "name": "mild_radial_h4",
+            "pdf": rv.pdf,
+            "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
+            "grid": (0.0, GRID_WIDTH),
+            "err_range": ERR_RANGE,
+        }
+    )
+
+    # 9. Counter-rotation bimodal -- symmetric two-Gaussian mixture. Excess
     # kurtosis ~-1.59, i.e. h4 ~ -0.081, which is within the observed range
     # and the right sign for the tangential anisotropy van de Ven et al.
     # (2006) find in omega Cen's outer region. Kept unchanged: it is the one
     # truth here that is both realistic in amplitude and a genuine stress
     # test of multimodality.
-    locs, scale, weights = (-40.0, 40.0), 14.0, (0.5, 0.5)
+    locs, scale, weights = (-18.0, 18.0), 10.0, (0.5, 0.5)  # sigma ~20.6, omega Cen-like
 
     def _mix_rvs(n, rng):
         comp = rng.integers(0, 2, size=n)
@@ -256,7 +390,7 @@ def _make_truths():
             "name": "bimodal_counter_rotation",
             "pdf": lambda x: _mixture_pdf(x, locs, scale, weights),
             "rvs": _mix_rvs,
-            "grid": (0.0, 320.0),
+            "grid": (0.0, GRID_WIDTH),
             "err_range": ERR_RANGE,
         }
     )
@@ -264,25 +398,33 @@ def _make_truths():
     return truths
 
 
-def _true_moments(pdf, lo=-400.0, hi=400.0):
+def _true_moments(pdf, lo=-500.0, hi=500.0, n_grid=2_000_001):
     """Numerically integrate the true pdf for v_mean, sigma, skewness,
     kurtosis, and tail_weight (fraction of mass outside +/-1 sigma of the
-    mean) -- computed generically so it works for the mixture truth too,
-    rather than trusting per-distribution formulas."""
-    mean = integrate.quad(lambda x: x * pdf(x), lo, hi, limit=200)[0]
-    var = integrate.quad(lambda x: (x - mean) ** 2 * pdf(x), lo, hi, limit=200)[0]
+    mean) -- computed generically so it works for the mixture truths too,
+    rather than trusting per-distribution formulas.
+
+    Uses a dense uniform grid rather than ``scipy.integrate.quad``. quad's
+    adaptive subdivision silently under-samples a narrow component sitting on
+    a broad base: for the ``cold_disk_component`` truth (a 4%-weight, 5 km/s
+    component on a 17 km/s base) it returned skewness +0.0000 against a true
+    -0.0320. Since these values are what coverage is measured against, a
+    silently wrong truth would invalidate the test rather than fail it. The
+    grid spacing here is 5e-4 km/s, and results agree with quad to 4 decimal
+    places on every truth where quad is reliable.
+    """
+    v = np.linspace(lo, hi, n_grid)
+    p = np.asarray(pdf(v), dtype=float)
+    norm = np.trapezoid(p, v)
+    p = p / norm
+
+    mean = float(np.trapezoid(v * p, v))
+    var = float(np.trapezoid((v - mean) ** 2 * p, v))
     sigma = np.sqrt(var)
-    skew = integrate.quad(
-        lambda x: ((x - mean) / sigma) ** 3 * pdf(x), lo, hi, limit=200
-    )[0]
-    kurt = (
-        integrate.quad(lambda x: ((x - mean) / sigma) ** 4 * pdf(x), lo, hi, limit=200)[0]
-        - 3.0
-    )
-    tail = (
-        integrate.quad(pdf, lo, mean - sigma, limit=200)[0]
-        + integrate.quad(pdf, mean + sigma, hi, limit=200)[0]
-    )
+    skew = float(np.trapezoid(((v - mean) / sigma) ** 3 * p, v))
+    kurt = float(np.trapezoid(((v - mean) / sigma) ** 4 * p, v)) - 3.0
+    inside = (v >= mean - sigma) & (v <= mean + sigma)
+    tail = 1.0 - float(np.trapezoid(p[inside], v[inside]))
     return {
         "v_mean": mean,
         "sigma": sigma,
