@@ -1,11 +1,10 @@
 # Validation
 
-This page summarises the statistical validation currently in the test suite
-for both the 1D (`KinematicSolver`) and 2D (`KinematicSolver2D`) solvers, and
-the 2D solver's performance gate. It reports what these tests found — including
-a known, currently-unresolved bias — rather than only the results that look
-good. See `PLAN.md` §1.2, §1.3, §3.3, and §3.4 for the full methodology and
-the reasoning behind each design choice.
+This page summarises the statistical validation in the test suite for the 1D
+(`KinematicSolver`) and 2D (`KinematicSolver2D`) solvers, and the 2D solver's
+performance gate. It reports what these tests found, including a known
+unresolved bias. See `PLAN.md` §1.2, §1.3, §3.3, and §3.4 for the full
+methodology.
 
 ## What SBC validates
 
@@ -16,34 +15,33 @@ parameter's rank among the posterior draws is uniformly distributed. This
 is a test of implementation correctness — a wrong random-walk prior, an
 off-by-half-bin design matrix, or a `numpyro.factor` term invisible to
 `Predictive` all show up as non-uniform rank histograms. It does **not**
-check whether the model is a good description of real data.
+check whether the model describes real data well.
 
 ## What coverage validates
 
 Frequentist coverage testing validates the *model against reality*, not
-against itself. For a handful of fixed, physically-motivated truths (not
-drawn from the model's own prior), generate many independent mock datasets,
+against itself. For a handful of fixed, physically motivated truths (not
+drawn from the model's prior), we generate many independent mock datasets,
 fit each, and check whether the true value falls inside the reported 68%
-credible interval the stated fraction of the time. This is the test that
-matters for a downstream consumer such as Dynamite's NNLS $\chi^2$, which
-takes the reported uncertainties literally. Coverage can fail even when SBC
-passes cleanly, because SBC's "truth" is always self-consistent with the
-model's prior — a smoothness prior that shrinks away genuine sharp features
-in real data is invisible to SBC but shows up directly in coverage.
+credible interval the stated fraction of the time. This test matters for a
+downstream consumer such as Dynamite's NNLS $\chi^2$, which takes the
+reported uncertainties literally. Coverage can fail even when SBC passes
+cleanly, because SBC's "truth" is always self-consistent with the model's
+prior. A smoothness prior that shrinks away genuine sharp features in real
+data is invisible to SBC but shows up directly in coverage.
 
 ## 1D solver results
 
 **SBC** (`tests/test_calibration.py`, `n_bins=15`, `n_stars=200`,
 500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities pass the
 Bonferroni-corrected KS uniformity test for **both** the RW1 and
-Gaussian-core priors, with reported p-values in the range 0.52–0.97. The
-SBC harness is now parametrised over ``SBC_PRIORS = ["rw1", "gaussian_core"]``
-(see `tests/test_calibration.py`). This SBC run is what caught and led to
-fixing a real bug earlier in the repo's history: the original random-walk
-prior was implemented via `numpyro.factor` on an unconditioned base measure,
-which is invisible to `Predictive` — the SBC "truth" was silently drawn from
-the wrong distribution. The prior was rewritten generatively, after which SBC
-passed cleanly.
+Gaussian-core priors, with p-values in the range 0.52–0.97. The SBC harness
+is now parametrised over ``SBC_PRIORS = ["rw1", "gaussian_core"]``
+(see `tests/test_calibration.py`). This SBC run caught an earlier bug: the
+original random-walk prior used `numpyro.factor` on an unconditioned base
+measure. Because `numpyro.factor` is invisible to `Predictive`, the SBC
+"truth" was silently drawn from the wrong distribution. The prior was
+rewritten generatively; SBC then passed cleanly.
 
 **Prior-predictive null-space test** (`tests/test_prior_predictive.py`):
 the Gaussian-core prior's prior-predictive median velocity dispersion is
@@ -61,30 +59,28 @@ with bin count. The RW1 negative control still reproduces the known
 `n_bins=20`, four truths: Gaussian, Student-$t$ ($\nu=6$), skew-normal,
 counter-rotating bimodal): parametrised over both priors. For the
 **Gaussian-core prior** (without truncation), the Gaussian truth's σ, kurtosis,
-and tail_weight all have 1.000 empirical coverage (intervals are conservative
-but valid). The non-Gaussian truths still show under-coverage in kurtosis and
-tail_weight — this is an inherent finite-data limitation, not the RW1 prior's
-flat-null-space bug. For the **RW1 prior**, `n_sigma_truncate=3.0` is applied
-(see `analysis.truncate_pdf_samples`); the test remains marked `xfail` pending
-a better tail-handling approach for heavy-tailed truths. See `PLAN.md` §1.3
-for full numbers.
+and tail_weight all have 1.000 empirical coverage (the intervals are
+conservative but valid). The non-Gaussian truths still show under-coverage in
+kurtosis and tail_weight — this is an inherent finite-data limitation, not the
+RW1 prior's flat-null-space bug. For the **RW1 prior**, `n_sigma_truncate=3.0`
+is applied (see `analysis.truncate_pdf_samples`); the test remains marked
+`xfail` pending a better tail-handling approach for heavy-tailed truths. See
+`PLAN.md` §1.3 for numbers.
 
 **Default prior**: as of commit 4b3bca2, `KinematicSolver.run()` defaults
-to `prior="gaussian_core"`. Pass `prior="rw1"` explicitly for the previous
-behaviour.
+to `prior="gaussian_core"`. Pass `prior="rw1"` for the previous behaviour.
 
 ## 2D solver results
 
 **SBC** (`tests/test_calibration_2d.py`, `K=10` (100 cells), `n_stars=250`,
 500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities (`mean_x`,
-`mean_y`, `sigma_x`, `sigma_y`, `rho`, `smoothness_sigma`) pass, 0/30
+`mean_y`, `sigma_x`, `sigma_y`, `rho`, `smoothness_sigma`) pass; 0/30
 simulations failed. The 2D model's GMRF prior was already implemented
 generatively (`z ~ N(0, I)` plus a deterministic Cholesky-whitening
 transform, never a bare `numpyro.factor` penalty) from the start, following
-the lesson learned from the 1D SBC bug above — this was verified rather than
-assumed, via `test_prior_predictive_is_smooth_2d`, which checks that
-`Predictive` draws of `intrinsic_pdf` are diffuse GMRF-like fields and not
-near-one-hot spikes.
+the lesson learned from the 1D SBC bug above. This was verified via
+`test_prior_predictive_is_smooth_2d`, which checks that `Predictive` draws of
+`intrinsic_pdf` are diffuse GMRF-like fields and not near-one-hot spikes.
 
 **Recovery** (`tests/test_veldist2d.py`, slow tests): the acceptance
 criterion for "2D minimally working" per the plan is recovering the full
@@ -94,24 +90,22 @@ marginal recovery alone would be equally well passed by a separable
 bivariate Gaussian with covariance $\mathrm{Var}(x)=\sigma_x^2$,
 $\mathrm{Var}(y)=\sigma_y^2$, $\mathrm{Cov}(x,y)=\rho\sigma_x\sigma_y$,
 using $\sigma_x=8$, $\sigma_y=6$, $\rho=0.6$, and recovers all three
-independent covariance
-components within the posterior half-68CI (5$\sigma$ tolerance).
-`test_recover_isotropic_gaussian` is the $\rho=0$ control, and
-`test_2d_marginal_matches_1d` cross-checks the 2D solver's $\hat v_1$
-marginal against a direct 1D fit of the same data — both pass. One finding
-along the way: these tests needed `n_stars=2000` rather than the
-plan-suggested 200–400, because at lower star counts the GMRF prior induces
-a measurable finite-sample shrinkage bias in the recovered variance (the
-same underlying mechanism as the 1D kurtosis bias above — many free grid
-cells relative to star count). This was fixed by raising $N$, a genuine
-mitigation, rather than by loosening the tolerance.
+independent covariance components within the posterior half-68CI
+(5$\sigma$ tolerance). `test_recover_isotropic_gaussian` is the $\rho=0$
+control. `test_2d_marginal_matches_1d` cross-checks the 2D solver's
+$\hat v_1$ marginal against a direct 1D fit of the same data — both pass.
+One finding: these tests needed `n_stars=2000` rather than the plan-suggested
+200–400, because at lower star counts the GMRF prior induces a measurable
+finite-sample shrinkage bias in the recovered variance (the same underlying
+mechanism as the 1D kurtosis bias above — many free grid cells relative to
+star count). This was fixed by raising $N$, a genuine mitigation, rather than
+by loosening the tolerance.
 
 **Performance gate** (`PLAN.md` §3.4): the plan defines an explicit,
-measurable gate before considering any SVI/Pathfinder escalation — run
+measurable gate before considering any SVI/Pathfinder escalation. Run
 `K=20` (400 cells), `N=5000` mock stars, 500 warmup + 1000 samples on CPU
 with 4 chains, and proceed with plain NUTS if wall time < 10 min, minimum
-ESS/`n_samples` > 0.1, and maximum $\hat R$ < 1.01. Measured directly this
-session:
+ESS/`n_samples` > 0.1, and maximum $\hat R$ < 1.01. Measured:
 
 | Criterion | Threshold | Measured | Verdict |
 |---|---|---|---|
@@ -122,18 +116,17 @@ session:
 All three criteria pass with wide margin (ESS and $\hat R$ were checked
 across `smoothness_sigma`, the latent `z` vector, and `intrinsic_pdf`, not
 just the cheapest scalar; `intrinsic_pdf` was the binding constraint on both
-ESS and $\hat R$). Per the plan, the gate passing means **no escalation is
-warranted** — the SVI/Pathfinder ladder (K reduction, `dense_mass=True`,
-GPU, Pathfinder-for-init, full SVI) was not built, consistent with the
-plan's instruction not to build it speculatively. Full numbers and the
-reproduction procedure are recorded in `PLAN.md` §3.4, "Gate result
+ESS and $\hat R$). All three criteria pass. Per the plan, **no escalation is
+warranted**; the SVI/Pathfinder ladder (K reduction, `dense_mass=True`,
+GPU, Pathfinder-for-init, full SVI) was not built, as the plan instructs. Full numbers and the
+reproduction procedure are recorded in `PLAN.md` §3.4 "Gate result
 (measured)".
 
 ## How to reproduce
 
-All of the slow tests below run actual NUTS sampling and take from tens of
-seconds to several minutes each; they are excluded from the default fast
-test run (`pytest tests/ -v --tb=short -m "not slow"`).
+The slow tests below run actual NUTS sampling and take from tens of seconds
+to several minutes each; they are excluded from the default fast test run
+(`pytest tests/ -v --tb=short -m "not slow"`).
 
 ```bash
 # 1D SBC
@@ -151,5 +144,5 @@ pytest tests/test_veldist2d.py -m slow -v
 
 The §3.4 performance gate is a one-off measurement, not a pytest test (it
 calls `numpyro.infer.MCMC`/`NUTS` directly on `model_2d` with `num_chains=4`,
-which `KinematicSolver2D.run()` does not currently expose) — the procedure
-and exact configuration to reproduce it are recorded in `PLAN.md` §3.4.
+which `KinematicSolver2D.run()` does not currently expose). See `PLAN.md`
+§3.4 for the exact procedure.
