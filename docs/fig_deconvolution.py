@@ -22,6 +22,7 @@ import argparse
 
 import numpy as np
 import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from scipy.stats import norm
@@ -30,8 +31,7 @@ from scipy.stats import norm
 # Parse arguments
 # --------------------------------------------------------------------------
 parser = argparse.ArgumentParser()
-parser.add_argument("--no-inference", action="store_true",
-                    help="Skip panel (c); do not require JAX/NumPyro")
+parser.add_argument("--no-inference", action="store_true", help="Skip panel (c); do not require JAX/NumPyro")
 args = parser.parse_args()
 
 rng = np.random.default_rng(2024)
@@ -42,10 +42,10 @@ rng = np.random.default_rng(2024)
 v_grid = np.linspace(-120, 120, 300)
 
 # Gaussian core with a faint low-velocity tail
-core  = np.exp(-0.5 * ((v_grid - 15.0) / 28.0)**2)
-tail  = 0.25 * np.exp(-0.5 * ((v_grid + 50.0) / 35.0)**2) * (v_grid < 15)
+core = np.exp(-0.5 * ((v_grid - 15.0) / 28.0) ** 2)
+tail = 0.25 * np.exp(-0.5 * ((v_grid + 50.0) / 35.0) ** 2) * (v_grid < 15)
 true_pdf = core + tail
-true_pdf /= np.trapz(true_pdf, v_grid)
+true_pdf /= np.trapezoid(true_pdf, v_grid)
 
 # --------------------------------------------------------------------------
 # Synthetic dataset: N stars
@@ -65,7 +65,7 @@ v_int = np.array(v_int[:N])
 
 # Heteroscedastic errors: larger near the wings
 errors = 8.0 + 4.0 * np.abs(v_int) / 50.0 + rng.uniform(0, 4, N)
-v_obs  = v_int + rng.normal(0.0, errors)
+v_obs = v_int + rng.normal(0.0, errors)
 
 # --------------------------------------------------------------------------
 # Build figure panels
@@ -77,13 +77,12 @@ fig.subplots_adjust(wspace=0.38)
 
 # ---- Panel (a): True LOSVD + individual error kernels -------------------
 ax = axes[0]
-ax.plot(v_grid, true_pdf, color="black", linewidth=2.0,
-        label="True LOSVD", zorder=5)
+ax.plot(v_grid, true_pdf, color="black", linewidth=2.0, label="True LOSVD", zorder=5)
 
 # Plot a random subsample of individual error kernels (rescaled for visibility)
 n_show = 30
 idx_show = rng.choice(N, n_show, replace=False)
-kernel_scale = true_pdf.max() * 0.18   # rescale so kernels are visible but not dominant
+kernel_scale = true_pdf.max() * 0.18  # rescale so kernels are visible but not dominant
 for i in idx_show:
     k = norm.pdf(v_grid, loc=v_obs[i], scale=errors[i])
     k /= k.max()
@@ -95,10 +94,16 @@ i_ex = idx_show[0]
 k_ex = norm.pdf(v_grid, loc=v_obs[i_ex], scale=errors[i_ex])
 k_ex /= k_ex.max()
 k_ex *= kernel_scale
-ax.plot(v_grid, k_ex, color="#1f77b4", linewidth=1.4, alpha=0.9, zorder=3,
-        label=fr"Error kernel, $\varepsilon = {errors[i_ex]:.1f}$ km/s")
-ax.axvline(v_obs[i_ex], color="#1f77b4", linewidth=0.8, linestyle=":",
-           alpha=0.7, zorder=3)
+ax.plot(
+    v_grid,
+    k_ex,
+    color="#1f77b4",
+    linewidth=1.4,
+    alpha=0.9,
+    zorder=3,
+    label=rf"Error kernel, $\varepsilon = {errors[i_ex]:.1f}$ km/s",
+)
+ax.axvline(v_obs[i_ex], color="#1f77b4", linewidth=0.8, linestyle=":", alpha=0.7, zorder=3)
 
 ax.set_xlim(v_grid[0], v_grid[-1])
 ax.set_ylim(bottom=0)
@@ -113,20 +118,25 @@ ax.spines[["top", "right"]].set_visible(False)
 ax = axes[1]
 
 # Histogram of observed velocities
-ax.hist(v_obs, bins=25, density=True, color="gray", alpha=0.55,
-        label="Observed ($N={:d}$ stars)".format(N), zorder=2)
+ax.hist(v_obs, bins=25, density=True, color="gray", alpha=0.55, label="Observed ($N={:d}$ stars)".format(N), zorder=2)
 
 # Naive Gaussian fit to observed
 mu_obs, sig_obs = np.mean(v_obs), np.std(v_obs)
 v_fit = np.linspace(v_grid[0], v_grid[-1], 300)
-ax.plot(v_fit,
-        norm.pdf(v_fit, mu_obs, sig_obs),
-        color="#d62728", linewidth=1.8, linestyle="--",
-        label=fr"Gaussian fit to obs. ($\sigma = {sig_obs:.0f}$ km/s)", zorder=4)
+ax.plot(
+    v_fit,
+    norm.pdf(v_fit, mu_obs, sig_obs),
+    color="#d62728",
+    linewidth=1.8,
+    linestyle="--",
+    label=rf"Gaussian fit to obs. ($\sigma = {sig_obs:.0f}$ km/s)",
+    zorder=4,
+)
 
 # True LOSVD (for reference)
-ax.plot(v_grid, true_pdf, color="black", linewidth=1.8, linestyle="-",
-        label=fr"True LOSVD ($\sigma = 28$ km/s)", zorder=5)
+ax.plot(
+    v_grid, true_pdf, color="black", linewidth=1.8, linestyle="-", label=rf"True LOSVD ($\sigma = 28$ km/s)", zorder=5
+)
 
 ax.set_xlim(v_grid[0], v_grid[-1])
 ax.set_ylim(bottom=0)
@@ -160,12 +170,9 @@ if not args.no_inference:
         p84 = np.percentile(pdf_density, 84, axis=0)
         med = np.percentile(pdf_density, 50, axis=0)
 
-        ax.fill_between(vc, p16, p84, color="steelblue", alpha=0.30,
-                        label="68% credible interval")
-        ax.plot(vc, med, color="steelblue", linewidth=2.0,
-                label="Posterior median")
-        ax.plot(v_grid, true_pdf, color="black", linewidth=1.8, linestyle="--",
-                label="True LOSVD")
+        ax.fill_between(vc, p16, p84, color="steelblue", alpha=0.30, label="68% credible interval")
+        ax.plot(vc, med, color="steelblue", linewidth=2.0, label="Posterior median")
+        ax.plot(v_grid, true_pdf, color="black", linewidth=1.8, linestyle="--", label="True LOSVD")
 
         ax.set_xlim(v_grid[0], v_grid[-1])
         ax.set_ylim(bottom=0)
@@ -182,6 +189,7 @@ if not args.no_inference:
         #               — JAX version requires NumPy >= 2.0; upgrade with
         #                 `pip install "numpy>=2.0"`
         import numpy as _np
+
         np_ver = _np.__version__
         msg = (
             f"Inference unavailable\n"
@@ -192,9 +200,7 @@ if not args.no_inference:
             if isinstance(e, TypeError) and "copy" in str(e)
             else f"Inference unavailable:\n{e}"
         )
-        ax.text(0.5, 0.5, msg,
-                ha="center", va="center", transform=ax.transAxes, fontsize=8,
-                color="gray", wrap=True)
+        ax.text(0.5, 0.5, msg, ha="center", va="center", transform=ax.transAxes, fontsize=8, color="gray", wrap=True)
         ax.set_title("(c) Recovered LOSVD\n(requires JAX/NumPyro + NumPy ≥ 2.0)", fontsize=9)
         print(f"\nWarning: panel (c) skipped — {type(e).__name__}: {e}")
         if isinstance(e, TypeError) and "copy" in str(e):
