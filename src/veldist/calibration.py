@@ -26,6 +26,8 @@ __all__ = [
     "OMEGACAT",
     "Truth",
     "make_truths",
+    "true_moments",
+    "METRICS",
     "CalibrationResult",
     "calibrate",
 ]
@@ -365,7 +367,8 @@ class CalibrationResult:
 
 
 def calibrate(profile, truths, sigma=None, *, n_real=25, prior="gaussian_core",
-              n_bins=None, seed=20260803, num_warmup=300, num_samples=600):
+              n_bins=None, seed=20260803, num_warmup=300, num_samples=600,
+              n_sigma_truncate=None):
     """Fit mock realisations of each truth; measure coverage and efficiency.
 
     ``sigma`` defaults to the profile's widest LOSVD. **Run it at
@@ -399,7 +402,8 @@ def calibrate(profile, truths, sigma=None, *, n_real=25, prior="gaussian_core",
             solver.run(num_warmup=num_warmup, num_samples=num_samples,
                        seed=seed + i, prior=prior)
             summ = compute_summary(solver.samples["intrinsic_pdf"],
-                                   solver.grid["centers"], n_sigma_truncate=None)
+                                   solver.grid["centers"],
+                                   n_sigma_truncate=n_sigma_truncate)
             for m in METRICS:
                 med, h68 = summ[m]
                 meds[m].append(med)

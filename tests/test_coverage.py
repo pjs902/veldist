@@ -85,57 +85,35 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from veldist.veldist import KinematicSolver
-from veldist.analysis import compute_summary
+from veldist.calibration import (
+    OMEGACAT,
+    METRICS,
+    calibrate,
+    make_truths,
+    true_moments,
+)
 
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
 
 N_REAL = 25  # realisations per truth (plan suggests 50; reduced for runtime, see module docstring)
-# Calibrated against the oMEGACat target dataset -- see "Observational
-# calibration" in the module docstring. 150 stars per bin is the science
-# target: it gives ~200 Voronoi bins across r_h, and the finer binning
-# matters specifically in the inner regions of the MUSE map, where spatial
-# resolution is the point. 250 would be easier to fit but coarser on sky.
-N_STARS = 150  # fixed per truth -> matrix shape is constant -> JAX only compiles once per truth
 
-# Velocity grid sized to the data rather than chosen for convenience.
-#
-# DYNAMITE requires one shared velocity grid across all spatial bins, so it
-# must hold the largest dispersion in the field. omega Cen's central LOS
-# dispersion is ~20 km/s, falling to ~9 km/s in the outskirts, plus a ~10 km/s
-# span in the mean velocity from rotation. GRID_WIDTH = 200 gives +-4.8 sigma
-# for the central dispersion after allowing for that offset (Gaussian mass
-# outside the grid ~2e-6).
-#
-# The bin width is 2x the 2-3 km/s measurement error. Finer is unrecoverable:
-# the errors convolve away structure below their own scale. The previous
-# setting -- 320 km/s over 20 bins -- gave 16 km/s bins, i.e. 6.4x *coarser*
-# than the data resolves, while leaving ~71% of bins carrying no mass at all.
-# Those empty bins are pure prior-driven latent dimensions and are the likely
-# reason `n_sigma_truncate` was needed to suppress far-edge tail leakage.
-GRID_WIDTH = 200.0
-N_BINS = 40  # -> 5.0 km/s bins
-NUM_WARMUP = 300
-NUM_SAMPLES = 600
+# All dataset-specific settings now live in the ObservingProfile, which
+# derives the velocity grid from the observing regime rather than having it
+# chosen by hand. See veldist/calibration.py; `OMEGACAT.report()` prints the
+# grid, the informative-bin fraction, err/sigma and the achievable per-bin
+# precision for the target dataset.
+PROFILE = OMEGACAT
+N_STARS = PROFILE.n_stars
+N_BINS = PROFILE.n_bins
 
-# MUSE line-of-sight velocity uncertainties for bright RGB stars in oMEGACat
-# are 2-3 km/s. Against the truths below (sigma 15-42 km/s) this gives
-# err/sigma ~ 0.05-0.20, matching van de Ven et al. (2006), who selected LOS
-# velocities at <2.0 km/s against sigma_z' of 8.8-20.9 km/s.
-ERR_RANGE = (2.0, 3.0)
-
-# Truncation applied to raw posterior samples before compute_summary's
-# moments are evaluated, to mitigate RW1 tail-leakage bias in kurtosis (see
-# analysis.truncate_pdf_samples and PLAN.md sec 1.3). n_sigma=3.0 was found
-# empirically (scratch verification, not committed) to remove essentially
-# all of the median kurtosis bias for a Gaussian truth on this grid setup
-# (+1.78 -> +0.05 median excess kurtosis over 12 realisations).
+# Truncation applied to raw posterior samples before compute_summary's moments
+# are evaluated, to mitigate RW1 tail-leakage bias in kurtosis. The
+# Gaussian-core prior should not need it -- needing it would mean the
+# root-cause fix did not work. rw1 keeps 3.0 so its numbers stay comparable to
+# those already recorded in docs/validation.md.
 N_SIGMA_TRUNCATE = 3.0
-
-# Metrics we check coverage for; all have (median, half_68ci) tuples from compute_summary.
-METRICS = ["v_mean", "sigma", "skewness", "kurtosis", "tail_weight"]
 
 # Metrics expected (per plan) to show shrinkage-driven under-coverage on
 # non-Gaussian truths. For these we only assert against a catastrophic floor.
@@ -153,287 +131,6 @@ SHRINKAGE_PRONE = {"kurtosis", "tail_weight"}
 #   err_range   -- (lo, hi) for per-star heteroscedastic Gaussian measurement error
 
 
-def _mixture_pdf(x, locs, scale, weights):
-    out = 0.0
-    for loc, w in zip(locs, weights):
-        out = out + w * stats.norm(loc=loc, scale=scale).pdf(x)
-    return out
-
-
-def _make_truths():
-    truths = []
-
-    # 1. Gaussian
-    rv = stats.norm(loc=0.0, scale=20.0)  # omega Cen central LOS dispersion
-    truths.append(
-        {
-            "name": "gaussian",
-            "pdf": rv.pdf,
-            "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 2. Student-t, df=10 -- h4>0 radially-anisotropic analogue (heavy tails,
-    # positive excess kurtosis = 6/(df-4) = 1.0 for df=10, i.e. h4 ~ +0.051
-    # via gamma2 = 8*sqrt(6)*h4). df=6 was used previously, giving excess
-    # kurtosis 3.0 and h4 ~ 0.153 -- roughly twice the largest h4 seen in real
-    # systems (|h4| <~ 0.05-0.1), so it was testing an unrepresentative
-    # extreme.
-    rv = stats.t(df=10, loc=0.0, scale=18.0)
-    truths.append(
-        {
-            "name": "student_t_h4",
-            "pdf": rv.pdf,
-            "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 3. Skew-normal -- h3!=0 rotating-side analogue. a=2 gives skewness
-    # ~+0.45, i.e. h3 ~ +0.066 via gamma1 = 4*sqrt(3)*h3, representative of a
-    # strongly rotating system. a=5 was used previously, giving skewness 0.85
-    # and h3 ~ 0.123, at the very top of the observed range (|h3| <~ 0.15).
-    # Note the milder truth is the *harder* test: shrinkage bias toward the
-    # Gaussian is roughly fixed in absolute skewness units, so it consumes a
-    # larger fraction of a smaller signal.
-    rv = stats.skewnorm(a=2.0, loc=-12.0, scale=22.0)
-    truths.append(
-        {
-            "name": "skew_normal_h3",
-            "pdf": rv.pdf,
-            "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 4. Flat-topped -- tangential anisotropy analogue, h4 < 0. This is the
-    # shape a tangentially anisotropic LOSVD actually has: a *unimodal*
-    # flat/box-topped profile, which is physically distinct from the
-    # counter-rotating bimodal truth below even though both have h4 < 0.
-    # van de Ven et al. (2006) find omega Cen increasingly tangentially
-    # anisotropic outside ~10 arcmin, so this is the dominant expected
-    # non-Gaussianity, and it is the regime Sanders & Evans (2020) report as
-    # detectable at ~200 stars (positive excess kurtosis needs >~2000).
-    #
-    # Constructed as uniform(-A, A) convolved with a Gaussian, i.e. exactly
-    # the Sanders & Evans uniform-kernel family. Excess kurtosis is
-    # -1.2 * r**2 where r is the fraction of variance carried by the uniform
-    # component; r=0.913 gives kappa = -1.0. Note -1.2 (pure uniform) is the
-    # hard floor for this family, and for any unimodal flat-top.
-    #
-    # Caveat on h4: eq (5) of Sanders & Evans, h4 = kappa / (8*sqrt(6)),
-    # would map kappa=-1.0 to h4 ~ -0.051, but they warn it is only good to
-    # 10% for |h4| < 0.01. Measured directly, a GH series with h4 = -0.05 has
-    # actual excess kurtosis -2.15, and h4 = -0.10 gives -12.7 -- the latter
-    # is an artefact of the series going negative, not a physical LOSVD. So
-    # "h4 = -0.1" from a GH-fitting code should be read as "strongly
-    # flat-topped or bimodal", not as a literal kurtosis.
-    FLAT_A, FLAT_S = 28.1, 5.0
-
-    def _flat_pdf(x, _mu=0.0, _a=FLAT_A, _s=FLAT_S):
-        return (
-            stats.norm.cdf((x - _mu + _a) / _s) - stats.norm.cdf((x - _mu - _a) / _s)
-        ) / (2.0 * _a)
-
-    def _flat_rvs(n, rng, _a=FLAT_A, _s=FLAT_S):
-        return rng.uniform(-_a, _a, size=n) + rng.normal(0.0, _s, size=n)
-
-    truths.append(
-        {
-            "name": "flat_top_tangential",
-            "pdf": _flat_pdf,
-            "rvs": _flat_rvs,
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 5. Rotating + tangentially anisotropic -- h3 and h4 together. Real bins
-    # in the outer region have both at once: rotation gives h3, tangential
-    # anisotropy gives h4 < 0. Every other truth here isolates a single
-    # moment, which is not how the data arrives. Built as an *asymmetric*
-    # uniform kernel convolved with a Gaussian, which is the Sanders & Evans
-    # (2020) skewness option for their uniform family.
-    # Note a *shifted* uniform kernel is still symmetric about its own
-    # midpoint and produces no skewness at all -- only a mean offset. The
-    # skewed version needs a two-piece kernel with different widths either
-    # side of zero, carrying equal weight, so the density steps at the
-    # centre. Here the left piece is wider and lower, giving negative h3.
-    ROT_A1, ROT_A2, ROT_S = 34.0, 13.0, 6.0
-
-    def _rot_tan_pdf(x, _a1=ROT_A1, _a2=ROT_A2, _s=ROT_S):
-        x = np.asarray(x, dtype=float)
-        left = (stats.norm.cdf((x + _a1) / _s) - stats.norm.cdf(x / _s)) / _a1
-        right = (stats.norm.cdf(x / _s) - stats.norm.cdf((x - _a2) / _s)) / _a2
-        return 0.5 * (left + right)
-
-    def _rot_tan_rvs(n, rng, _a1=ROT_A1, _a2=ROT_A2, _s=ROT_S):
-        left = rng.random(n) < 0.5
-        draws = rng.uniform(0.0, _a2, size=n)
-        draws[left] = rng.uniform(-_a1, 0.0, size=left.sum())
-        return draws + rng.normal(0.0, _s, size=n)
-
-    truths.append(
-        {
-            "name": "rotating_tangential",
-            "pdf": _rot_tan_pdf,
-            "rvs": _rot_tan_rvs,
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 6. Cold disk component -- omega Cen specific. van de Ven et al. (2006)
-    # find a separate disk-like component between 1 and 3 arcmin contributing
-    # ~4% of the total mass, which is "the kinematically coldest component"
-    # and maximally rotating. A small, cold, offset component on a warm base
-    # is a distinctive shape: sharply peaked core, and neither a pure scale
-    # mixture nor a clean bimodal. This is also the feature a hierarchical
-    # spatial model would be at risk of over-smoothing, so it needs to be in
-    # the suite before that work starts.
-    disk_locs, disk_scales, disk_w = (0.0, 26.0), (17.0, 5.0), (0.96, 0.04)
-
-    def _disk_pdf(x, _l=disk_locs, _s=disk_scales, _w=disk_w):
-        out = 0.0
-        for loc, sc, w in zip(_l, _s, _w):
-            out = out + w * stats.norm(loc=loc, scale=sc).pdf(x)
-        return out
-
-    def _disk_rvs(n, rng, _l=disk_locs, _s=disk_scales, _w=disk_w):
-        comp = rng.random(n) < _w[1]
-        draws = rng.normal(_l[0], _s[0], size=n)
-        draws[comp] = rng.normal(_l[1], _s[1], size=comp.sum())
-        return draws
-
-    truths.append(
-        {
-            "name": "cold_disk_component",
-            "pdf": _disk_pdf,
-            "rvs": _disk_rvs,
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 7. Two stellar populations -- omega Cen specific. Norris et al. (1997)
-    # and van de Ven et al. sec 9.6: the metal-poor population is
-    # kinematically hotter and rotates, the metal-rich population is cooler
-    # and nearly non-rotating. Any Voronoi bin mixes them, giving a scale
-    # mixture with a small relative offset. Distinct from student_t: the
-    # heavy tail here is a genuine two-component superposition, which is what
-    # the data actually contains, rather than an idealised t distribution.
-    pop_locs, pop_scales, pop_w = (4.0, -2.0), (19.0, 12.0), (0.65, 0.35)
-
-    def _pop_pdf(x, _l=pop_locs, _s=pop_scales, _w=pop_w):
-        out = 0.0
-        for loc, sc, w in zip(_l, _s, _w):
-            out = out + w * stats.norm(loc=loc, scale=sc).pdf(x)
-        return out
-
-    def _pop_rvs(n, rng, _l=pop_locs, _s=pop_scales, _w=pop_w):
-        comp = rng.random(n) < _w[1]
-        draws = rng.normal(_l[0], _s[0], size=n)
-        draws[comp] = rng.normal(_l[1], _s[1], size=comp.sum())
-        return draws
-
-    truths.append(
-        {
-            "name": "two_population",
-            "pdf": _pop_pdf,
-            "rvs": _pop_rvs,
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 8. Mild radial anisotropy -- the inner region. van de Ven et al. find
-    # omega Cen only slightly radially anisotropic between about 3 and 5
-    # arcmin, so the realistic positive-h4 case is much weaker than the
-    # student_t_h4 truth above. df=19 gives excess kurtosis 6/(df-4) = 0.4,
-    # i.e. h4 ~ +0.020. Retained alongside the stronger truth because
-    # Sanders & Evans report positive excess kurtosis as the hard sign to
-    # detect (>~2000 stars), so this is expected to be a non-detection and
-    # the test is whether the interval is honest about that.
-    rv = stats.t(df=19, loc=0.0, scale=17.0)
-    truths.append(
-        {
-            "name": "mild_radial_h4",
-            "pdf": rv.pdf,
-            "rvs": lambda n, rng, _rv=rv: _rv.rvs(size=n, random_state=rng),
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    # 9. Counter-rotation bimodal -- symmetric two-Gaussian mixture. Excess
-    # kurtosis ~-1.59, i.e. h4 ~ -0.081, which is within the observed range
-    # and the right sign for the tangential anisotropy van de Ven et al.
-    # (2006) find in omega Cen's outer region. Kept unchanged: it is the one
-    # truth here that is both realistic in amplitude and a genuine stress
-    # test of multimodality.
-    locs, scale, weights = (-18.0, 18.0), 10.0, (0.5, 0.5)  # sigma ~20.6, omega Cen-like
-
-    def _mix_rvs(n, rng):
-        comp = rng.integers(0, 2, size=n)
-        draws = np.empty(n)
-        for k, loc in enumerate(locs):
-            mask = comp == k
-            draws[mask] = rng.normal(loc=loc, scale=scale, size=mask.sum())
-        return draws
-
-    truths.append(
-        {
-            "name": "bimodal_counter_rotation",
-            "pdf": lambda x: _mixture_pdf(x, locs, scale, weights),
-            "rvs": _mix_rvs,
-            "grid": (0.0, GRID_WIDTH),
-            "err_range": ERR_RANGE,
-        }
-    )
-
-    return truths
-
-
-def _true_moments(pdf, lo=-500.0, hi=500.0, n_grid=2_000_001):
-    """Numerically integrate the true pdf for v_mean, sigma, skewness,
-    kurtosis, and tail_weight (fraction of mass outside +/-1 sigma of the
-    mean) -- computed generically so it works for the mixture truths too,
-    rather than trusting per-distribution formulas.
-
-    Uses a dense uniform grid rather than ``scipy.integrate.quad``. quad's
-    adaptive subdivision silently under-samples a narrow component sitting on
-    a broad base: for the ``cold_disk_component`` truth (a 4%-weight, 5 km/s
-    component on a 17 km/s base) it returned skewness +0.0000 against a true
-    -0.0320. Since these values are what coverage is measured against, a
-    silently wrong truth would invalidate the test rather than fail it. The
-    grid spacing here is 5e-4 km/s, and results agree with quad to 4 decimal
-    places on every truth where quad is reliable.
-    """
-    v = np.linspace(lo, hi, n_grid)
-    p = np.asarray(pdf(v), dtype=float)
-    norm = np.trapezoid(p, v)
-    p = p / norm
-
-    mean = float(np.trapezoid(v * p, v))
-    var = float(np.trapezoid((v - mean) ** 2 * p, v))
-    sigma = np.sqrt(var)
-    skew = float(np.trapezoid(((v - mean) / sigma) ** 3 * p, v))
-    kurt = float(np.trapezoid(((v - mean) / sigma) ** 4 * p, v)) - 3.0
-    inside = (v >= mean - sigma) & (v <= mean + sigma)
-    tail = 1.0 - float(np.trapezoid(p[inside], v[inside]))
-    return {
-        "v_mean": mean,
-        "sigma": sigma,
-        "skewness": skew,
-        "kurtosis": kurt,
-        "tail_weight": tail,
-    }
-
-
 def _binom_band(n, p=0.68, alpha=0.01):
     """A wide binomial confidence band for n trials at nominal probability
     p, using the alpha/2 .. 1-alpha/2 quantiles of Binomial(n, p). At
@@ -443,52 +140,6 @@ def _binom_band(n, p=0.68, alpha=0.01):
     lo = stats.binom.ppf(alpha / 2, n, p) / n
     hi = stats.binom.ppf(1 - alpha / 2, n, p) / n
     return float(lo), float(hi)
-
-
-def _run_coverage(truth, n_real, rng, prior="rw1"):
-    """Fit n_real independent mock realisations of `truth` and return, for
-    each metric in METRICS, the number of realisations whose 68% credible
-    interval contained the true value."""
-    true_vals = _true_moments(truth["pdf"])
-    center, width = truth["grid"]
-
-    hits = {m: 0 for m in METRICS}
-    n_ok = 0
-
-    for i in range(n_real):
-        true_v = truth["rvs"](N_STARS, rng)
-        err = rng.uniform(*truth["err_range"], size=N_STARS)
-        obs_v = true_v + rng.normal(0.0, err)
-
-        solver = KinematicSolver()
-        solver.setup_grid(center=center, width=width, n_bins=N_BINS)
-        solver.add_data(obs_v, err)
-        solver.run(
-            num_warmup=NUM_WARMUP,
-            num_samples=NUM_SAMPLES,
-            seed=1000 + i,
-            prior=prior,
-        )
-
-        # The Gaussian-core prior should not need the post-hoc truncation
-        # repair -- needing it would mean the root-cause fix did not work.
-        # rw1 keeps 3.0 so its numbers stay comparable to the values already
-        # recorded in docs/validation.md.
-        truncate = None if prior == "gaussian_core" else N_SIGMA_TRUNCATE
-
-        summary = compute_summary(
-            solver.samples["intrinsic_pdf"],
-            solver.grid["centers"],
-            n_sigma_truncate=truncate,
-        )
-        n_ok += 1
-        for m in METRICS:
-            median, half68 = summary[m]
-            lo, hi = median - half68, median + half68
-            if lo <= true_vals[m] <= hi:
-                hits[m] += 1
-
-    return true_vals, hits, n_ok
 
 
 _RW1_XFAIL_REASON = (
@@ -570,8 +221,15 @@ _GAUSSIAN_CORE_XFAIL_REASON = (
     ],
 )
 def test_coverage_over_mock_realisations(prior):
-    rng = np.random.default_rng(20260803)
-    truths = _make_truths()
+    truths = make_truths()
+    result = calibrate(
+        PROFILE,
+        truths,
+        n_real=N_REAL,
+        prior=prior,
+        n_sigma_truncate=None if prior == "gaussian_core" else N_SIGMA_TRUNCATE,
+    )
+    eff = result.efficiency()
 
     band_lo, band_hi = _binom_band(N_REAL, p=0.68, alpha=0.01)
     # Catastrophic-failure floor for the shrinkage-prone metrics on
@@ -584,15 +242,23 @@ def test_coverage_over_mock_realisations(prior):
     hard_failures = []
     soft_warnings = []
 
-    for truth in truths:
-        true_vals, hits, n_ok = _run_coverage(truth, N_REAL, rng, prior=prior)
-        assert n_ok == N_REAL, f"{truth['name']}: not all realisations fit successfully"
+    report_lines.append(PROFILE.report())
+    report_lines.append(
+        "\nestimator efficiency vs the statistical optimum (Gaussian truth): "
+        f"v_mean {eff['v_mean']:.2f}x, sigma {eff['sigma']:.2f}x  "
+        "(~1 optimal; >1 loses information; <1 means prior shrinkage, not a win)"
+    )
 
-        report_lines.append(f"\n=== {truth['name']} [{prior}] (n_real={N_REAL}) ===")
+    for truth in truths:
+        true_vals = result.truth_values[truth.name]
+        hits = {m: round(result.coverage[truth.name][m] * N_REAL) for m in METRICS}
+
+        report_lines.append(f"\n=== {truth.name} [{prior}] (n_real={N_REAL}) ===")
         report_lines.append(
             "true values: " + ", ".join(f"{m}={true_vals[m]:.4f}" for m in METRICS)
         )
-        achievable = _achievable_moments(truth["rvs"], N_STARS)
+        _, rvs = truth.scaled(PROFILE.sigma_ref)
+        achievable = _achievable_moments(rvs, N_STARS)
         report_lines.append(
             "  finite-sample achievable (median of sample estimator at "
             f"N={N_STARS}): "
@@ -604,25 +270,25 @@ def test_coverage_over_mock_realisations(prior):
             cov = hits[m] / N_REAL
             report_lines.append(f"  {m:12s}: coverage={cov:.3f} ({hits[m]}/{N_REAL})")
 
-            is_shrinkage_prone_case = (m in SHRINKAGE_PRONE) and (truth["name"] != "gaussian")
+            is_shrinkage_prone_case = (m in SHRINKAGE_PRONE) and (truth.name != "gaussian")
 
             if is_shrinkage_prone_case:
                 if cov < shrinkage_floor:
                     hard_failures.append(
-                        f"{truth['name']}.{m}: coverage {cov:.3f} below catastrophic "
+                        f"{truth.name}.{m}: coverage {cov:.3f} below catastrophic "
                         f"floor {shrinkage_floor:.2f} (expected only mild shrinkage, "
                         f"not this)"
                     )
                 elif cov < band_lo:
                     soft_warnings.append(
-                        f"{truth['name']}.{m}: coverage {cov:.3f} below nominal band "
+                        f"{truth.name}.{m}: coverage {cov:.3f} below nominal band "
                         f"[{band_lo:.3f}, {band_hi:.3f}] -- expected smoothness-prior "
                         f"shrinkage bias, not a failure"
                     )
             else:
                 if not (band_lo <= cov <= band_hi):
                     hard_failures.append(
-                        f"{truth['name']}.{m}: coverage {cov:.3f} outside nominal "
+                        f"{truth.name}.{m}: coverage {cov:.3f} outside nominal "
                         f"binomial band [{band_lo:.3f}, {band_hi:.3f}] for n={N_REAL} "
                         f"trials at p=0.68 -- this metric is not expected to show "
                         f"shrinkage bias for this truth, so this looks like genuine "
@@ -656,7 +322,7 @@ def _achievable_moments(rvs, n_stars, n_trials=2000, seed=7):
     against 3.0 therefore demands something the data cannot deliver, and
     attributes an estimator property to the model as if it were a bias.
 
-    Returns the same keys as `_true_moments` so the two can be compared
+    Returns the same keys as `calibration.true_moments` so the two compare
     directly.
     """
     rng = np.random.default_rng(seed)
@@ -682,20 +348,20 @@ def test_population_kurtosis_is_unreachable_for_heavy_tailed_truths():
     section 1.3 no longer holds and the coverage expectations for
     student_t_h4 need re-deriving.
     """
-    truths = {t["name"]: t for t in _make_truths()}
+    truths = {t.name: t for t in make_truths()}
 
-    gaussian = truths["gaussian"]
-    achievable = _achievable_moments(gaussian["rvs"], N_STARS)
-    population = _true_moments(gaussian["pdf"])
+    pdf, rvs = truths["gaussian"].scaled(PROFILE.sigma_ref)
+    achievable = _achievable_moments(rvs, N_STARS)
+    population = true_moments(pdf)
     assert abs(achievable["kurtosis"] - population["kurtosis"]) < 0.25, (
         "for a Gaussian truth the sample kurtosis estimator should be nearly "
         f"unbiased at N={N_STARS}, got achievable={achievable['kurtosis']:.2f} "
         f"vs population={population['kurtosis']:.2f}"
     )
 
-    student = truths["student_t_h4"]
-    achievable = _achievable_moments(student["rvs"], N_STARS)
-    population = _true_moments(student["pdf"])
+    pdf, rvs = truths["student_t_h4"].scaled(PROFILE.sigma_ref)
+    achievable = _achievable_moments(rvs, N_STARS)
+    population = true_moments(pdf)
     assert achievable["kurtosis"] < 0.6 * population["kurtosis"], (
         "expected the sample kurtosis estimator to badly under-report the "
         f"heavy tail at N={N_STARS}: achievable={achievable['kurtosis']:.2f}, "
