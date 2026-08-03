@@ -28,10 +28,24 @@ Suggested execution order is the table at the end of that file.
   3.396 and recovered skewness +0.001 → +0.111 → +0.760 as n_stars goes
   150 → 400 → 2000 — so this is prior shrinkage dominating a weak likelihood,
   not an inability to express skew (15.5% of prior draws exceed |skew| 0.85).
-  Science impact: at 150 stars per Voronoi bin, which is realistic, genuine
-  h3 signal is erased and reported with small error bars. Fixing this and the
-  SBC regression is likely one design change, not two: both point at the
-  shape of the `sigma3` prior.
+  Science impact: the target regime is N=100–250 stars per bin (100 desirable),
+  so this is the operating range, not an edge case. Genuine h3 signal is erased
+  and reported with small error bars.
+  **Swept six candidate `sigma3` priors** (see the measurements doc). The
+  binding problem is the prior's *mode at zero*, not its scale: Exponential,
+  HalfNormal and Gamma all put their mode at `sigma3 = 0` ("the LOSVD is
+  exactly Gaussian"), which is the PC prior's design intent and is directly
+  opposed to measuring h3. Current prior gives z = 22.2 / 14.7 / 11.8 at
+  N = 100 / 150 / 250; moving mass away from zero gives z ≈ 4.4 / 1.5 / 1.5.
+  Rescaling within the zero-mode family does not help.
+  Also measured: going n_bins 20 → 40 leaves recovery unchanged but cuts the
+  prior-predictive |skew| p99 by 2–3x, which is exactly the softmax saturation
+  failing SBC — so grid resolution is a free lever on the SBC regression.
+  Not yet decided: which replacement prior to adopt. Every candidate that
+  reaches z < 3 at N=100 has a prior-predictive tail that would likely fail
+  SBC, so the two requirements are still in tension and the choice needs an
+  SBC run as its gate. N=100 at skewness 0.85 looks out of reach; milder h3
+  has not yet been swept and is the more realistic target.
 
 - **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
   The RW3 deviation scaling fix improved coverage broadly but did not close it.
