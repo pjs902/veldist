@@ -5,37 +5,29 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
-- **[P0] Fix kurtosis tail-leakage bias in `compute_summary`** (`PLAN.md` §1.3
-  "ACTUAL outcome")
-  Found by the coverage tests: `compute_summary`'s kurtosis is biased
-  +1.6 to +2.5 even for a plain Gaussian truth (should be ~0). Root cause:
-  the RW1 prior leaks a small amount of posterior mass into far-edge grid
-  bins; kurtosis's 4th-power weighting amplifies it ~625×. `truncate_losvd()`
-  already exists to suppress exactly this leakage but only patches
-  `clipped_samples` (Dynamite export), never the raw samples
-  `compute_summary` consumes — so this is currently live and unmitigated for
-  any `analysis.py` user. `tests/test_coverage.py` is marked `xfail` pending
-  this fix. Directions in the plan: extend tail suppression to the raw-sample
-  path, and/or widen grid margin guidance.
+- **[P1] Fix remaining kurtosis tail-leakage bias for heavy-tailed/multimodal
+  truths** (`PLAN.md` §1.3 "ACTUAL outcome" / "Fix implemented")
+  Partially fixed in a follow-up session: `analysis.truncate_pdf_samples`
+  (per-draw, renormalising tail suppression) plus `compute_summary`'s new
+  opt-in `n_sigma_truncate` parameter. With `n_sigma_truncate=3.0`, kurtosis
+  coverage for a Gaussian truth went from catastrophic (0.000) to nominal
+  (0.840, n=25), and likewise for a mildly skewed truth (0.000 → 0.800).
+  Downgraded from P0 to P1 because the original "even a Gaussian is biased"
+  finding is resolved. Still open: kurtosis coverage for a Student-t(df=6)
+  truth (0.000, unchanged) and a bimodal counter-rotation truth (0.080,
+  roughly unchanged) — a fixed `n_sigma` cut trades away real tail mass for
+  these truths along with the leaked mass. `tests/test_coverage.py` remains
+  marked `xfail` (reason string updated) pending a fix for this remaining
+  case. Directions in the plan: wider grid margin for heavy-tailed truths,
+  or an adaptive/softer truncation instead of a fixed hard cut.
 
-- **[P1] 2D solver: §3.4 performance gate** (`PLAN.md` §3.4)
+- **[P1] 2D solver: §3.5 deferred items** (`PLAN.md` §3.5)
   `KinematicSolver2D` is now feature-complete for "minimally working" per
   the plan's own acceptance criterion (recovering ρ from a tilted bivariate
-  Gaussian — done, passing) and has its own SBC harness (passing, 6/6
-  quantities). What's left: the formal §3.4 performance gate (measure NUTS
-  wall time / ESS / r_hat at production-scale K before deciding whether
-  SVI/Pathfinder is ever needed — don't build it speculatively), and the
-  explicitly-deferred §3.5 items (PM-axis marginalisation, 3D, Dynamite 2D
-  output format).
-
-- **[P2] SVI / Pathfinder as NUTS fallback**
-  Conditional on the 2D solver above actually needing it — don't build
-  speculatively.
-
-- **[P2] Validation page in docs**
-  Once §1.2 SBC and §1.3 coverage results exist, add a short "Validation"
-  page to the docs reporting them — cheap once the tests exist, since the
-  tests emit the numbers.
+  Gaussian — done, passing), has its own SBC harness (passing, 6/6
+  quantities), and has passed the §3.4 performance gate (see Completed).
+  What's left: the explicitly-deferred §3.5 items (PM-axis marginalisation,
+  3D, Dynamite 2D output format).
 
 ## Someday (long-term, not active)
 
@@ -48,6 +40,16 @@ Suggested execution order is the table at the end of that file.
 
 ## Completed
 
+- 2D solver: §3.4 performance gate (P1, `PLAN.md` §3.4) — measured directly:
+  `K=20`, `N=5000` stars, 500 warmup + 1000 samples, 4 chains, CPU. Wall
+  time 87.9 s (< 10 min threshold); min(ESS)/n_samples 3.11 across
+  `smoothness_sigma`/`z`/`intrinsic_pdf` (> 0.1 threshold); max(r_hat)
+  1.0023 (< 1.01 threshold). **PASS on all three criteria**, no escalation
+  (K reduction, `dense_mass`, GPU, Pathfinder, SVI) needed. Full numbers and
+  reproduction procedure recorded in `PLAN.md` §3.4 "Gate result (measured)".
+- Validation page in docs (P2): `docs/validation.md` — reports 1D/2D SBC,
+  1D coverage (incl. the still-open kurtosis xfail), 2D recovery, and the
+  §3.4 performance gate result; wired into the docs toctree.
 - 2D solver core (P1, `PLAN.md` Part 3): `src/veldist/veldist2d.py` —
   grid, design matrix (box integration + 2×2 Gauss-Legendre for correlated
   covariance), GMRF prior (generative `z ~ N(0,I)` + Cholesky whitening

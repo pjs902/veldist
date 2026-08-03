@@ -453,19 +453,50 @@ expected in perpetuity until someone addresses the root cause. If it ever
 starts passing (XPASS) that is a signal the fix landed and the marker should
 be removed, not silenced.
 
-**Fix directions for a future session** (not implemented, deliberately out
-of scope for this pass — this needs its own investigation, not a quick
-patch):
-1. Extend `truncate_losvd`-style tail suppression (or a softer taper) to the
-   raw-sample path `compute_summary` consumes, not just `clipped_samples`.
+**Fix implemented (direction 1, partial — follow-up session):**
+`analysis.truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0)` was
+added: for each posterior draw, zero probability mass beyond `n_sigma` of
+that draw's *own* mean/dispersion and renormalise the row back to sum to 1
+(this is the raw-sample analogue of `truncate_losvd`, which only patches
+`clipped_samples` and never renormalises). `compute_summary` gained an
+opt-in `n_sigma_truncate=None` parameter that applies this before computing
+any moments.
+
+Empirical verification (mock Gaussian realisations, 20-bin grid):
+untruncated median excess kurtosis +1.78; `n_sigma_truncate=3.0` → +0.05;
+4.0 → +0.81; 5.0 → +1.63 (barely better than untruncated, because most
+leaked mass sits very close to the grid edge and a loose cut doesn't reach
+it). `n_sigma_truncate=3.0` was carried into a full coverage-test rerun
+(`tests/test_coverage.py`, n=25 realisations per truth):
+
+| truth | kurtosis coverage, before | after (n_sigma_truncate=3.0) |
+|---|---|---|
+| gaussian | 0.000 (0/25) | **0.840 (21/25)** — inside nominal band |
+| skew_normal_h3 | 0.000 (0/25) | **0.800 (20/25)** — inside nominal band |
+| student_t_h4 | 0.120 (3/25) | 0.000 (0/25) — still catastrophic |
+| bimodal_counter_rotation | 0.040 (1/25) | 0.080 (2/25) — still catastrophic |
+
+So the fix is **real but partial**: it resolves the original "even a
+Gaussian is biased" finding and also fixes the mildly-skewed truth, but does
+not fix (and does not clearly improve) kurtosis coverage for genuinely
+heavy-tailed (Student-t, true excess kurtosis 2.82) or multimodal
+(bimodal counter-rotation) truths — a fixed `n_sigma` cut removes some of
+those truths' *real* tail mass along with the leaked mass, trading one bias
+for another. `tests/test_coverage.py`'s xfail marker was kept (not removed)
+with its reason string updated to reflect this; the test does not XPASS.
+
+**Remaining fix directions for a future session:**
 2. Investigate whether a wider grid margin (more σ of headroom before the
-   edge bins) meaningfully reduces the leaked mass, and if so, whether
-   `setup_grid`'s guidance/defaults should change.
-3. Consider a `kurtosis`-specific caveat in the docs (`theory.md`) stating
-   this bias exists and is currently unaddressed for `analysis.py` users,
-   independent of whether (1) or (2) gets built — users doing science with
-   `compute_summary`'s kurtosis today should know about this now, not only
-   once it's fixed.
+   edge bins) meaningfully reduces the leaked mass for heavy-tailed truths
+   specifically, and if so, whether `setup_grid`'s guidance/defaults should
+   change.
+3. Investigate an adaptive/per-truth-shape truncation (e.g. informed by
+   `bimodality_score`, or a softer taper instead of a hard cut) that
+   doesn't uniformly discard real tail mass for non-Gaussian truths.
+4. `compute_summary`'s docstring and `docs/examples.md` now carry an
+   accurate, updated caveat (opt-in `n_sigma_truncate`, works for
+   Gaussian/mild-skew, not for heavy-tailed/multimodal) — keep it in sync
+   if (2) or (3) change the picture.
 
 ### 1.4 Design-matrix correctness (fast)
 
@@ -827,6 +858,38 @@ replaces the expensive warmup. **Do not build 5 speculatively** — and note tha
 if we do, SBC (§1.2) is not optional for it, because variational posteriors are
 systematically too narrow and SBC's ∪-shaped histogram is the standard way to
 quantify by how much.
+
+#### Gate result (measured)
+
+Measured this session (2026-08-02/03). Ran the gate exactly as specified —
+`K=20` (400 cells), `N=5000` mock stars (bivariate Gaussian truth,
+`mu=(2,-1)`, `sx=8`, `sy=6`, `rho=0.6`, per-star diagonal measurement errors
+`~U(1.05, 1.95)`), `num_warmup=500`, `num_samples=1000`, 4 chains,
+`chain_method="parallel"`, CPU only (`numpyro.set_platform("cpu")`,
+`XLA_FLAGS=--xla_force_host_platform_device_count=4`), calling
+`numpyro.infer.MCMC`/`NUTS` directly on `model_2d` (not through
+`KinematicSolver2D.run()`, which does not currently expose `num_chains`).
+ESS and r_hat via `numpyro.diagnostics.effective_sample_size` /
+`numpyro.diagnostics.gelman_rubin` on `mcmc.get_samples(group_by_chain=True)`,
+computed for `smoothness_sigma`, `z` (400,), and `intrinsic_pdf` (400,) —
+not just the cheap scalar.
+
+| Criterion | Threshold | Measured | Verdict |
+|---|---|---|---|
+| Wall time | < 10 min (600 s) | 87.9 s (1.46 min) | **PASS** |
+| min(ESS)/n_samples | > 0.1 | 3.11 (`intrinsic_pdf`, the binding constraint; `smoothness_sigma`=4.21, `z`=5.07) | **PASS** |
+| max(r_hat) | < 1.01 | 1.0023 (`intrinsic_pdf`; `smoothness_sigma`=0.9995, `z`=1.0006) | **PASS** |
+
+All three criteria pass with wide margin (wall time ~7x under budget, ESS
+ratio ~30x over threshold, r_hat ~4x under threshold). **Verdict: PASS.**
+NUTS at `K=20`/`N=5000` is comfortably in its "easy" regime, consistent with
+the plan's prediction that the non-centred GMRF parameterisation keeps the
+geometry close to Gaussian. Per the plan's explicit instruction ("escalate
+only if it fails"), no escalation step (K reduction, `dense_mass=True`, GPU,
+Pathfinder, SVI) is warranted, and none was built. The one-off measurement
+script lived at a scratch path for this session and was not committed to the
+repo — the numbers above are the durable record; rerun via the procedure
+described here if independent reproduction is needed.
 
 ### 3.5 Explicitly deferred (out of scope for "minimally working")
 

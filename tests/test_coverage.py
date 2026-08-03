@@ -29,15 +29,23 @@ the model, not a bug -- so the assertions here only guard against
 are always printed/reported so the actual degree of shrinkage is visible.
 
 ACTUAL outcome (broader than the plan anticipated -- see the xfail marker on
-the test below for full detail): kurtosis coverage is catastrophically low
+the test below for full detail): kurtosis coverage was catastrophically low
 even for the plain *Gaussian* truth (median excess kurtosis ~+1.6 to +2.5
 vs. a true value of 0), which the plan did not predict since there is no
 sharp feature there for the smoothness prior to shrink away. This was
 independently verified as a real tail-leakage effect (small residual
 posterior mass in far-edge grid bins, amplified by kurtosis's 4th-power
-weighting) rather than a bug in this test harness. The test is marked
-`xfail` rather than adjusted to pass, per PLAN.md's rule against loosening a
-failing statistical test.
+weighting) rather than a bug in this test harness.
+
+Partial fix applied: `compute_summary` now accepts `n_sigma_truncate`
+(see `analysis.truncate_pdf_samples`), used here at 3.0. This resolves the
+Gaussian-truth catastrophe (kurtosis coverage 0.000 -> 0.840) and also fixes
+skew_normal_h3 (0.000 -> 0.800), but does not resolve kurtosis coverage for
+the genuinely heavy-tailed/multimodal truths (student_t_h4 stays at 0.000,
+bimodal_counter_rotation stays at 0.080) -- truncation trades away some of
+their real tail mass along with the leaked mass. The test therefore remains
+marked `xfail` (updated reason, not the original one) rather than adjusted
+to pass, per PLAN.md's rule against loosening a failing statistical test.
 """
 
 import numpy as np
@@ -56,6 +64,14 @@ N_STARS = 150  # fixed per truth -> matrix shape is constant -> JAX only compile
 N_BINS = 20
 NUM_WARMUP = 300
 NUM_SAMPLES = 600
+
+# Truncation applied to raw posterior samples before compute_summary's
+# moments are evaluated, to mitigate RW1 tail-leakage bias in kurtosis (see
+# analysis.truncate_pdf_samples and PLAN.md sec 1.3). n_sigma=3.0 was found
+# empirically (scratch verification, not committed) to remove essentially
+# all of the median kurtosis bias for a Gaussian truth on this grid setup
+# (+1.78 -> +0.05 median excess kurtosis over 12 realisations).
+N_SIGMA_TRUNCATE = 3.0
 
 # Metrics we check coverage for; all have (median, half_68ci) tuples from compute_summary.
 METRICS = ["v_mean", "sigma", "skewness", "kurtosis", "tail_weight"]
@@ -207,7 +223,9 @@ def _run_coverage(truth, n_real, rng):
         solver.run(num_warmup=NUM_WARMUP, num_samples=NUM_SAMPLES, seed=1000 + i)
 
         summary = compute_summary(
-            solver.samples["intrinsic_pdf"], solver.grid["centers"]
+            solver.samples["intrinsic_pdf"],
+            solver.grid["centers"],
+            n_sigma_truncate=N_SIGMA_TRUNCATE,
         )
         n_ok += 1
         for m in METRICS:
@@ -222,22 +240,33 @@ def _run_coverage(truth, n_real, rng):
 @pytest.mark.slow
 @pytest.mark.xfail(
     reason=(
-        "Known, quantified finding (not a harness bug -- independently verified): "
-        "compute_summary()'s kurtosis is systematically biased positive (~+1.6 to "
-        "+2.5 excess kurtosis) even for a plain Gaussian truth, whose binned "
-        "representation has ~0 kurtosis (verified: -0.0007). Root cause: the RW1 "
-        "smoothness prior leaks a small amount of posterior mass into far-edge "
-        "grid bins (~2x the true Gaussian's tail mass beyond 2.5 sigma was "
-        "observed); because kurtosis weights deviations by the 4th power, this "
-        "tiny residual mass at ~5 sigma (amplification ~5**4=625x) is enough to "
-        "produce the bias. truncate_losvd() exists to suppress exactly this "
-        "leakage but only patches clipped_samples (the Dynamite export path) -- "
-        "it is not applied to the raw posterior samples compute_summary() uses, "
-        "so this bias is currently unmitigated for analysis.py users. See "
-        "TASKS.md / PLAN.md for the follow-up item. strict=False: if a future "
-        "fix (e.g. extending truncate_losvd to the raw-sample path, or a wider "
-        "grid margin) resolves this, this test will show as an unexpected pass "
-        "(XPASS) rather than silently staying green -- remove this marker then."
+        "Partially fixed, still red. compute_summary() now accepts "
+        "n_sigma_truncate (analysis.truncate_pdf_samples), applied here with "
+        "n_sigma_truncate=3.0, to suppress RW1 tail-leakage mass in the raw "
+        "posterior samples before moments are computed. This resolves the "
+        "originally catastrophic Gaussian-truth kurtosis bug (coverage "
+        "0.000 -> 0.840 over n_real=25, well inside the nominal band) and "
+        "also brings skew_normal_h3.kurtosis into band (0.000 -> 0.800). "
+        "BUT it does not fix -- and does not clearly improve -- kurtosis "
+        "coverage for the two genuinely heavy-tailed/multimodal truths: "
+        "student_t_h4.kurtosis stayed at 0.000 (0/25, previously 0.120 "
+        "pre-truncation) and bimodal_counter_rotation.kurtosis stayed at "
+        "0.080 (2/25, previously 0.040). This is the expected trade-off of "
+        "a fixed n_sigma cut: n_sigma=3.0 aggressively removes far-edge "
+        "leaked mass (good for the Gaussian truth, which has no real mass "
+        "there) but also removes some of the *genuine* heavy tail these "
+        "truths have (student_t_h4 has true kurtosis=2.82; the truncation "
+        "itself flattens the fitted LOSVD's tail, which is exactly what "
+        "produces under-coverage). So this is a real, only-partial fix: "
+        "it eliminates the 'even a Gaussian is biased' finding but leaves "
+        "the harder shrinkage-vs-heavy-tail problem open for kurtosis on "
+        "non-Gaussian truths. See analysis.py's compute_summary docstring "
+        "and PLAN.md sec 1.3 for the full numbers. strict=False: if a "
+        "future improvement (e.g. an n_sigma schedule, adaptive per-truth "
+        "cut, or a different tail-suppression approach) resolves the "
+        "remaining student_t_h4/bimodal failures too, this test will show "
+        "as an unexpected pass (XPASS) rather than silently staying green "
+        "-- remove this marker then."
     ),
     strict=False,
 )

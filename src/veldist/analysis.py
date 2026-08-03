@@ -10,6 +10,7 @@ __all__ = [
     "tail_weight",
     "bimodality_score",
     "half_68ci",
+    "truncate_pdf_samples",
     "compute_summary",
     "compute_summary_maps",
 ]
@@ -291,12 +292,89 @@ def half_68ci(samples):
     return float((p84 - p16) / 2.0)
 
 
+def truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0):
+    """
+    Zero far-edge tail mass in each posterior draw and renormalise.
+
+    This is the raw-sample analogue of
+    :meth:`~veldist.veldist.KinematicSolver.truncate_losvd`: the RW1
+    smoothness prior used during inference leaks a small amount of
+    posterior mass into velocity-grid bins far from the bulk of the
+    distribution.  For moments that weight residuals by a high power (e.g.
+    kurtosis's fourth power), even a tiny amount of far-edge mass can
+    produce a large bias (a bin at 5*sigma carries ~625x the weight of a
+    bin at 1*sigma).
+
+    Unlike ``truncate_losvd`` -- which operates on an already-fixed scalar
+    ``clipped_samples`` summary and never renormalises -- this function
+    operates on the full ``(n_samples, n_bins)`` PMF array that
+    :func:`compute_summary` consumes, where every row is assumed to sum to
+    1.  Each row is therefore renormalised after truncation so downstream
+    moment calculations (which divide by the total probability implicitly,
+    via ``pdf_samples @ grid_centers``, etc.) remain valid.
+
+    Truncation is applied **per draw**, using that draw's own mean and
+    dispersion, rather than a single global threshold computed once from
+    (e.g.) the posterior-mean LOSVD.  Posterior draws vary in their bulk
+    mean/dispersion, and a fixed global threshold would over- or
+    under-truncate individual draws relative to their own bulk; per-row
+    truncation tracks each draw's own scale.
+
+    Parameters
+    ----------
+    pdf_samples : array-like, shape (n_samples, n_bins)
+        MCMC samples of the probability mass function.  Each row must sum
+        to 1.
+    grid_centers : array-like, shape (n_bins,)
+        Centres of the velocity bins.
+    n_sigma : float, optional
+        Number of (per-draw) velocity dispersions beyond which to zero the
+        probability mass.  Default 4.0.
+
+    Returns
+    -------
+    ndarray, shape (n_samples, n_bins)
+        Truncated and renormalised PMF samples.  Each row still sums to 1
+        (to floating-point precision), except for the degenerate case of a
+        row whose entire mass falls outside ``n_sigma`` sigma of its own
+        mean, which is returned unmodified (renormalising an all-zero row
+        is undefined) since that indicates every bin was truncated, not
+        that a residual leak was suppressed.
+
+    Examples
+    --------
+    >>> truncated = truncate_pdf_samples(solver.samples["intrinsic_pdf"],
+    ...                                   solver.grid["centers"], n_sigma=4.0)
+    >>> summary = compute_summary(truncated, solver.grid["centers"])
+    """
+    pdf_samples = np.asarray(pdf_samples, dtype=float)  # (n_samples, n_bins)
+    grid_centers = np.asarray(grid_centers, dtype=float)  # (n_bins,)
+
+    means = pdf_samples @ grid_centers  # (n_samples,)
+    delta = grid_centers[np.newaxis, :] - means[:, np.newaxis]  # (n_s, n_bins)
+    variance = np.einsum("ij,ij->i", pdf_samples, delta**2)  # (n_samples,)
+    stds = np.sqrt(variance)  # (n_samples,)
+
+    truncation_mask = np.abs(delta) > n_sigma * stds[:, np.newaxis]  # (n_s, n_bins)
+
+    truncated = np.where(truncation_mask, 0.0, pdf_samples)
+    row_sums = truncated.sum(axis=1, keepdims=True)
+
+    # Guard against degenerate rows (entire mass truncated, or zero-mass
+    # rows to begin with) where renormalisation is undefined -- leave those
+    # rows unmodified rather than dividing by zero.
+    safe = row_sums > 0
+    renormalised = np.where(safe, truncated / np.where(safe, row_sums, 1.0), pdf_samples)
+
+    return renormalised
+
+
 # ---------------------------------------------------------------------------
 # Primary public API
 # ---------------------------------------------------------------------------
 
 
-def compute_summary(pdf_samples, grid_centers):
+def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     """
     Compute spatially-mappable scalar summaries from posterior LOSVD samples.
 
@@ -317,6 +395,44 @@ def compute_summary(pdf_samples, grid_centers):
         MCMC samples of the probability mass function.  Each row must sum to 1.
     grid_centers : array-like, shape (n_bins,)
         Centres of the velocity bins (km/s or consistent velocity unit).
+    n_sigma_truncate : float or None, optional
+        If given, apply :func:`truncate_pdf_samples` with this ``n_sigma``
+        to *pdf_samples* before computing any moment-based quantities, to
+        mitigate the RW1 tail-leakage bias described in the ``kurtosis``
+        warning below.  Default ``None`` (no truncation, fully
+        backward-compatible with existing callers).  This is opt-in rather
+        than on-by-default because truncation is a lossy, threshold-
+        dependent repair — it discards genuine posterior mass at the
+        chosen cut, which is desirable when that mass is known prior
+        leakage but undesirable if a distribution genuinely has real
+        support out there (e.g. a deliberately wide grid margin for a
+        heavy-tailed truth). Silently truncating by default would risk
+        quietly biasing results for users who have not diagnosed whether
+        leakage is present in their specific setup. Empirical testing
+        (mock Gaussian realisations on a 20-bin grid, see ``PLAN.md`` §1.3)
+        found ``n_sigma_truncate=3.0`` reduces median excess kurtosis from
+        +1.78 (untruncated) to +0.05 -- i.e. it removes essentially all of
+        the observed bias for a Gaussian truth. Looser cuts recover less of
+        the bias: 4.0 -> +0.81, 5.0 -> +1.63 (barely better than
+        untruncated), because most of the leaked mass sits close to the
+        grid edge and a loose cut doesn't reach it. Full frequentist
+        coverage testing (``tests/test_coverage.py``, n=25 realisations per
+        truth) confirms this actually fixes *calibration*, not just the
+        point estimate, for the Gaussian truth (kurtosis coverage
+        0.000 -> 0.840) and also for a mildly skewed truth
+        (skew-normal: 0.000 -> 0.800) -- both land inside the nominal
+        68% band. **It does not fix genuinely heavy-tailed or multimodal
+        truths**: a Student-t(df=6) truth (true excess kurtosis 2.82) stays
+        at 0.000 coverage, and a bimodal counter-rotation truth stays at
+        0.080, because a fixed ``n_sigma`` cut removes some of their real
+        tail mass along with the leaked mass, trading one bias for
+        another. So: use ``n_sigma_truncate`` when you have reason to
+        believe your true LOSVD is close to Gaussian/mildly skewed; it is
+        not a general cure for kurtosis bias on heavy-tailed or
+        multimodal truths. ``n_sigma`` is data/grid dependent, so these
+        numbers are a starting point, not a universal constant -- see
+        ``tests/test_coverage.py`` for the current, up-to-date numbers and
+        methodology to re-derive a value for your own grid setup.
 
     Returns
     -------
@@ -367,22 +483,31 @@ def compute_summary(pdf_samples, grid_centers):
             tangentially anisotropic / flat-topped.
 
             .. warning::
-                **Known positive bias.** Frequentist coverage testing found
-                that ``kurtosis`` is systematically biased positive
-                (+1.6 to +2.5 excess kurtosis observed) even for a *Gaussian*
-                truth. Cause: the RW1 smoothness prior leaks a small amount
-                of posterior mass into far-edge velocity-grid bins, and
-                kurtosis's fourth-power weighting amplifies that residual
-                mass enormously (a bin at 5σ carries ~625× the weight of a
-                bin at 1σ). ``truncate_losvd()`` exists to suppress this kind
-                of tail leakage but currently only patches ``clipped_samples``
-                (the Dynamite export path) — it is **not** applied to the raw
-                posterior samples this function consumes. Treat reported
-                ``kurtosis`` values as having an unquantified-but-real
-                positive offset until this is fixed; ``skewness`` and the
-                other metrics were not observed to show this bias. See
-                ``PLAN.md`` §1.3 and ``tests/test_coverage.py`` (marked
-                ``xfail``) for the full investigation.
+                **Known positive bias on Gaussian/mild truths, mitigatable
+                via** ``n_sigma_truncate``; **still open for heavy-tailed
+                truths.** Frequentist coverage testing found that
+                ``kurtosis`` is systematically biased positive (+1.6 to
+                +2.5 excess kurtosis observed) even for a *Gaussian*
+                truth. Cause: the RW1 smoothness prior leaks a small
+                amount of posterior mass into far-edge velocity-grid bins,
+                and kurtosis's fourth-power weighting amplifies that
+                residual mass enormously (a bin at 5σ carries ~625× the
+                weight of a bin at 1σ). Passing ``n_sigma_truncate`` (e.g.
+                3.0) suppresses this leakage in the raw posterior samples
+                before moments are computed and was confirmed by full
+                coverage testing to fix calibration for a Gaussian truth
+                (kurtosis coverage 0.000 → 0.840 over n=25 realisations)
+                and a mildly skewed truth (0.000 → 0.800), but **not** for
+                genuinely heavy-tailed or multimodal truths (a
+                Student-t(df=6) truth stayed at 0.000, a bimodal truth
+                stayed at 0.080) — the same fixed cut that removes leaked
+                mass also removes some of those truths' real tail. This is
+                **opt-in, not default** — see the ``n_sigma_truncate``
+                parameter docs for why and for the full before/after
+                numbers. ``skewness`` and the other metrics were not
+                observed to show this bias. See ``PLAN.md`` §1.3 and
+                ``tests/test_coverage.py`` (still marked ``xfail``, for the
+                heavy-tailed-truth case) for the full investigation.
         ``'tail_weight'``
             Fraction of probability mass outside ±1*σ* of the mean.
             Gaussian reference: 0.3173.  A more direct anisotropy diagnostic
@@ -425,6 +550,9 @@ def compute_summary(pdf_samples, grid_centers):
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)  # (n_samples, n_bins)
     grid_centers = np.asarray(grid_centers, dtype=float)  # (n_bins,)
+
+    if n_sigma_truncate is not None:
+        pdf_samples = truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=n_sigma_truncate)
 
     # ------------------------------------------------------------------
     # Moment-based quantities (fully vectorised)

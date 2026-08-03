@@ -235,14 +235,21 @@ and are diagnostic of features that GH fitting cannot represent — heavy tails
 in the radially-anisotropic regime and genuinely bimodal LOSVDs from
 kinematically distinct populations.
 
-> **Known issue:** `kurtosis` currently carries a systematic positive bias
-> (roughly +1.6 to +2.5 in excess-kurtosis units, observed even for a
-> Gaussian truth) caused by the smoothness prior leaking a small amount of
-> probability mass into the outermost velocity-grid bins — kurtosis's
-> fourth-power weighting amplifies that residual mass far out of proportion
-> to its size. This is unaddressed as of writing; see the warning on
-> `compute_summary`'s docstring and `PLAN.md` §1.3 for the full
-> investigation. `skewness` was not observed to show this bias.
+> **Known issue, partially mitigated:** `kurtosis` carries a systematic
+> positive bias (roughly +1.6 to +2.5 in excess-kurtosis units, observed
+> even for a Gaussian truth) caused by the smoothness prior leaking a small
+> amount of probability mass into the outermost velocity-grid bins —
+> kurtosis's fourth-power weighting amplifies that residual mass far out of
+> proportion to its size. Passing `compute_summary(..., n_sigma_truncate=3.0)`
+> suppresses this leakage before moments are computed and was confirmed by
+> full coverage testing to fix calibration for a Gaussian truth (kurtosis
+> coverage 0.000 → 0.840 over 25 mock realisations) and a mildly skewed
+> truth (0.000 → 0.800) — but **not** for genuinely heavy-tailed or
+> multimodal truths (stayed at 0.000 and 0.080 respectively), where the
+> same fixed cut removes some of the truth's real tail along with the
+> leaked mass. `n_sigma_truncate` is opt-in, not default. See the warning
+> on `compute_summary`'s docstring and `PLAN.md` §1.3 for the full
+> investigation and numbers. `skewness` was not observed to show this bias.
 
 ![Summary metrics on two example LOSVDs](images/fig_summary_metrics.png)
 

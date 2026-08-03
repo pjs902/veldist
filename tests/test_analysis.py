@@ -18,6 +18,7 @@ from veldist.analysis import (
     compute_summary,
     compute_summary_maps,
     half_68ci,
+    truncate_pdf_samples,
 )
 
 from types import SimpleNamespace
@@ -308,6 +309,73 @@ def test_summary_uncertainty_shrinks_with_n():
     summary_wide = compute_summary(wide, centers)
 
     assert summary_narrow["v_mean"][1] < summary_wide["v_mean"][1]
+
+
+# ---------------------------------------------------------------------------
+# truncate_pdf_samples
+# ---------------------------------------------------------------------------
+
+
+def test_truncate_pdf_samples_noop_when_all_mass_interior():
+    # Grid spans only +/-5 sigma; use a large n_sigma cut (10) so the true
+    # (infinite-tailed) Gaussian's residual mass beyond the cut is
+    # negligible to floating-point precision, making this a genuine no-op
+    # check rather than one that trips on the distribution's real tail.
+    dist = stats.norm(loc=0, scale=1)
+    centers, width = make_grid(-5, 5, 500)
+    pmf = analytic_pmf(dist, centers, width)
+
+    truncated = truncate_pdf_samples(pmf, centers, n_sigma=10.0)
+
+    assert np.allclose(truncated, pmf, atol=1e-10)
+    assert np.sum(truncated, axis=1) == pytest.approx(1.0, abs=1e-10)
+
+
+def test_truncate_pdf_samples_removes_far_edge_mass():
+    centers, width = make_grid(-40, 40, 200)
+    dist = stats.norm(loc=0, scale=3)
+    edges = np.concatenate([centers - width / 2, centers[-1:] + width / 2])
+    pmf = np.diff(dist.cdf(edges))
+    pmf = pmf / pmf.sum()
+
+    # Artificially plant leaked mass in the far-edge bin (well beyond
+    # n_sigma of the bulk dispersion of ~3).
+    pmf = pmf * 0.99
+    pmf[0] += 0.01
+    pmf = pmf[np.newaxis, :]
+
+    truncated = truncate_pdf_samples(pmf, centers, n_sigma=4.0)
+
+    # The far-edge bin's mass should be zeroed.
+    assert truncated[0, 0] == pytest.approx(0.0, abs=1e-12)
+    # Rows still sum to 1 after renormalisation.
+    assert np.sum(truncated, axis=1) == pytest.approx(1.0, abs=1e-10)
+    # Remaining bins should be redistributed proportionally: the ratio
+    # between any two surviving bins should be unchanged by renormalisation.
+    interior_mask = np.abs(centers - 0.0) <= 4.0 * 3.0
+    interior_mask[0] = False  # exclude the leaked bin itself (already 0)
+    orig_interior = pmf[0][interior_mask]
+    new_interior = truncated[0][interior_mask]
+    ratio = new_interior / orig_interior
+    assert np.allclose(ratio, ratio[0], rtol=1e-8)
+
+
+def test_truncate_pdf_samples_per_row_uses_own_dispersion():
+    # Two rows with very different dispersions; a fixed global threshold
+    # would truncate one row's legitimate tail while under-truncating the
+    # other's leaked mass. Per-row truncation should treat each fairly.
+    centers, width = make_grid(-20, 20, 400)
+    narrow = analytic_pmf(stats.norm(loc=0, scale=1), centers, width)
+    wide = analytic_pmf(stats.norm(loc=0, scale=8), centers, width)
+    pmf = np.vstack([narrow, wide])
+
+    truncated = truncate_pdf_samples(pmf, centers, n_sigma=10.0)
+
+    # Each row still sums to 1.
+    assert np.sum(truncated, axis=1) == pytest.approx([1.0, 1.0], abs=1e-8)
+    # Narrow row (scale=1) should have essentially no truncation at
+    # n_sigma=10, since the grid only spans +/-20 = +/-20 sigma for it.
+    assert np.allclose(truncated[0], pmf[0], atol=1e-8)
 
 
 # ---------------------------------------------------------------------------
