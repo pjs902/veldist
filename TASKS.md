@@ -20,7 +20,45 @@ Suggested execution order is the table at the end of that file.
   **Blocks calling this prior science-ready.** Numbers in
   `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
 
+- **[P0] Detectability floor: N=150 cannot deliver h4** (literature, not a bug)
+  Amorisco & Evans (2012, MNRAS 424, 1899): "extremely difficult to measure
+  reliably the shape of any velocity distribution with a sample size
+  significantly smaller than N = 200". Sanders & Evans (2020, MNRAS 499,
+  5806): negative excess kurtosis needs ~200 stars, **positive excess kurtosis
+  needs ≳2000**, and sign determination is unreliable once the velocity error
+  floor exceeds ~2 km/s — oMEGACat is 2–3 km/s, right at that edge.
+  This explains the measured coverage table as *expected* rather than
+  anomalous: student_t (h4>0) 0.000 at N=150 is 13x short of the required
+  sample; bimodal (h4<0) 0.320 and skew_normal h3 0.040 are marginally short.
+  **Consequence for the science:** h3 is marginally measurable at N≈150–250;
+  h4>0 is not measurable at that sample size at all. Reporting per-bin h4 at
+  N=150 would be reporting the prior. If h4 matters, it needs coarser bins
+  (N≳2000 → ~15 bins across r_h) or the 2D proper-motion dataset (~20x richer).
+  See `docs/superpowers/specs/2026-08-03-path-forward.md`.
+
 - **[P1] h3/h4 are not recovered at realistic amplitude** (was: skew-normal)
+  **This is a calibration failure, not a detection failure** — the two are
+  separate and only detection is blocked by N. An undetectable signal must
+  still produce a *wide* interval covering zero and the truth. Ours contain
+  the truth 4% of the time and are narrow, i.e. confidently wrong. Fixing
+  calibration is mandatory and achievable at N=150; achieving detection is
+  neither. Coverage can be reached by widening intervals.
+  Root cause is now understood as a **dimensionality mismatch**, which is why
+  all six candidate priors failed: a 40-bin latent (40 dof) is carried to
+  extract ~2 numbers from 150 stars, so a prior strong enough to regularise 40
+  dimensions crushes h3/h4, while one weak enough to free h3/h4 saturates the
+  softmax and breaks SBC. One scalar `sigma3` controls both, and the low-order
+  and high-order components need opposite treatment.
+  **Proposed remedy:** add the Sanders & Evans (2020) near-Gaussian kernel-
+  convolution family as a second model — guaranteed non-negative (removes the
+  SBC failure at source), analytic convolution with per-star Gaussian errors
+  (no design matrix, no discretisation), 4–5 parameters (well-posed at N=150),
+  and a drop-in for h3/h4 feeding DYNAMITE's `GaussHermite` kinematics. Keep
+  the nonparametric path for the high-N 2D case, which DYNAMITE accepts as
+  `BayesLOSVD`. Full proposal in
+  `docs/superpowers/specs/2026-08-03-path-forward.md`.
+
+
   The coverage harness has been recalibrated to the science target
   (`N_STARS=150`, `N_BINS=40`, `ERR_RANGE=(2,3)` km/s, h3≈0.066, h4≈0.051).
   After that, `v_mean` and `sigma` are in the nominal band for all four
