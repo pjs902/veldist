@@ -66,9 +66,7 @@ def precompute_design_matrix(obs_val, obs_err, bin_centers, bin_width=None):
         bin_width = bin_centers[1] - bin_centers[0]
 
     # Define bin edges (K+1 edges for K bins)
-    edges = jnp.concatenate(
-        [bin_centers - bin_width / 2, jnp.array([bin_centers[-1] + bin_width / 2])]
-    )
+    edges = jnp.concatenate([bin_centers - bin_width / 2, jnp.array([bin_centers[-1] + bin_width / 2])])
 
     # --- Box Integration ---
     # Instead of evaluating a Gaussian PDF at the bin center, we integrate
@@ -171,9 +169,7 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     """
     sigma_step = smoothness_sigma * jnp.sqrt(bin_width)
 
-    steps = numpyro.sample(
-        "steps", dist.Normal(0.0, sigma_step).expand([N_bins - 1]).to_event(1)
-    )
+    steps = numpyro.sample("steps", dist.Normal(0.0, sigma_step).expand([N_bins - 1]).to_event(1))
     raw = jnp.concatenate([jnp.zeros(1), jnp.cumsum(steps)])
     curve = raw - jnp.mean(raw)
 
@@ -274,19 +270,17 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
     # draws. LogNormal is bounded away from both 0 and infinity: median
     # span/8 with ~1 dex of spread either side.
     v0 = numpyro.sample("v0", dist.Normal(mid, span / 4.0))
-    s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 0.95))
+    s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 1.0))
     core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
 
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample("sigma3", dist.HalfNormal(1.0)) * (bin_width / span) ** 2.5
-    d3 = numpyro.sample(
-        "d3", dist.Normal(0.0, 1.0).expand([N_bins]).to_event(1)
-    )
+    d3 = numpyro.sample("d3", dist.Normal(0.0, 1.0).expand([N_bins]).to_event(1))
     w = jnp.cumsum(jnp.cumsum(jnp.cumsum(d3 * sigma3)))
 
     # Project out {1, u, u^2} in a well-conditioned coordinate.
     u = (centers - mid) / span
-    basis = jnp.stack([jnp.ones_like(u), u, u ** 2], axis=1)
+    basis = jnp.stack([jnp.ones_like(u), u, u**2], axis=1)
     q, _ = jnp.linalg.qr(basis)
     deviation = w - q @ (q.T @ w)
 
@@ -480,13 +474,10 @@ class KinematicSolver:
         print(f"Computing Design Matrix for {self.n_stars} stars...")
 
         # This one-time computation replaces the convolution loop
-        self.matrix = precompute_design_matrix(
-            vel, err, self.grid["centers"], bin_width=self.grid["width"]
-        )
+        self.matrix = precompute_design_matrix(vel, err, self.grid["centers"], bin_width=self.grid["width"])
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567,
-            prior="rw1"):
+    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="rw1"):
         """
         Run the NUTS sampler.
 
@@ -527,9 +518,7 @@ class KinematicSolver:
             raise ValueError(msg)
 
         if prior not in ("rw1", "gaussian_core"):
-            msg = (
-                f"Unknown prior {prior!r}; expected 'rw1' or 'gaussian_core'."
-            )
+            msg = f"Unknown prior {prior!r}; expected 'rw1' or 'gaussian_core'."
             raise ValueError(msg)
 
         if gpu is True:
@@ -627,9 +616,7 @@ class KinematicSolver:
                 )
             else:
                 # If samples, histogram with density=True
-                true_hist, _ = np.histogram(
-                    true_intrinsic, bins=self.grid["edges"], density=True
-                )
+                true_hist, _ = np.histogram(true_intrinsic, bins=self.grid["edges"], density=True)
                 ax.plot(x, true_hist, color="k", ls="--", label="True Intrinsic")
 
         ax.set_xlabel("Velocity")
@@ -689,9 +676,7 @@ class KinematicSolver:
         """
         if self.samples is None:
             msg = "No posterior samples found. Call run() before clip_uncertainties()."
-            raise ValueError(
-                msg
-            )
+            raise ValueError(msg)
 
         # Work in probability-mass space throughout.
         # self.samples["intrinsic_pdf"] has shape (n_samples, n_bins);
@@ -771,9 +756,7 @@ class KinematicSolver:
         """
         if self.samples is None:
             msg = "No posterior samples found. Call run() before truncate_losvd()."
-            raise ValueError(
-                msg
-            )
+            raise ValueError(msg)
 
         if self.clipped_samples is None:
             self.clip_uncertainties()
@@ -900,10 +883,7 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10):
 
     n_solved = sum(s is not None for s in solvers)
     n_skipped = n_total - n_solved
-    print(
-        f"Done. {n_solved}/{n_total} bins solved"
-        + (f", {n_skipped} skipped." if n_skipped else ".")
-    )
+    print(f"Done. {n_solved}/{n_total} bins solved" + (f", {n_skipped} skipped." if n_skipped else "."))
 
     return solvers
 
@@ -1028,13 +1008,8 @@ def write_dynamite_kinematics(
     try:
         from astropy.table import Table
     except ImportError as exc:
-        msg = (
-            "astropy is required for write_dynamite_kinematics(). "
-            "Install it with: pip install astropy"
-        )
-        raise ImportError(
-            msg
-        ) from exc
+        msg = "astropy is required for write_dynamite_kinematics(). " "Install it with: pip install astropy"
+        raise ImportError(msg) from exc
 
     from pathlib import Path
 
@@ -1064,9 +1039,7 @@ def write_dynamite_kinematics(
                 f"solver at index {solved_indices[0]}. All bins must share "
                 "the same grid (set via setup_grid / fit_all_bins)."
             )
-            raise ValueError(
-                msg
-            )
+            raise ValueError(msg)
 
     # ------------------------------------------------------------------
     # Gather LOSVD summaries (auto-clip if needed)
@@ -1096,12 +1069,10 @@ def write_dynamite_kinematics(
     # ------------------------------------------------------------------
     # Compute v and sigma from normalised median LOSVD (per format spec)
     # ------------------------------------------------------------------
-    losvd_sums = losvd_all.sum(axis=1, keepdims=True)       # (n_solved, 1)
-    losvd_norm = losvd_all / losvd_sums                      # l_hat, sums to 1
+    losvd_sums = losvd_all.sum(axis=1, keepdims=True)  # (n_solved, 1)
+    losvd_norm = losvd_all / losvd_sums  # l_hat, sums to 1
     v_vals = (vcent[np.newaxis, :] * losvd_norm).sum(axis=1)
-    sigma_vals = np.sqrt(
-        (((vcent[np.newaxis, :] - v_vals[:, np.newaxis]) ** 2) * losvd_norm).sum(axis=1)
-    )
+    sigma_vals = np.sqrt((((vcent[np.newaxis, :] - v_vals[:, np.newaxis]) ** 2) * losvd_norm).sum(axis=1))
 
     # ------------------------------------------------------------------
     # Write kinematics ECSV
@@ -1111,11 +1082,7 @@ def write_dynamite_kinematics(
 
     # Compute bin_flux according to requested mode.
     if bin_flux_mode == "nstars":
-        missing = [
-            solved_indices[k]
-            for k, idx in enumerate(solved_indices)
-            if solvers[idx].n_stars is None
-        ]
+        missing = [solved_indices[k] for k, idx in enumerate(solved_indices) if solvers[idx].n_stars is None]
         if missing:
             msg = (
                 f"bin_flux_mode='nstars' requires that add_data() was called "
@@ -1123,26 +1090,15 @@ def write_dynamite_kinematics(
                 "n_stars=None.  Call add_data() before fit_all_bins(), or "
                 "use bin_flux_mode='uniform' / 'custom' instead."
             )
-            raise ValueError(
-                msg
-            )
-        bin_flux_vals = np.array(
-            [float(solvers[i].n_stars) for i in solved_indices]
-        )
+            raise ValueError(msg)
+        bin_flux_vals = np.array([float(solvers[i].n_stars) for i in solved_indices])
     elif bin_flux_mode == "uniform":
         bin_flux_vals = np.ones(n_solved, dtype=float)
     elif bin_flux_mode == "custom":
-        bin_flux_vals = np.array(
-            [float(bin_metas[i].get("bin_flux", 1.0)) for i in solved_indices]
-        )
+        bin_flux_vals = np.array([float(bin_metas[i].get("bin_flux", 1.0)) for i in solved_indices])
     else:
-        msg = (
-            f"bin_flux_mode must be 'nstars', 'uniform', or 'custom'; "
-            f"got {bin_flux_mode!r}."
-        )
-        raise ValueError(
-            msg
-        )
+        msg = f"bin_flux_mode must be 'nstars', 'uniform', or 'custom'; " f"got {bin_flux_mode!r}."
+        raise ValueError(msg)
     data["bin_flux"] = bin_flux_vals
 
     data["binID_dynamite"] = np.arange(1, n_solved + 1)
@@ -1188,7 +1144,7 @@ def write_dynamite_kinematics(
     # ------------------------------------------------------------------
     # Build mapping: original 1-indexed ID -> new 1-indexed ID (0 if skipped).
     n_total = len(solvers)
-    orig_to_new = np.zeros(n_total + 1, dtype=int)   # index 0 unused
+    orig_to_new = np.zeros(n_total + 1, dtype=int)  # index 0 unused
     for new_id, orig_i in enumerate(solved_indices, start=1):
         orig_to_new[orig_i + 1] = new_id  # orig_i is 0-based; +1 for 1-based
 

@@ -33,7 +33,7 @@ GRID_WIDTH = 400.0
 TRUE_SIGMA = 40.0
 TRUE_EXCESS_KURTOSIS = 0.0  # Gaussian truth
 N_STARS = 150
-N_REAL = 5
+N_REAL = 10
 NUM_WARMUP = 500
 NUM_SAMPLES = 800
 MEASUREMENT_ERROR = 8.0
@@ -73,9 +73,7 @@ def _fit_moment_medians(prior, n_bins, n_real=N_REAL, seed=100):
             seed=seed + i,
             prior=prior,
         )
-        summary = compute_summary(
-            solver.samples["intrinsic_pdf"], solver.grid["centers"]
-        )
+        summary = compute_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
         sigmas[i] = summary["sigma"][0]
         kurtoses[i] = summary["kurtosis"][0]
 
