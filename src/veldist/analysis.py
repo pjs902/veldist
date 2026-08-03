@@ -49,54 +49,48 @@ def compute_moments(pdf_samples, grid_centers):
         ``'std'`` : (float, float)
             ``(posterior_mean, posterior_std)`` of the velocity dispersion.
         ``'skewness'`` : (float, float)
-            ``(posterior_mean, posterior_std)`` of the normalised third
-            central moment.
+            ``(posterior_mean, posterior_std)`` of the skewness.
         ``'kurtosis'`` : (float, float)
-            ``(posterior_mean, posterior_std)`` of the excess kurtosis
-            (fourth central moment / σ⁴ − 3).
+            ``(posterior_mean, posterior_std)`` of the excess kurtosis.
     """
-    pdf_samples = np.asarray(pdf_samples)  # (n_samples, n_bins)
-    grid_centers = np.asarray(grid_centers)  # (n_bins,)
+    pdf_samples = np.asarray(pdf_samples, dtype=float)
+    grid_centers = np.asarray(grid_centers, dtype=float)
 
-    # Mean velocity for each posterior sample: shape (n_samples,)
-    means = pdf_samples @ grid_centers
+    # Mean (1st moment)
+    means = pdf_samples @ grid_centers  # (n_samples,)
 
-    # Centred residuals: (n_samples, n_bins) - (n_samples, 1)
-    delta = grid_centers[np.newaxis, :] - means[:, np.newaxis]
-
-    # Variance and standard deviation via row-wise weighted dot product
-    variance = np.einsum("ij,ij->i", pdf_samples, delta**2)
-    stds = np.sqrt(variance)
+    # Central moments (vectorised)
+    delta = grid_centers[np.newaxis, :] - means[:, np.newaxis]  # (n_s, n_bins)
+    variance = np.einsum("ij,ij->i", pdf_samples, delta**2)  # (n_samples,)
+    stds = np.sqrt(variance)  # (n_samples,)
 
     # Skewness and excess kurtosis; guard against zero-dispersion samples
     safe_stds = np.where(stds > 0, stds, 1.0)
     skews = np.einsum("ij,ij->i", pdf_samples, delta**3) / safe_stds**3
     skews = np.where(stds > 0, skews, 0.0)
-    kurts = np.einsum("ij,ij->i", pdf_samples, delta**4) / safe_stds**4 - 3
+    kurts = (np.einsum("ij,ij->i", pdf_samples, delta**4) / safe_stds**4) - 3.0
     kurts = np.where(stds > 0, kurts, 0.0)
 
     return {
-        "mean": (np.mean(means), np.std(means)),
-        "std": (np.mean(stds), np.std(stds)),
-        "skewness": (np.mean(skews), np.std(skews)),
-        "kurtosis": (np.mean(kurts), np.std(kurts)),
+        "mean": (float(np.mean(means)), float(np.std(means))),
+        "std": (float(np.mean(stds)), float(np.std(stds))),
+        "skewness": (float(np.mean(skews)), float(np.std(skews))),
+        "kurtosis": (float(np.mean(kurts)), float(np.std(kurts))),
     }
 
 
 # ---------------------------------------------------------------------------
-# Public helper functions
+# Utility functions
 # ---------------------------------------------------------------------------
 
 
 def cdf_percentile(pdf_samples, grid_centers, p):
     """
-    Interpolate velocity values at cumulative probability level(s) *p*.
+    Compute the CDF percentile(s) for each posterior draw.
 
-    Builds the empirical CDF for each MCMC sample by cumulative summation of
-    the probability mass, then uses linear interpolation to find the velocity
-    at which the CDF equals *p*.  This is the building block for
-    :func:`compute_summary`'s median and IQR calculations, but is also useful
-    on its own for constructing credible bands on cumulative profiles.
+    For each MCMC sample, treats the probability mass as a discrete
+    distribution over *grid_centers* and interpolates the cumulative
+    distribution at level(s) *p*.
 
     Parameters
     ----------
@@ -140,12 +134,12 @@ def cdf_percentile(pdf_samples, grid_centers, p):
 
 def tail_weight(pdf_samples, grid_centers, means, stds):
     """
-    Fraction of probability mass outside ±1σ of the mean, per MCMC sample.
+    Fraction of probability mass outside +/-1 sigma of the mean, per MCMC sample.
 
     This is a direct, model-free measure of tail heaviness that can be
     interpreted without any expansion assumption.  It is the non-parametric
-    analogue of the Gauss-Hermite *h₄* coefficient, but more intuitive: for a
-    Gaussian the value is exactly ``1 − erf(1/√2) ≈ 0.3173``.
+    analogue of the Gauss-Hermite *h4* coefficient.  For a Gaussian the value
+    is exactly ``1 - erf(1/sqrt(2)) ~ 0.3173``.
 
     Parameters
     ----------
@@ -172,7 +166,7 @@ def tail_weight(pdf_samples, grid_centers, means, stds):
     The Gaussian reference value can be computed as::
 
         from math import erf, sqrt
-        gaussian_tail_weight = 1 - erf(1 / sqrt(2))   # ≈ 0.3173
+        gaussian_tail_weight = 1 - erf(1 / sqrt(2))   # = 0.3173
 
     Examples
     --------
@@ -219,9 +213,9 @@ def bimodality_score(pdf_samples):
         ``1``
             Unimodal distribution (normal case).
         ``2``
-            Bimodal — could indicate counter-rotation, two kinematic
+            Bimodal; could indicate counter-rotation, two kinematic
             components, or a contaminating population.
-        ``≥ 3``
+        ``>= 3``
             Highly irregular; inspect visually before interpreting any
             scalar summaries.
 
@@ -229,14 +223,14 @@ def bimodality_score(pdf_samples):
     -----
     A more principled treatment would count peaks on every individual MCMC
     sample and return a distribution over the count.  This is deferred as a
-    future improvement; the posterior-mean approach is sufficient for
-    identifying bins that require visual inspection.
+    future improvement; the posterior-mean approach suffices to identify bins
+    that require visual inspection.
 
     Examples
     --------
     >>> score = bimodality_score(solver.samples["intrinsic_pdf"])
     >>> if score >= 2:
-    ...     print("Multimodal — inspect full histogram before trusting moments")
+    ...     print("Multimodal -- inspect full histogram before trusting moments")
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     mean_pdf = np.mean(pdf_samples, axis=0)
@@ -255,10 +249,10 @@ def half_68ci(samples):
     """
     Half-width of the 68% posterior credible interval.
 
-    Computes ``(p84 − p16) / 2`` — the symmetric ± uncertainty reported
+    Computes ``(p84 - p16) / 2``, the symmetric +/- uncertainty reported
     throughout veldist for both LOSVD values and scalar summary metrics.
-    This matches the convention used by BayesLOSVD and is the natural
-    non-parametric analogue of a 1-σ Gaussian error bar.
+    This matches the BayesLOSVD convention and is the natural non-parametric
+    analogue of a 1-sigma Gaussian error bar.
 
     Parameters
     ----------
@@ -269,13 +263,13 @@ def half_68ci(samples):
     Returns
     -------
     float
-        ``(p84 − p16) / 2``, in the same units as *samples*.
+        ``(p84 - p16) / 2``, in the same units as *samples*.
 
     Notes
     -----
     For a Gaussian posterior this equals the posterior standard deviation.
     For skewed or heavy-tailed posteriors it can differ substantially, but
-    it always has the interpretation "the true value lies within ±half_68ci
+    it always has the interpretation "the true value lies within +/-half_68ci
     of the median with approximately 68% posterior probability."
 
     Examples
@@ -283,7 +277,7 @@ def half_68ci(samples):
     >>> v_mean_samples = pdf_samples @ grid_centers
     >>> uncertainty = half_68ci(v_mean_samples)
     >>> median = float(np.median(v_mean_samples))
-    >>> print(f"v_mean = {median:.1f} ± {uncertainty:.1f} km/s")
+    >>> print(f"v_mean = {median:.1f} +/- {uncertainty:.1f} km/s")
     """
     samples = np.asarray(samples, dtype=float)
     p16, p84 = np.percentile(samples, [16, 84])
@@ -295,28 +289,25 @@ def truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0):
     Zero far-edge tail mass in each posterior draw and renormalise.
 
     This is the raw-sample analogue of
-    :meth:`~veldist.veldist.KinematicSolver.truncate_losvd`: the RW1
-    smoothness prior used during inference leaks a small amount of
-    posterior mass into velocity-grid bins far from the bulk of the
-    distribution.  For moments that weight residuals by a high power (e.g.
-    kurtosis's fourth power), even a tiny amount of far-edge mass can
-    produce a large bias (a bin at 5*sigma carries ~625x the weight of a
-    bin at 1*sigma).
+    :meth:`~veldist.veldist.KinematicSolver.truncate_losvd`. The RW1
+    smoothness prior used during inference leaks a small amount of posterior
+    mass into velocity-grid bins far from the bulk of the distribution.  For
+    moments that weight residuals by a high power (e.g. kurtosis's fourth
+    power), even a tiny amount of far-edge mass can produce a large bias (a
+    bin at 5 sigma carries ~625x the weight of a bin at 1 sigma).
 
-    Unlike ``truncate_losvd`` -- which operates on an already-fixed scalar
-    ``clipped_samples`` summary and never renormalises -- this function
+    Unlike ``truncate_losvd``, which operates on an already-fixed scalar
+    ``clipped_samples`` summary and never renormalises, this function
     operates on the full ``(n_samples, n_bins)`` PMF array that
     :func:`compute_summary` consumes, where every row is assumed to sum to
-    1.  Each row is therefore renormalised after truncation so downstream
-    moment calculations (which divide by the total probability implicitly,
-    via ``pdf_samples @ grid_centers``, etc.) remain valid.
+    1.  Each row is renormalised after truncation so downstream moment
+    calculations (which divide by the total probability implicitly, via
+    ``pdf_samples @ grid_centers``, etc.) remain valid.
 
     Truncation is applied **per draw**, using that draw's own mean and
-    dispersion, rather than a single global threshold computed once from
-    (e.g.) the posterior-mean LOSVD.  Posterior draws vary in their bulk
-    mean/dispersion, and a fixed global threshold would over- or
-    under-truncate individual draws relative to their own bulk; per-row
-    truncation tracks each draw's own scale.
+    dispersion, rather than a single global threshold computed from (e.g.)
+    the posterior-mean LOSVD.  Posterior draws vary in their bulk mean and
+    dispersion; per-row truncation tracks each draw's own scale.
 
     Parameters
     ----------
@@ -359,7 +350,7 @@ def truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0):
     row_sums = truncated.sum(axis=1, keepdims=True)
 
     # Guard against degenerate rows (entire mass truncated, or zero-mass
-    # rows to begin with) where renormalisation is undefined -- leave those
+    # rows to begin with) where renormalisation is undefined. Leave those
     # rows unmodified rather than dividing by zero.
     safe = row_sums > 0
     renormalised = np.where(safe, truncated / np.where(safe, row_sums, 1.0), pdf_samples)
@@ -374,18 +365,18 @@ def truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0):
 
 def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     """
-    Compute spatially-mappable scalar summaries from posterior LOSVD samples.
+    Compute spatially mappable scalar summaries from posterior LOSVD samples.
 
     This is the primary analysis function for extracting kinematic maps from
     :class:`~veldist.KinematicSolver` output.  All metrics except
     ``bimodality_score`` are evaluated independently on every MCMC sample,
-    so the full posterior uncertainty — measurement noise, finite star count,
-    and prior regularisation — is propagated automatically with no separate
+    so the full posterior uncertainty (measurement noise, finite star count,
+    prior regularisation) is propagated automatically with no separate
     bootstrap or error-propagation step.
 
     Each metric is summarised as ``(posterior_median, half_68ci)`` using the
     same convention as the LOSVD itself: the reported uncertainty is
-    ``(p84 − p16) / 2``.
+    ``(p84 - p16) / 2``.
 
     Parameters
     ----------
@@ -395,50 +386,41 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
         Centres of the velocity bins (km/s or consistent velocity unit).
     n_sigma_truncate : float or None, optional
         If given, apply :func:`truncate_pdf_samples` with this ``n_sigma``
-        to *pdf_samples* before computing any moment-based quantities, to
+        to *pdf_samples* before computing moment-based quantities, to
         mitigate the RW1 tail-leakage bias described in the ``kurtosis``
-        warning below.  Default ``None`` (no truncation, fully
-        backward-compatible with existing callers).  This is opt-in rather
-        than on-by-default because truncation is a lossy, threshold-
-        dependent repair — it discards genuine posterior mass at the
-        chosen cut, which is desirable when that mass is known prior
-        leakage but undesirable if a distribution genuinely has real
-        support out there (e.g. a deliberately wide grid margin for a
-        heavy-tailed truth). Silently truncating by default would risk
-        quietly biasing results for users who have not diagnosed whether
-        leakage is present in their specific setup. Empirical testing
-        (mock Gaussian realisations on a 20-bin grid, see ``PLAN.md`` §1.3)
-        found ``n_sigma_truncate=3.0`` reduces median excess kurtosis from
-        +1.78 (untruncated) to +0.05 -- i.e. it removes essentially all of
-        the observed bias for a Gaussian truth. Looser cuts recover less of
-        the bias: 4.0 -> +0.81, 5.0 -> +1.63 (barely better than
-        untruncated), because most of the leaked mass sits close to the
-        grid edge and a loose cut doesn't reach it. Full frequentist
-        coverage testing (``tests/test_coverage.py``, n=25 realisations per
-        truth) confirms this actually fixes *calibration*, not just the
-        point estimate, for the Gaussian truth (kurtosis coverage
-        0.000 -> 0.840) and also for a mildly skewed truth
-        (skew-normal: 0.000 -> 0.800) -- both land inside the nominal
-        68% band. **It does not fix genuinely heavy-tailed or multimodal
-        truths**: a Student-t(df=6) truth (true excess kurtosis 2.82) stays
-        at 0.000 coverage, and a bimodal counter-rotation truth stays at
-        0.080, because a fixed ``n_sigma`` cut removes some of their real
-        tail mass along with the leaked mass, trading one bias for
-        another. So: use ``n_sigma_truncate`` when you have reason to
-        believe your true LOSVD is close to Gaussian/mildly skewed; it is
-        not a general cure for kurtosis bias on heavy-tailed or
-        multimodal truths. ``n_sigma`` is data/grid dependent, so these
-        numbers are a starting point, not a universal constant -- see
-        ``tests/test_coverage.py`` for the current, up-to-date numbers and
-        methodology to re-derive a value for your own grid setup.
+        warning below.  Default ``None`` (no truncation, fully backward-
+        compatible with existing callers).  This is opt-in rather than on-by-
+        default because truncation is a lossy, threshold-dependent repair:
+        it discards posterior mass at the chosen cut, which is desirable when
+        that mass is known prior leakage but undesirable if a distribution
+        genuinely has real support there (e.g. a deliberately wide grid
+        margin for a heavy-tailed truth). Silently truncating by default
+        would risk quietly biasing results for users who have not diagnosed
+        whether leakage is present in their setup. Empirical testing (mock
+        Gaussian realisations on a 20-bin grid, see ``PLAN.md`` §1.3) found
+        ``n_sigma_truncate=3.0`` reduces median excess kurtosis from +1.78
+        (untruncated) to +0.05; i.e. it removes the observed bias for a
+        Gaussian truth. Looser cuts recover less of the bias (4.0 -> +0.81,
+        5.0 -> +1.63, barely better than untruncated). Frequentist coverage
+        testing (``tests/test_coverage.py``, n=25 realisations per truth)
+        confirms this fixes calibration for a Gaussian truth (kurtosis
+        coverage 0.000 -> 0.840) and for a mildly skewed truth (skew-normal:
+        0.000 -> 0.800), both inside the nominal 68% band. **It does not fix
+        heavy-tailed or multimodal truths**: a Student-t(df=6) truth (true
+        excess kurtosis 2.82) stays at 0.000 coverage, and a bimodal counter-
+        rotation truth stays at 0.080, because a fixed ``n_sigma`` cut
+        removes some of their real tail mass along with the leaked mass.
+        Use ``n_sigma_truncate`` when you have reason to believe your true
+        LOSVD is close to Gaussian or mildly skewed; it is not a general cure
+        for kurtosis bias on heavy-tailed or multimodal truths.
 
     Returns
     -------
     dict
-        Each key maps to a ``(median, half_68ci)`` tuple of floats — both in
-        the same units as *grid_centers* for velocity quantities, and
-        dimensionless for shape metrics — **except** ``'bimodality_score'``,
-        which is a plain ``int``.
+        Each key maps to a ``(median, half_68ci)`` tuple of floats, in the
+        same units as *grid_centers* for velocity quantities and dimensionless
+        for shape metrics -- **except** ``'bimodality_score'``, which is a
+        plain ``int``.
 
         **Location**
 
@@ -452,81 +434,80 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
             Mean minus median.  Near zero for symmetric LOSVDs; the sign
             mirrors that of the low-velocity tail (positive = mean pulled
             toward higher velocities by a trailing tail).  Closely related
-            to *h₃*, but does not require computing higher-order moments.
+            to *h3*, but does not require computing higher-order moments.
 
         **Dispersion**
 
         ``'sigma'``
-            Standard deviation of the LOSVD.  GH analogue: *σ*.
+            Standard deviation of the LOSVD.  GH analogue: *sigma*.
         ``'iqr'``
-            Interquartile range Q75 − Q25.  Robust dispersion estimate
+            Interquartile range Q75 - Q25.  Robust dispersion estimate
             insensitive to tail contamination.
         ``'sigma_iqr'``
-            IQR / 1.3490 — the Gaussian-equivalent dispersion derived from
-            the IQR.  For a Gaussian, ``sigma_iqr ≈ sigma``.
-            ``sigma_iqr < sigma`` → heavy tails (radial anisotropy);
-            ``sigma_iqr > sigma`` → flat top (tangential anisotropy).
+            IQR / 1.3490, the Gaussian-equivalent dispersion derived from
+            the IQR.  For a Gaussian, ``sigma_iqr ~= sigma``.
+            ``sigma_iqr < sigma`` implies heavy tails (radial anisotropy);
+            ``sigma_iqr > sigma`` implies flat top (tangential anisotropy).
 
         **Shape**
 
         ``'skewness'``
-            Normalised third central moment *γ₁*.  Zero for symmetric
-            distributions.  GH analogue: *h₃* ≈ −*γ₁* / √6.  Note sign:
-            *γ₁* > 0 (right-skewed, trailing tail) → *h₃* < 0, the
-            expected signal on the receding side of a rotating system.
+            Normalised third central moment *gamma1*.  Zero for symmetric
+            distributions.  GH analogue: *h3* ~= -*gamma1* / sqrt(6).  Note
+            sign: *gamma1* > 0 (right-skewed, trailing tail) implies *h3* <
+            0, the expected signal on the receding side of a rotating system.
         ``'kurtosis'``
-            Excess kurtosis *κ* = fourth central moment / σ⁴ − 3.  Zero for
-            a Gaussian.  GH analogue: *h₄* ≈ *κ* / √24.  Positive
-            (leptokurtic) → radially anisotropic; negative (platykurtic) →
-            tangentially anisotropic / flat-topped.
+            Excess kurtosis *kappa* = fourth central moment / sigma4 - 3.
+            Zero for a Gaussian.  GH analogue: *h4* ~= *kappa* / sqrt(24).
+            Positive (leptokurtic) implies radially anisotropic; negative
+            (platykurtic) implies tangentially anisotropic / flat-topped.
 
             .. warning::
-                **The root cause of the kurtosis bias — the RW1 prior's flat
-                null space — has been fixed in the default prior.** As of
-                version 0.x (commit 4b3bca2, 2026-08-03),
-                ``KinematicSolver.run()`` defaults to ``prior="gaussian_core"``
-                (Merritt 1997, AJ, 114, 228), which replaces the RW1 prior's
-                uniform-over-grid limit with a Gaussian null space. This
-                eliminates the +1.1 excess-kurtosis and +4–8% velocity-dispersion
-                biases at source. Prior-predictive median σ is ~45 km/s on a
-                400 km/s grid (vs. ~115 for uniform). Kurtosis bias for a
-                Gaussian truth is 0.00; σ bias is within 3%.
+                **The root cause of the kurtosis bias, the RW1 prior's flat
+                null space, has been fixed in the default prior.** As of
+                commit 4b3bca2 (2026-08-03), ``KinematicSolver.run()``
+                defaults to ``prior="gaussian_core"`` (Merritt 1997, AJ, 114,
+                228), which replaces the RW1 prior's uniform-over-grid limit
+                with a Gaussian null space. This eliminates the +1.1 excess-
+                kurtosis and +4-8% velocity-dispersion biases at source.
+                Prior-predictive median sigma is ~45 km/s on a 400 km/s grid
+                (vs. ~115 for uniform). Kurtosis bias for a Gaussian truth is
+                0.00; sigma bias is within 3%.
 
-                The ``n_sigma_truncate`` mitigation below is now a **legacy
-                option needed only when using** ``prior="rw1"``. With the
-                default Gaussian-core prior, truncation is not required for
-                Gaussian or mildly skewed truths. Heavy-tailed (+ multimodal)
-                truths still show under-coverage in kurtosis even with the
-                Gaussian-core prior — this is an inherent finite-data
-                limitation of any smoothness prior at N=150, not the
-                flat-null-space bug. See ``tests/test_coverage.py``,
-                ``tests/test_moment_bias.py``, and ``PLAN.md`` §1.3 for
-                full numbers.
+                The ``n_sigma_truncate`` mitigation is now a **legacy option
+                needed only when using** ``prior="rw1"``. With the default
+                Gaussian-core prior, truncation is not required for Gaussian
+                or mildly skewed truths. Heavy-tailed and multimodal truths
+                still show under-coverage in kurtosis even with the Gaussian-
+                core prior: this is an inherent finite-data limitation of any
+                smoothness prior at N=150, not the flat-null-space bug. See
+                ``tests/test_coverage.py``, ``tests/test_moment_bias.py``,
+                and ``PLAN.md`` §1.3 for numbers.
         ``'tail_weight'``
-            Fraction of probability mass outside ±1*σ* of the mean.
+            Fraction of probability mass outside +/-1*sigma* of the mean.
             Gaussian reference: 0.3173.  A more direct anisotropy diagnostic
-            than *h₄*: no expansion assumption, always interpretable even for
-            non-Gaussian shapes.  See also :func:`tail_weight`.
+            than *h4* because it makes no expansion assumption and remains
+            interpretable for non-Gaussian shapes.  See also :func:`tail_weight`.
 
         **Diagnostic**
 
         ``'bimodality_score'``
             Integer number of peaks in the smoothed posterior-mean LOSVD
-            (see :func:`bimodality_score`).  Score 1 = unimodal; ≥ 2 =
+            (see :func:`bimodality_score`).  Score 1 = unimodal; >= 2 =
             inspect visually.  No uncertainty is returned for this metric.
 
     Notes
     -----
-    The approximate Gauss-Hermite conversions (valid for |h₃|, |h₄| ≲ 0.2):
+    The approximate Gauss-Hermite conversions (valid for |h3|, |h4| <~ 0.2):
 
     .. code-block:: text
 
-        h3 ≈ -skewness / sqrt(6)
-        h4 ≈  kurtosis / sqrt(24)
+        h3 ~= -skewness / sqrt(6)
+        h4 ~=  kurtosis / sqrt(24)
 
     These allow cross-validation against GH-based models and literature maps.
 
-    For spatial bins where ``bimodality_score ≥ 2``, the mean, sigma,
+    For spatial bins where ``bimodality_score >= 2``, the mean, sigma,
     skewness, and kurtosis should be treated with caution: the mean lands
     between two peaks, sigma is inflated by their separation, and skewness
     reflects which peak is taller rather than any genuine asymmetry.
@@ -540,7 +521,7 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     ...                           solver.grid["centers"])
     >>> v, dv = summary["v_mean"]
     >>> s, ds = summary["sigma"]
-    >>> print(f"V = {v:.1f} ± {dv:.1f}  σ = {s:.1f} ± {ds:.1f}  km/s")
+    >>> print(f"V = {v:.1f} +/- {dv:.1f}  sigma = {s:.1f} +/- {ds:.1f}  km/s")
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)  # (n_samples, n_bins)
     grid_centers = np.asarray(grid_centers, dtype=float)  # (n_bins,)
@@ -574,11 +555,11 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     q25, medians, q75 = pctls[:, 0], pctls[:, 1], pctls[:, 2]
 
     iqr = q75 - q25  # (n_samples,)
-    sigma_iqr = iqr / 1.3490  # Gaussian-equivalent σ
+    sigma_iqr = iqr / 1.3490  # Gaussian-equivalent sigma
     v_asym = means - medians  # (n_samples,)
 
     # ------------------------------------------------------------------
-    # Bimodality score (scalar — from posterior mean, not per-sample)
+    # Bimodality score (scalar -- from posterior mean, not per-sample)
     # ------------------------------------------------------------------
     bscore = bimodality_score(pdf_samples)
 
@@ -590,19 +571,15 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
         return (float(p50), float((p84 - p16) / 2.0))
 
     return {
-        # Location
         "v_mean": _summarise(means),
         "v_median": _summarise(medians),
         "v_asymmetry": _summarise(v_asym),
-        # Dispersion
         "sigma": _summarise(stds),
         "iqr": _summarise(iqr),
         "sigma_iqr": _summarise(sigma_iqr),
-        # Shape
         "skewness": _summarise(skews),
         "kurtosis": _summarise(kurts),
         "tail_weight": _summarise(tw),
-        # Diagnostic (no uncertainty)
         "bimodality_score": bscore,
     }
 
@@ -613,7 +590,7 @@ def compute_summary_maps(solvers):
 
     Iterates over a list of :class:`~veldist.KinematicSolver` instances,
     calls :func:`compute_summary` on each one, and assembles the results into
-    arrays shaped ``(n_bins,)`` — one entry per spatial bin — ready to pass
+    arrays shaped ``(n_bins,)``, one entry per spatial bin, ready to pass
     directly to a spatial map plotting function.
 
     Bins that were skipped during inference (``None`` entries in *solvers*, as
@@ -645,59 +622,32 @@ def compute_summary_maps(solvers):
     ------
     ValueError
         If all entries in *solvers* are ``None``.
-
-    Examples
-    --------
-    Build velocity and dispersion maps and plot them side by side:
-
-    >>> maps = compute_summary_maps(solvers)
-    >>> import matplotlib.pyplot as plt
-    >>> fig, axes = plt.subplots(1, 2, figsize=(10, 4))
-    >>> for ax, key, label in zip(axes,
-    ...                           ["v_mean", "sigma"],
-    ...                           ["Mean velocity (km/s)", "Dispersion (km/s)"]):
-    ...     sc = ax.scatter(xbin, ybin, c=maps[key]["median"], cmap="RdBu_r")
-    ...     plt.colorbar(sc, ax=ax, label=label)
-
-    Flag multimodal bins before plotting moments:
-
-    >>> bscore = maps["bimodality_score"]["median"]
-    >>> multimodal = bscore >= 2
-    >>> print(f"{multimodal.sum():.0f} bins have bimodality_score ≥ 2")
-
-    Notes
-    -----
-    The ``bimodality_score`` sub-dict has ``'median'`` filled with the
-    integer score cast to float and ``'uncertainty'`` filled with ``NaN``.
-    This keeps the return structure uniform so callers can iterate over all
-    keys without special-casing the diagnostic metric.
     """
     n_bins = len(solvers)
+    # Determine metric names from the first non-None solver
+    metrics = None
+    for s in solvers:
+        if s is not None:
+            summary = compute_summary(s.samples["intrinsic_pdf"], s.grid["centers"])
+            metrics = list(summary.keys())
+            break
 
-    # Infer the full set of metric keys from the first solved bin.
-    first = next((s for s in solvers if s is not None), None)
-    if first is None:
-        msg = "All solvers are None — no bins to summarise."
-        raise ValueError(msg)
+    if metrics is None:
+        raise ValueError("all solvers are None -- no data to build maps from")
 
-    ref_summary = compute_summary(first.samples["intrinsic_pdf"], first.grid["centers"])
-    metric_keys = list(ref_summary.keys())
-
-    # Initialise all arrays to NaN.
-    maps = {k: {"median": np.full(n_bins, np.nan), "uncertainty": np.full(n_bins, np.nan)} for k in metric_keys}
+    # Build dict of arrays, NaN-filled
+    maps = {}
+    for m in metrics:
+        maps[m] = {"median": np.full(n_bins, np.nan), "uncertainty": np.full(n_bins, np.nan)}
 
     for i, solver in enumerate(solvers):
-        if solver is None:
-            continue
-
-        summary = compute_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
-
-        for k, v in summary.items():
-            if k == "bimodality_score":
-                maps[k]["median"][i] = float(v)
-                # uncertainty stays NaN — bimodality_score has no posterior CI
-            else:
-                maps[k]["median"][i] = v[0]
-                maps[k]["uncertainty"][i] = v[1]
+        if solver is not None:
+            summary = compute_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
+            for m in metrics:
+                if isinstance(summary[m], tuple):
+                    maps[m]["median"][i], maps[m]["uncertainty"][i] = summary[m]
+                else:
+                    maps[m]["median"][i] = float(summary[m])  # e.g. bimodality_score
+                    maps[m]["uncertainty"][i] = np.nan
 
     return maps

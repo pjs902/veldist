@@ -162,7 +162,7 @@ if not args.no_inference:
 
         pdf_mass = solver.samples["intrinsic_pdf"]
         # Convert to density for plotting
-        dv_solver = solver.grid["width"] / solver.grid["n_bins"]
+        dv_solver = solver.grid["width"]
         pdf_density = pdf_mass / dv_solver
         vc = solver.grid["centers"]
 
