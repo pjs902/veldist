@@ -57,9 +57,14 @@ Suggested execution order is the table at the end of that file.
   at N=100 — the prior dominates, not the noise. Typical h3 (≈0.065) is
   *harder* than extreme h3, never covering at any N tested, because the
   shrinkage bias is roughly fixed in absolute terms while the signal shrinks.
-  With 300k spectra, stars-per-bin is a free parameter trading spatial
-  resolution against h3 fidelity; quantifying that trade is likely worth more
-  to the science than squeezing the prior.
+  Actual 1D budget after quality cuts: 30k LOS spectra within r_h ≈ 4.65′.
+  (The 600k HST PMs, Gaia outer PMs and LVM rotation map are the 2D case,
+  ~20x richer — the LOS solver is the constrained one and is what measures
+  h3.) That gives 300 bins at N=100, 120 bins at N=250, 60 at N=500 — all
+  well above the 27 LOS apertures of van de Ven et al. (2006), so spatial
+  resolution is not the scarce resource. Since the best tested prior reaches
+  z≈1.3 at N=250 with realistic errors, **N≈250 / ~120 bins is the natural
+  operating point**, contingent on fixing the prior first.
 
 - **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
   The RW3 deviation scaling fix improved coverage broadly but did not close it.
