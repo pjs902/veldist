@@ -44,8 +44,22 @@ Suggested execution order is the table at the end of that file.
   Not yet decided: which replacement prior to adopt. Every candidate that
   reaches z < 3 at N=100 has a prior-predictive tail that would likely fail
   SBC, so the two requirements are still in tension and the choice needs an
-  SBC run as its gate. N=100 at skewness 0.85 looks out of reach; milder h3
-  has not yet been swept and is the more realistic target.
+  SBC run as its gate.
+  **Calibrated against the real target data (oMEGACat, >300k MUSE spectra in
+  ω Cen's r_h, LOS errors 2–3 km/s).** Two corrections to the test harness
+  follow: (a) `test_coverage.py` uses err/σ ≈ 0.52 where real data are
+  ≈ 0.11–0.25, so it has been testing a 3–4x harder problem than the science
+  needs; (b) the existing truths are h3 ≈ 0.123 and h4 ≈ 0.144 via
+  `gamma1 = 4√3·h3`, `gamma2 = 8√6·h4` — at or past the top of the real range
+  (|h3| ≲ 0.15, |h4| ≲ 0.05–0.1). Both should be brought in line before the
+  prior is chosen against them.
+  Measured: realistic errors improve the current prior only from z=23 to z=15
+  at N=100 — the prior dominates, not the noise. Typical h3 (≈0.065) is
+  *harder* than extreme h3, never covering at any N tested, because the
+  shrinkage bias is roughly fixed in absolute terms while the signal shrinks.
+  With 300k spectra, stars-per-bin is a free parameter trading spatial
+  resolution against h3 fidelity; quantifying that trade is likely worth more
+  to the science than squeezing the prior.
 
 - **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
   The RW3 deviation scaling fix improved coverage broadly but did not close it.
