@@ -142,3 +142,78 @@ def test_rw1_prior_is_uniform_documents_the_bug():
         f"RW1 prior-predictive median excess kurtosis {median_kurt:.2f} is no "
         f"longer close to the uniform value {UNIFORM_EXCESS_KURTOSIS}"
     )
+
+
+def test_gaussian_core_curve_is_exactly_quadratic_when_deviation_is_zero():
+    """With the deviation forced to zero, the latent curve must be exactly
+    the log of a Gaussian, i.e. exactly quadratic in velocity.
+
+    This is the defining property of the prior: the Gaussian is the free,
+    unpenalised null-space element (Merritt 1997). A quadratic has zero
+    third derivative, so fitting a parabola through the curve must leave
+    residuals at floating-point noise level.
+    """
+    import numpyro
+    from numpyro.handlers import seed, substitute, trace
+
+    from veldist.veldist import generate_gaussian_core_curve
+
+    n_bins = 40
+    centers, bin_width = _grid(n_bins)
+
+    fixed = {
+        "v0": 210.0,
+        "s0": 45.0,
+        "sigma3": 0.0,          # kills the deviation entirely
+        "d3": np.zeros(n_bins),
+    }
+    model_fn = substitute(
+        seed(generate_gaussian_core_curve, jax.random.PRNGKey(0)), data=fixed
+    )
+    curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width))
+
+    # Fit a parabola in velocity and require an essentially perfect fit.
+    coeffs = np.polyfit(centers, curve, 2)
+    residual = curve - np.polyval(coeffs, centers)
+    assert np.max(np.abs(residual)) < 1e-6, (
+        "latent curve is not quadratic when the deviation is switched off; "
+        f"max parabola residual {np.max(np.abs(residual)):.2e}"
+    )
+
+
+def test_gaussian_core_deviation_is_orthogonal_to_quadratics():
+    """The deviation term must carry no constant, linear, or quadratic
+    component -- those belong to the Gaussian core.
+
+    If it does carry them, the core and the deviation can trade off against
+    each other, `v0`/`s0` become unidentifiable, and NUTS will diverge.
+    """
+    import numpyro
+    from numpyro.handlers import seed, substitute
+
+    from veldist.veldist import generate_gaussian_core_curve
+
+    n_bins = 40
+    centers, bin_width = _grid(n_bins)
+    rng = np.random.default_rng(0)
+
+    # Zero out the core so only the deviation remains: s0 -> huge makes the
+    # quadratic core flat to within floating point over this grid.
+    fixed = {
+        "v0": GRID_CENTER,
+        "s0": 1e8,
+        "sigma3": 1.0,
+        "d3": rng.normal(size=n_bins),
+    }
+    model_fn = substitute(
+        seed(generate_gaussian_core_curve, jax.random.PRNGKey(1)), data=fixed
+    )
+    curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width))
+
+    u = (centers - centers.mean()) / (centers.max() - centers.min())
+    basis = np.stack([np.ones_like(u), u, u ** 2], axis=1)
+    projection = basis @ np.linalg.lstsq(basis, curve, rcond=None)[0]
+    assert np.max(np.abs(projection)) < 1e-5 * max(1.0, np.max(np.abs(curve))), (
+        "deviation term has a non-zero projection onto {1, u, u^2}; the QR "
+        "projection is not working"
+    )

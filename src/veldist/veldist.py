@@ -180,6 +180,119 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     return curve
 
 
+def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
+    """
+    Generate a latent log-density curve whose smoothness prior has a
+    *Gaussian* null space rather than a flat one.
+
+    This is the discrete, generative analogue of the Silverman (1982)
+    roughness penalty used by Merritt (1997, AJ, 114, 228)::
+
+        P(N) = integral [ d^3/dV^3 log N(V) ]^2 dV
+
+    A Gaussian's log-density is exactly quadratic in velocity, so its third
+    derivative vanishes identically and the penalty is exactly zero for any
+    Gaussian. The infinite-smoothing limit is therefore a Gaussian with the
+    data's own mean and dispersion -- not the uniform-over-the-grid limit of
+    the first-difference prior in :func:`generate_smooth_curve`.
+
+    That difference is the whole point. A flat null space means that
+    wherever the data is uninformative the posterior relaxes toward putting
+    probability mass everywhere out to the grid edge. Because kurtosis
+    weights deviations by the fourth power, a bin at 5 sigma carries ~625x
+    the weight of a bin at 1 sigma, so even a small amount of misplaced edge
+    mass produces a large positive kurtosis bias -- and, because the grid is
+    wider than the true distribution, a positive velocity-dispersion bias
+    that grows with the number of bins.
+
+    The construction splits the curve into a free core and a penalised
+    deviation::
+
+        core  = -0.5 * ((v - v0) / s0)^2                  # unpenalised
+        w     = cumsum(cumsum(cumsum(d3 * sigma3)))       # triple-integrated RW
+        dev   = w - Q (Q^T w),  Q = orth basis of {1, u, u^2}
+        curve = core + dev
+
+    ``v0`` and ``s0`` are the Gaussian null-space parameters and carry no
+    smoothness penalty at all. ``dev`` is projected orthogonal to the
+    quadratic subspace so it cannot mimic the core; without that projection
+    the two terms trade off freely, ``v0``/``s0`` become unidentifiable, and
+    NUTS diverges. The projection is performed in the normalised coordinate
+    ``u = (v - mean(v)) / (max(v) - min(v))`` because a QR factorisation of
+    the raw velocity Vandermonde ``[1, v, v^2]`` is catastrophically
+    ill-conditioned when velocities are of order hundreds.
+
+    Like :func:`generate_smooth_curve` this is a genuinely *generative*
+    construction -- every random quantity is drawn via ``numpyro.sample``,
+    never ``numpyro.factor``. A factor-based penalty is invisible to
+    ``numpyro.infer.Predictive``, so the model would behave correctly under
+    NUTS while silently drawing the wrong thing under prior-predictive
+    sampling and SBC. That exact bug has already been hit and fixed once in
+    this codebase; do not reintroduce it.
+
+    ``d3`` is drawn standard-normal and scaled by ``sigma3`` afterwards
+    (non-centred parameterisation) rather than drawn from
+    ``Normal(0, sigma3)`` directly, which would produce Neal's funnel and
+    divergences.
+
+    ``sigma3`` is scaled by the *dimensionless* ratio
+    ``(bin_width / span) ** 2.5``. A triple-integrated random walk over
+    ``n = span / bin_width`` steps accumulates as ``n ** 2.5``, so this
+    ratio is what makes the deviation both O(1) in log-density units and
+    independent of grid resolution. Using a dimensional ``bin_width ** 2.5``
+    instead is a serious bug: at ``bin_width = 10`` over 40 bins it produces
+    a deviation of order ``10 ** 2.5 * 40 ** 2.5 ~ 3e6``, which saturates
+    the softmax and turns every prior draw into a delta function.
+    (Compare ``generate_smooth_curve``, where a singly-integrated Brownian
+    walk needs ``sqrt(bin_width)``.)
+
+    Parameters
+    ----------
+    N_bins : int
+        Number of velocity bins.
+    centers : array-like, shape (N_bins,)
+        Physical centres of the velocity bins. Required because the Gaussian
+        core is quadratic in *velocity*, not in bin index.
+    bin_width : float
+        Width of one velocity bin, used to make ``sigma3`` independent of
+        grid resolution. Default 1.0 (no rescaling).
+
+    Returns
+    -------
+    curve : jnp.ndarray, shape (N_bins,)
+        Latent log-density curve, to be passed through ``softmax``.
+    """
+    centers = jnp.asarray(centers)
+    span = jnp.max(centers) - jnp.min(centers)
+    mid = jnp.mean(centers)
+
+    # --- Gaussian null space: free, unpenalised ---
+    # LogNormal rather than HalfNormal/HalfCauchy on the core width. Both
+    # half-distributions put substantial mass near zero, and an s0 near zero
+    # collapses the core onto a single bin -- measured prior-predictive
+    # median sigma of exactly 0.00, i.e. a delta function, for >99% of
+    # draws. LogNormal is bounded away from both 0 and infinity: median
+    # span/8 with ~1 dex of spread either side.
+    v0 = numpyro.sample("v0", dist.Normal(mid, span / 4.0))
+    s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 0.75))
+    core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
+
+    # --- penalised non-Gaussian deviation ---
+    sigma3 = numpyro.sample("sigma3", dist.HalfNormal(1.0)) * (bin_width / span) ** 2.5
+    d3 = numpyro.sample(
+        "d3", dist.Normal(0.0, 1.0).expand([N_bins]).to_event(1)
+    )
+    w = jnp.cumsum(jnp.cumsum(jnp.cumsum(d3 * sigma3)))
+
+    # Project out {1, u, u^2} in a well-conditioned coordinate.
+    u = (centers - mid) / span
+    basis = jnp.stack([jnp.ones_like(u), u, u ** 2], axis=1)
+    q, _ = jnp.linalg.qr(basis)
+    deviation = w - q @ (q.T @ w)
+
+    return core + deviation
+
+
 # ==============================================================================
 # Model Inference
 # ==============================================================================
@@ -240,6 +353,39 @@ def model(matrix, n_bins, bin_width=1.0):
 
     # Register the likelihood with NumPyro
     numpyro.factor("obs_log_lik", log_prob)
+
+
+def model_gaussian_core(matrix, n_bins, centers, bin_width=1.0):
+    """
+    NumPyro model using the Gaussian-null-space prior.
+
+    Identical to :func:`model` except that the latent log-density curve comes
+    from :func:`generate_gaussian_core_curve` instead of
+    :func:`generate_smooth_curve`. See that function's docstring for why the
+    null space matters.
+
+    Parameters
+    ----------
+    matrix : jnp.ndarray, shape (N_stars, N_bins)
+        Pre-computed design matrix M.
+    n_bins : int
+        Number of velocity bins.
+    centers : array-like, shape (N_bins,)
+        Physical centres of the velocity bins.
+    bin_width : float
+        Width of one velocity bin.
+
+    Returns
+    -------
+    None
+        Defines the probabilistic graph; has no return value.
+    """
+    latent_curve = generate_gaussian_core_curve(n_bins, centers, bin_width)
+    intrinsic_pdf = jax.nn.softmax(latent_curve)
+    numpyro.deterministic("intrinsic_pdf", intrinsic_pdf)
+
+    per_star_prob = jnp.dot(matrix, intrinsic_pdf)
+    numpyro.factor("obs_log_lik", jnp.sum(jnp.log(per_star_prob)))
 
 
 # ==============================================================================
