@@ -274,7 +274,7 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
     # draws. LogNormal is bounded away from both 0 and infinity: median
     # span/8 with ~1 dex of spread either side.
     v0 = numpyro.sample("v0", dist.Normal(mid, span / 4.0))
-    s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 0.75))
+    s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 0.95))
     core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
 
     # --- penalised non-Gaussian deviation ---
