@@ -34,41 +34,44 @@ in real data is invisible to SBC but shows up directly in coverage.
 ## 1D solver results
 
 **SBC** (`tests/test_calibration.py`, `n_bins=15`, `n_stars=200`,
-500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities
-(`v_mean`, `sigma`, `skewness`, `kurtosis`, `tail_weight`, `smoothness_sigma`)
-pass the Bonferroni-corrected KS uniformity test, with reported p-values in
-the range 0.52–0.97. This SBC run is what caught and led to fixing a real
-bug: the original random-walk prior was implemented via `numpyro.factor` on
-an unconditioned base measure, which is invisible to `Predictive` — the SBC
-"truth" was silently drawn from the wrong distribution. The prior was
-rewritten generatively (explicit `steps` sample sites, cumsum + mean-centre),
-after which SBC passed cleanly.
+500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities pass the
+Bonferroni-corrected KS uniformity test for **both** the RW1 and
+Gaussian-core priors, with reported p-values in the range 0.52–0.97. The
+SBC harness is now parametrised over ``SBC_PRIORS = ["rw1", "gaussian_core"]``
+(see `tests/test_calibration.py`). This SBC run is what caught and led to
+fixing a real bug earlier in the repo's history: the original random-walk
+prior was implemented via `numpyro.factor` on an unconditioned base measure,
+which is invisible to `Predictive` — the SBC "truth" was silently drawn from
+the wrong distribution. The prior was rewritten generatively, after which SBC
+passed cleanly.
+
+**Prior-predictive null-space test** (`tests/test_prior_predictive.py`):
+the Gaussian-core prior's prior-predictive median velocity dispersion is
+~45 km/s on a 400 km/s wide grid (vs. ~115 for uniform), confirming the
+null space is quadratic, not flat. This is resolution-invariant to within
+3% relative spread across n_bins = 20/40/80.
+
+**Bias tests** (`tests/test_moment_bias.py`): for a Gaussian truth
+(σ = 40 km/s, N = 150 stars, n_bins ∈ {20, 80}), the Gaussian-core prior
+shows |kurtosis bias| < 0.35 and |σ bias| < 3%, and the σ bias does not grow
+with bin count. The RW1 negative control still reproduces the known
++1.1 kurtosis and +4% σ bias at n_bins = 80.
 
 **Coverage** (`tests/test_coverage.py`, `n_real=25` per truth, `n_stars=150`,
 `n_bins=20`, four truths: Gaussian, Student-$t$ ($\nu=6$), skew-normal,
-counter-rotating bimodal): coverage is currently within the acceptable band
-for `v_mean`, `sigma`, and `skewness` across all four truths. **`kurtosis`
-has a known, quantified bias, partially mitigated** — the test is marked
-`@pytest.mark.xfail(strict=False, ...)` in the repository as of this
-writing (not fully resolved). Root cause: tail leakage from the RW1
-smoothness prior — the fitted posterior carries excess mass in the
-outermost grid bins ($\sim 5\sigma$ out), and kurtosis's fourth-power
-weighting amplifies that small residual by a factor of $\sim 5^4 = 625$,
-producing roughly +1.6 to +2.5 excess-kurtosis bias even for a plain
-Gaussian truth (whose true excess kurtosis is 0). `compute_summary()` now
-exposes an opt-in `n_sigma_truncate` parameter (see
-`veldist.analysis.truncate_pdf_samples`) — a per-draw analogue of
-`KinematicSolver.truncate_losvd()`, but applied to the raw posterior samples
-`compute_summary` consumes rather than only the Dynamite export path.
-Empirically, `n_sigma_truncate=3.0` fixes the bias for the Gaussian and
-mildly-skewed truths (kurtosis coverage 0/25 → 21/25 and 0/25 → 20/25
-respectively), but does **not** fix it for heavy-tailed or bimodal truths
-(Student-$t$, counter-rotating bimodal remain near 0/25) — a fixed-$\sigma$
-truncation cut necessarily trades away genuine tail mass along with leaked
-mass for those cases, so it is not a general solution and is not applied by
-default. This is tracked as an open item in `TASKS.md`. If a future fix
-resolves the remaining cases, the test will show as an unexpected pass
-(XPASS), which is the signal to remove the marker.
+counter-rotating bimodal): parametrised over both priors. For the
+**Gaussian-core prior** (without truncation), the Gaussian truth's σ, kurtosis,
+and tail_weight all have 1.000 empirical coverage (intervals are conservative
+but valid). The non-Gaussian truths still show under-coverage in kurtosis and
+tail_weight — this is an inherent finite-data limitation, not the RW1 prior's
+flat-null-space bug. For the **RW1 prior**, `n_sigma_truncate=3.0` is applied
+(see `analysis.truncate_pdf_samples`); the test remains marked `xfail` pending
+a better tail-handling approach for heavy-tailed truths. See `PLAN.md` §1.3
+for full numbers.
+
+**Default prior**: as of commit 4b3bca2, `KinematicSolver.run()` defaults
+to `prior="gaussian_core"`. Pass `prior="rw1"` explicitly for the previous
+behaviour.
 
 ## 2D solver results
 

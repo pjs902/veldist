@@ -247,9 +247,7 @@ def bimodality_score(pdf_samples):
     interior = smoothed[1:-1]
     left = smoothed[:-2]
     right = smoothed[2:]
-    n_peaks = int(
-        np.sum((interior > left) & (interior > right) & (interior > min_height))
-    )
+    n_peaks = int(np.sum((interior > left) & (interior > right) & (interior > min_height)))
     return n_peaks
 
 
@@ -483,31 +481,27 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
             tangentially anisotropic / flat-topped.
 
             .. warning::
-                **Known positive bias on Gaussian/mild truths, mitigatable
-                via** ``n_sigma_truncate``; **still open for heavy-tailed
-                truths.** Frequentist coverage testing found that
-                ``kurtosis`` is systematically biased positive (+1.6 to
-                +2.5 excess kurtosis observed) even for a *Gaussian*
-                truth. Cause: the RW1 smoothness prior leaks a small
-                amount of posterior mass into far-edge velocity-grid bins,
-                and kurtosis's fourth-power weighting amplifies that
-                residual mass enormously (a bin at 5σ carries ~625× the
-                weight of a bin at 1σ). Passing ``n_sigma_truncate`` (e.g.
-                3.0) suppresses this leakage in the raw posterior samples
-                before moments are computed and was confirmed by full
-                coverage testing to fix calibration for a Gaussian truth
-                (kurtosis coverage 0.000 → 0.840 over n=25 realisations)
-                and a mildly skewed truth (0.000 → 0.800), but **not** for
-                genuinely heavy-tailed or multimodal truths (a
-                Student-t(df=6) truth stayed at 0.000, a bimodal truth
-                stayed at 0.080) — the same fixed cut that removes leaked
-                mass also removes some of those truths' real tail. This is
-                **opt-in, not default** — see the ``n_sigma_truncate``
-                parameter docs for why and for the full before/after
-                numbers. ``skewness`` and the other metrics were not
-                observed to show this bias. See ``PLAN.md`` §1.3 and
-                ``tests/test_coverage.py`` (still marked ``xfail``, for the
-                heavy-tailed-truth case) for the full investigation.
+                **The root cause of the kurtosis bias — the RW1 prior's flat
+                null space — has been fixed in the default prior.** As of
+                version 0.x (commit 4b3bca2, 2026-08-03),
+                ``KinematicSolver.run()`` defaults to ``prior="gaussian_core"``
+                (Merritt 1997, AJ, 114, 228), which replaces the RW1 prior's
+                uniform-over-grid limit with a Gaussian null space. This
+                eliminates the +1.1 excess-kurtosis and +4–8% velocity-dispersion
+                biases at source. Prior-predictive median σ is ~45 km/s on a
+                400 km/s grid (vs. ~115 for uniform). Kurtosis bias for a
+                Gaussian truth is 0.00; σ bias is within 3%.
+
+                The ``n_sigma_truncate`` mitigation below is now a **legacy
+                option needed only when using** ``prior="rw1"``. With the
+                default Gaussian-core prior, truncation is not required for
+                Gaussian or mildly skewed truths. Heavy-tailed (+ multimodal)
+                truths still show under-coverage in kurtosis even with the
+                Gaussian-core prior — this is an inherent finite-data
+                limitation of any smoothness prior at N=150, not the
+                flat-null-space bug. See ``tests/test_coverage.py``,
+                ``tests/test_moment_bias.py``, and ``PLAN.md`` §1.3 for
+                full numbers.
         ``'tail_weight'``
             Fraction of probability mass outside ±1*σ* of the mean.
             Gaussian reference: 0.3173.  A more direct anisotropy diagnostic
@@ -690,18 +684,13 @@ def compute_summary_maps(solvers):
     metric_keys = list(ref_summary.keys())
 
     # Initialise all arrays to NaN.
-    maps = {
-        k: {"median": np.full(n_bins, np.nan), "uncertainty": np.full(n_bins, np.nan)}
-        for k in metric_keys
-    }
+    maps = {k: {"median": np.full(n_bins, np.nan), "uncertainty": np.full(n_bins, np.nan)} for k in metric_keys}
 
     for i, solver in enumerate(solvers):
         if solver is None:
             continue
 
-        summary = compute_summary(
-            solver.samples["intrinsic_pdf"], solver.grid["centers"]
-        )
+        summary = compute_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
 
         for k, v in summary.items():
             if k == "bimodality_score":

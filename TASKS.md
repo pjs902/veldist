@@ -5,25 +5,14 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
-- **[P1] Fix remaining kurtosis tail-leakage bias for heavy-tailed/multimodal
-  truths** (`PLAN.md` §1.3 "ACTUAL outcome" / "Fix implemented")
-  Partially fixed in a follow-up session: `analysis.truncate_pdf_samples`
-  (per-draw, renormalising tail suppression) plus `compute_summary`'s new
-  opt-in `n_sigma_truncate` parameter. With `n_sigma_truncate=3.0`, kurtosis
-  coverage for a Gaussian truth went from catastrophic (0.000) to nominal
-  (0.840, n=25), and likewise for a mildly skewed truth (0.000 → 0.800).
-  Downgraded from P0 to P1 because the original "even a Gaussian is biased"
-  finding is resolved. Still open: kurtosis coverage for a Student-t(df=6)
-  truth (0.000, unchanged) and a bimodal counter-rotation truth (0.080,
-  roughly unchanged) — a fixed `n_sigma` cut trades away real tail mass for
-  these truths along with the leaked mass. `tests/test_coverage.py` remains
-  marked `xfail` (reason string updated) pending a fix for this remaining
-  case. Directions in the plan: wider grid margin for heavy-tailed truths
-  (**tried, follow-up session — negative result**: bias got worse, not
-  better, roughly linearly with grid width for both `student_t_h4` and
-  `bimodal_counter_rotation`; see `PLAN.md` §1.3 item 2 for numbers; no
-  code changed, this direction is closed), or an adaptive/softer
-  truncation instead of a fixed hard cut (untried, remaining direction).
+- **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
+  The Gaussian-core prior (`prior="gaussian_core"`, now default) fixes the
+  kurtosis bias at source for Gaussian/mildly-skewed truths. But kurtosis
+  coverage for Student-t(df=6) and bimodal truths remains low even with the
+  new prior — this is now recognised as an irreducible finite-data limitation
+  at N=150, not the flat-null-space bug. A wider grid margin was tried and
+  made it worse; an adaptive/softer truncation is the remaining untried
+  direction. The test's RW1 xfail is retained for the old prior.
 
 - **[P1] 2D solver: §3.5 deferred items** (`PLAN.md` §3.5)
   `KinematicSolver2D` is now feature-complete for "minimally working" per
@@ -43,6 +32,15 @@ Suggested execution order is the table at the end of that file.
   solver and export pipeline are both tested and stable
 
 ## Completed
+
+- Gaussian-null-space (RW3) prior (P0, `docs/superpowers/plans/2026-08-03-gaussian-null-space-prior.md`):
+  Added `generate_gaussian_core_curve` (free Gaussian core + triple-integrated
+  RW projected orthogonal to {1, u, u²}), `model_gaussian_core`, and
+  `prior=` selector on `KinematicSolver.run()`. Prior-predictive null-space
+  tests, sigma/kurtosis bias tests (all pass), SBC for both priors (pass),
+  and coverage parametrised over both priors. Default flipped to
+  `prior="gaussian_core"` in commit 4b3bca2. `n_sigma_truncate` is now a
+  legacy option needed only with `prior="rw1"`.
 
 - 2D solver: §3.4 performance gate (P1, `PLAN.md` §3.4) — measured directly:
   `K=20`, `N=5000` stars, 500 warmup + 1000 samples, 4 chains, CPU. Wall
