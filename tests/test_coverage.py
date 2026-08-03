@@ -202,7 +202,7 @@ def _binom_band(n, p=0.68, alpha=0.01):
     return float(lo), float(hi)
 
 
-def _run_coverage(truth, n_real, rng):
+def _run_coverage(truth, n_real, rng, prior="rw1"):
     """Fit n_real independent mock realisations of `truth` and return, for
     each metric in METRICS, the number of realisations whose 68% credible
     interval contained the true value."""
@@ -220,12 +220,23 @@ def _run_coverage(truth, n_real, rng):
         solver = KinematicSolver()
         solver.setup_grid(center=center, width=width, n_bins=N_BINS)
         solver.add_data(obs_v, err)
-        solver.run(num_warmup=NUM_WARMUP, num_samples=NUM_SAMPLES, seed=1000 + i)
+        solver.run(
+            num_warmup=NUM_WARMUP,
+            num_samples=NUM_SAMPLES,
+            seed=1000 + i,
+            prior=prior,
+        )
+
+        # The Gaussian-core prior should not need the post-hoc truncation
+        # repair -- needing it would mean the root-cause fix did not work.
+        # rw1 keeps 3.0 so its numbers stay comparable to the values already
+        # recorded in docs/validation.md.
+        truncate = None if prior == "gaussian_core" else N_SIGMA_TRUNCATE
 
         summary = compute_summary(
             solver.samples["intrinsic_pdf"],
             solver.grid["centers"],
-            n_sigma_truncate=N_SIGMA_TRUNCATE,
+            n_sigma_truncate=truncate,
         )
         n_ok += 1
         for m in METRICS:
@@ -237,40 +248,50 @@ def _run_coverage(truth, n_real, rng):
     return true_vals, hits, n_ok
 
 
-@pytest.mark.slow
-@pytest.mark.xfail(
-    reason=(
-        "Partially fixed, still red. compute_summary() now accepts "
-        "n_sigma_truncate (analysis.truncate_pdf_samples), applied here with "
-        "n_sigma_truncate=3.0, to suppress RW1 tail-leakage mass in the raw "
-        "posterior samples before moments are computed. This resolves the "
-        "originally catastrophic Gaussian-truth kurtosis bug (coverage "
-        "0.000 -> 0.840 over n_real=25, well inside the nominal band) and "
-        "also brings skew_normal_h3.kurtosis into band (0.000 -> 0.800). "
-        "BUT it does not fix -- and does not clearly improve -- kurtosis "
-        "coverage for the two genuinely heavy-tailed/multimodal truths: "
-        "student_t_h4.kurtosis stayed at 0.000 (0/25, previously 0.120 "
-        "pre-truncation) and bimodal_counter_rotation.kurtosis stayed at "
-        "0.080 (2/25, previously 0.040). This is the expected trade-off of "
-        "a fixed n_sigma cut: n_sigma=3.0 aggressively removes far-edge "
-        "leaked mass (good for the Gaussian truth, which has no real mass "
-        "there) but also removes some of the *genuine* heavy tail these "
-        "truths have (student_t_h4 has true kurtosis=2.82; the truncation "
-        "itself flattens the fitted LOSVD's tail, which is exactly what "
-        "produces under-coverage). So this is a real, only-partial fix: "
-        "it eliminates the 'even a Gaussian is biased' finding but leaves "
-        "the harder shrinkage-vs-heavy-tail problem open for kurtosis on "
-        "non-Gaussian truths. See analysis.py's compute_summary docstring "
-        "and PLAN.md sec 1.3 for the full numbers. strict=False: if a "
-        "future improvement (e.g. an n_sigma schedule, adaptive per-truth "
-        "cut, or a different tail-suppression approach) resolves the "
-        "remaining student_t_h4/bimodal failures too, this test will show "
-        "as an unexpected pass (XPASS) rather than silently staying green "
-        "-- remove this marker then."
-    ),
-    strict=False,
+_RW1_XFAIL_REASON = (
+    "Partially fixed, still red. compute_summary() now accepts "
+    "n_sigma_truncate (analysis.truncate_pdf_samples), applied here with "
+    "n_sigma_truncate=3.0, to suppress RW1 tail-leakage mass in the raw "
+    "posterior samples before moments are computed. This resolves the "
+    "originally catastrophic Gaussian-truth kurtosis bug (coverage "
+    "0.000 -> 0.840 over n_real=25, well inside the nominal band) and "
+    "also brings skew_normal_h3.kurtosis into band (0.000 -> 0.800). "
+    "BUT it does not fix -- and does not clearly improve -- kurtosis "
+    "coverage for the two genuinely heavy-tailed/multimodal truths: "
+    "student_t_h4.kurtosis stayed at 0.000 (0/25, previously 0.120 "
+    "pre-truncation) and bimodal_counter_rotation.kurtosis stayed at "
+    "0.080 (2/25, previously 0.040). This is the expected trade-off of "
+    "a fixed n_sigma cut: n_sigma=3.0 aggressively removes far-edge "
+    "leaked mass (good for the Gaussian truth, which has no real mass "
+    "there) but also removes some of the *genuine* heavy tail these "
+    "truths have (student_t_h4 has true kurtosis=2.82; the truncation "
+    "itself flattens the fitted LOSVD's tail, which is exactly what "
+    "produces under-coverage). So this is a real, only-partial fix: "
+    "it eliminates the 'even a Gaussian is biased' finding but leaves "
+    "the harder shrinkage-vs-heavy-tail problem open for kurtosis on "
+    "non-Gaussian truths. See analysis.py's compute_summary docstring "
+    "and PLAN.md sec 1.3 for the full numbers. strict=False: if a "
+    "future improvement (e.g. an n_sigma schedule, adaptive per-truth "
+    "cut, or a different tail-suppression approach) resolves the "
+    "remaining student_t_h4/bimodal failures too, this test will show "
+    "as an unexpected pass (XPASS) rather than silently staying green "
+    "-- remove this marker then. This xfail is scoped to prior='rw1' only "
+    "-- 'gaussian_core' is expected to pass outright since fixing the "
+    "root cause (flat prior null space) is the point of this plan."
 )
-def test_coverage_over_mock_realisations():
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize(
+    "prior",
+    [
+        pytest.param(
+            "rw1", marks=pytest.mark.xfail(reason=_RW1_XFAIL_REASON, strict=False)
+        ),
+        "gaussian_core",
+    ],
+)
+def test_coverage_over_mock_realisations(prior):
     rng = np.random.default_rng(20260803)
     truths = _make_truths()
 
@@ -286,10 +307,10 @@ def test_coverage_over_mock_realisations():
     soft_warnings = []
 
     for truth in truths:
-        true_vals, hits, n_ok = _run_coverage(truth, N_REAL, rng)
+        true_vals, hits, n_ok = _run_coverage(truth, N_REAL, rng, prior=prior)
         assert n_ok == N_REAL, f"{truth['name']}: not all realisations fit successfully"
 
-        report_lines.append(f"\n=== {truth['name']} (n_real={N_REAL}) ===")
+        report_lines.append(f"\n=== {truth['name']} [{prior}] (n_real={N_REAL}) ===")
         report_lines.append(
             "true values: " + ", ".join(f"{m}={true_vals[m]:.4f}" for m in METRICS)
         )
