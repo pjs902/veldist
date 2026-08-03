@@ -34,10 +34,18 @@ Suggested execution order is the table at the end of that file.
   posterior calibration. Neither pools information across spatial bins.
   They do explain our coverage table as expected rather than anomalous:
   student_t (h4>0) 0.000 at N=150 is 13x short of their required sample.
-  **Near-term stance: target N=200 per bin.** That matches the published
-  baseline and is cheap — 30k spectra still gives ~150 Voronoi bins across
-  r_h, far more than the 27 apertures of van de Ven et al. Beating it is a
-  research question, addressed by the hierarchical item below.
+  **The sharp version:** Sanders & Evans note the uncertainty on h3/h4 for
+  small samples is ≈ (2N)^(−1/2). Against our targets h3 ≈ 0.066, h4 ≈ 0.051
+  that gives, per bin: N=150 → 1.1σ/0.9σ, N=200 → 1.3σ/1.0σ, N=250 →
+  1.5σ/1.1σ, N=2000 → 4.2σ/3.2σ. So a per-bin h3 is a **~1σ measurement at
+  any affordable N**, and 150 → 200 buys 15% in significance, not a
+  qualitative change. A correctly calibrated posterior should be returning
+  h3 ≈ 0.07 ± 0.06 per bin; ours returns far tighter, centred near zero.
+  **Near-term stance: target N=200 per bin.** Matches the published baseline,
+  and is cheap — 30k spectra still gives ~150 Voronoi bins across r_h, far
+  more than the 27 apertures of van de Ven et al. A calibrated 1σ-per-bin
+  result is a respectable product because ~150–200 bins constrain the *map*
+  far better than any bin constrains itself; see the hierarchical item below.
   See `docs/superpowers/specs/2026-08-03-path-forward.md`.
 
 - **[P2] Hierarchical spatial pooling — the route to beating the baseline**
