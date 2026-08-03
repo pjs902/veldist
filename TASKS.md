@@ -6,21 +6,26 @@ Suggested execution order is the table at the end of that file.
 ## Now
 
 - **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
-  The Gaussian-core prior fixes the kurtosis bias for Gaussian truths and the
-  skewed-shoulder LOSVD is now recovered (kurtosis z-score < 3, was 199.82).
-  But kurtosis coverage for Student-t(ν=6) and bimodal truths remains low even
-  with the new prior:
-  - Student-t kurtosis: 0.040 (improved from 0.000 pre-fix, but still below
-    catastrophic floor 0.30)
-  - Bimodal kurtosis: 0.320 (improved from 0.080, now above catastrophic floor
-    but below nominal binom band)
-  - Skew-normal kurtosis/skewness: 0.000 (the posterior credible intervals
-    never contain the true skew-normal shape at N=150, n_bins=20)
-  Whether this is a genuinely irreducible finite-data limitation or a separate
-  model deficit (e.g. insufficient grid resolution, the N=150 sample size)
-  is an open question. The earlier claim that it was "irreducible" has been
-  withdrawn, since that diagnosis was made with an inert deviation term
-  (SD ~0.0036) that could not respond to any non-Gaussian truth.
+  The RW3 deviation scaling fix improved coverage broadly but did not close it.
+  `test_coverage_over_mock_realisations[gaussian_core]` still fails, as it did
+  on `main` before the fix — this is not a regression. Both columns below are
+  measured; full table in `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
+  - Skew-normal skewness and kurtosis: 0.000 → 0.000, still 0/25. The
+    credible intervals never contain the truth, and the finite-sample
+    achievable skewness at N=150 is 0.811 vs a true 0.851, so this is not an
+    estimator artefact. **This is the sharpest open question** — it is the one
+    result the scaling fix was expected to move and did not.
+  - Student-t kurtosis: 0.000 → 0.040, still below the 0.30 catastrophic
+    floor; tail_weight 0.120 → 0.160. True excess kurtosis 2.82 vs achievable
+    1.18 at N=150, so about half this gap is the estimator, not the model.
+  - Bimodal kurtosis: 0.000 → 0.320, now above the floor but below the nominal
+    band. Bimodal tail_weight went 0.000 → 1.000.
+  The earlier claim that this was an "irreducible finite-data limitation" has
+  been withdrawn: that diagnosis was made with an inert deviation term
+  (SD ~0.0036) that could not respond to any non-Gaussian truth. What replaces
+  it is not a new diagnosis — the cause is genuinely not yet known. Note that
+  the Gaussian truth's kurtosis coverage was 1.000 both before and after, so
+  that row is evidence for nothing in either direction.
 
 - **[P1] 2D solver: §3.5 deferred items** (`PLAN.md` §3.5)
   `KinematicSolver2D` is now feature-complete for "minimally working" per
@@ -47,8 +52,9 @@ Suggested execution order is the table at the end of that file.
   `Exponential` PC prior. The deviation's marginal SD went from ~0.0036 to
   ~1.0, making non-Gaussian LOSVDs visible to the likelihood. The skewed-
   shoulder recovery test (`test_skewed_shoulder_distribution_recovery`) now
-  passes (kurtosis z-score < 3, was 199.82). Coverage for heavy-tailed truths
-  improved but remains below nominal — see the open item above.
+  passes (kurtosis z-score < 3, was 199.82). Coverage improved on nine metrics
+  and regressed on none, but remains below nominal for the heavy-tailed and
+  skewed truths — see the open item above.
 
 - Gaussian-null-space (RW3) prior (P0, `docs/superpowers/plans/2026-08-03-gaussian-null-space-prior.md`):
   Added `generate_gaussian_core_curve` (free Gaussian core + triple-integrated

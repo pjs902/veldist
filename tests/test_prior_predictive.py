@@ -113,7 +113,8 @@ def test_gaussian_core_prior_is_not_uniform(n_bins):
 
     degenerate_fraction = float(np.mean(sigma[finite] < GRID_WIDTH / n_bins))
     assert degenerate_fraction < 0.25, (
-        f"n_bins={n_bins}: {degenerate_fraction:.1%} of prior draws put all " "their mass within a single bin"
+        f"n_bins={n_bins}: {degenerate_fraction:.1%} of prior draws put all "
+        "their mass within a single bin"
     )
 
 
@@ -208,7 +209,8 @@ def test_gaussian_core_deviation_is_orthogonal_to_quadratics():
     basis = np.stack([np.ones_like(u), u, u**2], axis=1)
     projection = basis @ np.linalg.lstsq(basis, curve, rcond=None)[0]
     assert np.max(np.abs(projection)) < 1e-5 * max(1.0, np.max(np.abs(curve))), (
-        "deviation term has a non-zero projection onto {1, u, u^2}; the QR " "projection is not working"
+        "deviation term has a non-zero projection onto {1, u, u^2}; the QR "
+        "projection is not working"
     )
 
 

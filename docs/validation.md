@@ -61,15 +61,27 @@ Gaussian trivially satisfied the Gaussian-truth bias thresholds.
 **Coverage** (`tests/test_coverage.py`, `n_real=25` per truth, `n_stars=150`,
 `n_bins=20`, four truths: Gaussian, Student-$t$ ($\nu=6$), skew-normal,
 counter-rotating bimodal): parametrised over both priors. For the
-**Gaussian-core prior** (without truncation), the Gaussian truth shows
-over-coverage in kurtosis (1.000, all 25/25 intervals contain the truth) —
-the error bars are conservative but valid. Skewness is also over-covered at
-0.960. The non-Gaussian truths still show under-coverage in kurtosis and
-tail_weight, though improved from the pre-fix baseline (e.g. bimodal kurtosis
-0.320, up from 0.080). The earlier attribution in this document to "an inherent
-finite-data limitation, not the flat-null-space bug" is withdrawn: that
-diagnosis was made with an inert deviation term and cannot be supported. The
-true cause of residual under-coverage remains an open question. For the **RW1
+**Gaussian-core prior** (without truncation) this test currently **fails**, and
+also failed before the RW3 scaling fix — it is a standing known-red result, not
+a regression, and is marked `xfail(strict=False)` so that a genuine improvement
+shows up as an XPASS.
+
+The Gaussian truth shows over-coverage in kurtosis (1.000, all 25/25 intervals
+contain the truth) and skewness (0.960); the error bars are conservative but
+valid. This row is not evidence about the deviation term either way — kurtosis
+coverage was also 1.000 *before* the fix, because a posterior collapsed onto a
+Gaussian covers a Gaussian truth perfectly.
+
+The non-Gaussian truths still show under-coverage in kurtosis and tail_weight.
+Measured pre-fix → post-fix: bimodal kurtosis 0.000 → 0.320 and bimodal
+tail_weight 0.000 → 1.000 (both out of catastrophic failure); Student-$t$
+kurtosis 0.000 → 0.040 (still below the 0.30 floor); skew-normal skewness and
+kurtosis 0.000 → 0.000 (unchanged). The earlier attribution in this document to
+"an inherent finite-data limitation, not the flat-null-space bug" is withdrawn:
+that diagnosis was made with an inert deviation term and cannot be supported.
+The cause of the residual under-coverage — the skew-normal case above all — is
+an open question. Full table in
+`docs/superpowers/plans/2026-08-03-rw3-measurements.md`. For the **RW1
 prior**, `n_sigma_truncate=3.0` is applied (see `analysis.truncate_pdf_samples`);
 the test remains marked `xfail` pending a better tail-handling approach for
 heavy-tailed truths. See `PLAN.md` §1.3 for numbers.
