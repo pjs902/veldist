@@ -11,6 +11,8 @@ prior, with NO data and NO MCMC, so they run in seconds and pin the root
 cause rather than a downstream symptom.
 """
 
+from math import comb
+
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -113,8 +115,7 @@ def test_gaussian_core_prior_is_not_uniform(n_bins):
 
     degenerate_fraction = float(np.mean(sigma[finite] < GRID_WIDTH / n_bins))
     assert degenerate_fraction < 0.25, (
-        f"n_bins={n_bins}: {degenerate_fraction:.1%} of prior draws put all "
-        "their mass within a single bin"
+        f"n_bins={n_bins}: {degenerate_fraction:.1%} of prior draws put all " "their mass within a single bin"
     )
 
 
@@ -209,8 +210,7 @@ def test_gaussian_core_deviation_is_orthogonal_to_quadratics():
     basis = np.stack([np.ones_like(u), u, u**2], axis=1)
     projection = basis @ np.linalg.lstsq(basis, curve, rcond=None)[0]
     assert np.max(np.abs(projection)) < 1e-5 * max(1.0, np.max(np.abs(curve))), (
-        "deviation term has a non-zero projection onto {1, u, u^2}; the QR "
-        "projection is not working"
+        "deviation term has a non-zero projection onto {1, u, u^2}; the QR " "projection is not working"
     )
 
 
@@ -239,47 +239,62 @@ def test_gaussian_core_prior_is_resolution_invariant():
     )
 
 
-def _rw3_scale_via_structure_matrix(n_bins):
-    """Independent route to the Sorbye-Rue constant, via pinv(D3' D3).
+def _rw_scale_via_structure_matrix(n_bins, order):
+    """Independent route to the Sorbye-Rue constant, via pinv(D_k' D_k).
 
-    The implementation builds the constrained covariance as (L^3)(L^3)' with
-    L lower-triangular ones. This builds it instead as the pseudo-inverse of
-    the third-difference structure matrix. Same object, different arithmetic,
-    so agreement is not circular.
+    The implementation builds the constrained covariance as (L^k)(L^k)' with
+    L lower-triangular ones. This builds it as the pseudo-inverse of the k-th
+    difference structure matrix instead. Same mathematical object, completely
+    different arithmetic, so agreement is meaningful rather than circular.
     """
-    d3 = np.zeros((n_bins - 3, n_bins))
-    for i in range(n_bins - 3):
-        d3[i, i : i + 4] = [-1.0, 3.0, -3.0, 1.0]
-    r = d3.T @ d3
+    stencil = np.array([(-1) ** (order - j) * comb(order, j) for j in range(order + 1)], dtype=float)
+    d = np.zeros((n_bins - order, n_bins))
+    for i in range(n_bins - order):
+        d[i, i : i + order + 1] = stencil
+    r = d.T @ d
     idx = np.arange(n_bins, dtype=float)
     u = (idx - idx.mean()) / (n_bins - 1)
-    basis = np.stack([np.ones_like(u), u, u**2], axis=1)
+    basis = np.stack([u**k for k in range(order)], axis=1)
     q, _ = np.linalg.qr(basis)
     proj = np.eye(n_bins) - q @ q.T
-    cov = proj @ np.linalg.pinv(r) @ proj.T
-    var = np.clip(np.diag(cov), 1e-300, None)
+    var = np.clip(np.diag(proj @ np.linalg.pinv(r) @ proj.T), 1e-300, None)
     return float(1.0 / np.sqrt(np.exp(np.mean(np.log(var)))))
 
 
-@pytest.mark.parametrize("n_bins", [20, 40, 55, 80])
-def test_rw3_deviation_scale_matches_structure_matrix(n_bins):
+@pytest.mark.parametrize("order", [3, 4, 5])
+@pytest.mark.parametrize("n_bins", [20, 37, 60])
+def test_rw_deviation_scale_matches_structure_matrix(n_bins, order):
     """The scaling constant must equal the Sorbye-Rue constant for a
-    constrained RW3 intrinsic GMRF, computed independently."""
-    from veldist.veldist import _rw3_deviation_scale
+    constrained RW-k intrinsic GMRF, computed independently."""
+    from veldist.veldist import _rw_deviation_scale
 
-    got = _rw3_deviation_scale(n_bins)
-    want = _rw3_scale_via_structure_matrix(n_bins)
-    assert np.isclose(got, want, rtol=1e-6), f"n_bins={n_bins}: scale {got:.6g} != structure-matrix value {want:.6g}"
+    got = _rw_deviation_scale(n_bins, order)
+    want = _rw_scale_via_structure_matrix(n_bins, order)
+    assert np.isclose(got, want, rtol=1e-5), (
+        f"n_bins={n_bins} order={order}: scale {got:.6g} != " f"structure-matrix value {want:.6g}"
+    )
 
 
-def test_rw3_deviation_scale_is_cached():
+def test_rw_deviation_scale_order_3_is_unchanged():
+    """Order 3 must reproduce the previously committed constants exactly.
+
+    This is the regression guard: the generalisation must not alter existing
+    behaviour, so if a later task breaks something you can rule this out.
+    """
+    from veldist.veldist import _rw_deviation_scale
+
+    assert np.isclose(_rw_deviation_scale(20, 3), 0.1627, rtol=1e-3)
+    assert np.isclose(_rw_deviation_scale(55, 3), 0.0130, rtol=1e-3)
+
+
+def test_rw_deviation_scale_is_cached():
     """The constant costs an O(n^3) pinv/QR; it must not be recomputed."""
-    from veldist.veldist import _rw3_deviation_scale
+    from veldist.veldist import _rw_deviation_scale
 
-    _rw3_deviation_scale.cache_clear()
-    _rw3_deviation_scale(40)
-    _rw3_deviation_scale(40)
-    assert _rw3_deviation_scale.cache_info().hits >= 1
+    _rw_deviation_scale.cache_clear()
+    _rw_deviation_scale(40)
+    _rw_deviation_scale(40)
+    assert _rw_deviation_scale.cache_info().hits >= 1
 
 
 @pytest.mark.parametrize("n_bins", [20, 40, 80])

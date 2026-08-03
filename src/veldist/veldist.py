@@ -184,30 +184,37 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
 
 
 @lru_cache(maxsize=None)
-def _rw3_deviation_scale(n_bins):
-    """Sorbye-Rue scaling constant for the constrained RW3 deviation.
+def _rw_deviation_scale(n_bins, order=3):
+    """Sorbye-Rue scaling constant for the constrained RW-k deviation.
 
     Returns the factor that makes the generalised variance -- the geometric
-    mean of the per-bin marginal variances -- of the projected triple-
-    integrated random walk equal to 1. Multiplying ``sigma3`` by this
-    constant makes ``sigma3`` mean "marginal standard deviation of the
-    non-Gaussian deviation, in log-density units", independent of grid
-    resolution. This is the standard treatment for intrinsic GMRFs
-    (Sorbye & Rue 2014, Spatial Statistics 8, 39; ``scale.model=TRUE`` in
-    R-INLA).
+    mean of the per-bin marginal variances -- of the projected k-fold
+    integrated random walk equal to 1, so that ``sigma3`` means "typical
+    log-density departure from the null space", independent of grid
+    resolution (Sorbye & Rue 2014, Spatial Statistics 8, 39; this is what
+    ``scale.model=TRUE`` does in R-INLA).
 
-    Depends only on ``n_bins``: the normalised coordinate ``u`` removes all
-    dependence on the physical grid, and ``setup_grid`` is always uniform.
-    Cached because it costs an O(n^3) QR and matrix product, and because it
-    is evaluated at JAX trace time where the result is constant-folded.
+    ``order`` sets the null space, and the null space is what the prior does
+    NOT shrink:
+
+    - order 3: null space {1, u, u^2}, i.e. quadratic log-densities.
+      Gaussians are unpenalised, so v and sigma are free, but h3 and h4 are
+      shrunk -- they are the first things inside the penalised space.
+    - order 4: adds u^3. Skewness becomes free.
+    - order 5: adds u^4. Skewness and kurtosis are both free, and the penalty
+      suppresses only structure beyond fourth order.
+
+    Depends only on ``n_bins`` and ``order``. Cached because it costs an
+    O(n^3) QR and matrix product and is evaluated at JAX trace time, where
+    the result is constant-folded into the compiled model.
     """
     idx = np.arange(n_bins, dtype=float)
     u = (idx - idx.mean()) / (n_bins - 1)
-    basis = np.stack([np.ones_like(u), u, u**2], axis=1)
+    basis = np.stack([u**k for k in range(order)], axis=1)
     q, _ = np.linalg.qr(basis)
     proj = np.eye(n_bins) - q @ q.T
     lo = np.tril(np.ones((n_bins, n_bins)))
-    a = lo @ lo @ lo  # triple-cumsum operator
+    a = np.linalg.matrix_power(lo, order)  # k-fold cumulative-sum operator
     var = np.clip(np.diag(proj @ (a @ a.T) @ proj.T), 1e-300, None)
     return float(1.0 / np.sqrt(np.exp(np.mean(np.log(var)))))
 
@@ -323,7 +330,7 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
     core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
 
     # --- penalised non-Gaussian deviation ---
-    sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw3_deviation_scale(N_bins)
+    sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw_deviation_scale(N_bins, 3)
     d3 = numpyro.sample("d3", dist.Normal(0.0, 1.0).expand([N_bins]).to_event(1))
     w = jnp.cumsum(jnp.cumsum(jnp.cumsum(d3 * sigma3)))
 
