@@ -5,6 +5,31 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
+**Validation campaign plan:** `docs/superpowers/plans/2026-08-03-validation-campaign.md`
+(8 tasks: penalty order RW3/4/5, per-bin LOSVD calibration, map-level bias,
+SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
+
+- **[P0] The sigma=7 bins fail at every prior strength**
+  Corrected-profile sweep, n_real=25, four Exponential rates from 2.303 to
+  0.20 (a 12x span in prior scale):
+
+  | sigma | in-band /45 | catastrophic | h3/h4 in-band /6 |
+  |---|---|---|---|
+  | 22 | 33 → 40 | 7 → 1 | 1 → 4 |
+  | **7** | **22 → 23** | **16 → 11** | **0 → 0** |
+
+  At sigma=22 loosening helps steadily. At sigma=7 nothing moves: every h3/h4
+  entry stays 0.00–0.36, and in-band goes 22→23 out of 45. Efficiency is ~1
+  throughout (0.91–0.93 on the mean, 1.08–1.23 on sigma), so this is not an
+  information-loss problem — the posterior is confidently wrong, not noisy.
+  Two candidate causes with different remedies: only 30% of the shared grid
+  carries mass at sigma=7, and err/sigma is 0.36 there versus 0.11 at
+  sigma=22 (the dwarf-spheroidal regime, per Amorisco & Evans 2012).
+  **Task 7 of the campaign separates them before any regularisation is
+  adopted** — if it is the grid, the remedy is per-bin fitting with
+  aggregation onto the shared output grid; if it is err/sigma, there is no
+  remedy and the map must be reported with the limitation stated.
+
 - **[P0] SBC regression from the RW3 scaling fix** (`tests/test_calibration.py`)
   `test_sbc_calibration[gaussian_core]` passes on `main` and **fails on
   `fix/rw3-deviation-scaling`**: 2/30 simulations fail (NaN posterior, sampler
