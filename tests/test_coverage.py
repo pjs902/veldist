@@ -293,6 +293,12 @@ def test_coverage_over_mock_realisations():
         report_lines.append(
             "true values: " + ", ".join(f"{m}={true_vals[m]:.4f}" for m in METRICS)
         )
+        achievable = _achievable_moments(truth["rvs"], N_STARS)
+        report_lines.append(
+            "  finite-sample achievable (median of sample estimator at "
+            f"N={N_STARS}): "
+            + ", ".join(f"{m}={achievable[m]:.3f}" for m in METRICS)
+        )
         report_lines.append(f"nominal-coverage binom({N_REAL},0.68) 99% band: [{band_lo:.3f}, {band_hi:.3f}]")
 
         for m in METRICS:
@@ -337,3 +343,62 @@ def test_coverage_over_mock_realisations():
         pytest.fail(failure_msg)
 
     print(report)
+
+
+def _achievable_moments(rvs, n_stars, n_trials=2000, seed=7):
+    """Median of the *sample* moment estimators over `n_trials` draws of
+    `n_stars` stars.
+
+    Population moments are not always reachable from a finite sample. The
+    sample excess-kurtosis estimator in particular is severely biased low
+    for heavy-tailed distributions: 150 draws from Student-t(df=6) have a
+    median sample excess kurtosis of ~1.16 against a population value of
+    3.0, with a 16-84% range of [0.33, 3.01]. Comparing a fit from 150 stars
+    against 3.0 therefore demands something the data cannot deliver, and
+    attributes an estimator property to the model as if it were a bias.
+
+    Returns the same keys as `_true_moments` so the two can be compared
+    directly.
+    """
+    rng = np.random.default_rng(seed)
+    acc = {m: np.empty(n_trials) for m in METRICS}
+    for t in range(n_trials):
+        v = rvs(n_stars, rng)
+        mean = v.mean()
+        d = v - mean
+        var = (d ** 2).mean()
+        sigma = np.sqrt(var)
+        acc["v_mean"][t] = mean
+        acc["sigma"][t] = sigma
+        acc["skewness"][t] = (d ** 3).mean() / sigma ** 3
+        acc["kurtosis"][t] = (d ** 4).mean() / var ** 2 - 3.0
+        acc["tail_weight"][t] = np.mean(np.abs(d) > sigma)
+    return {m: float(np.median(acc[m])) for m in METRICS}
+
+
+def test_population_kurtosis_is_unreachable_for_heavy_tailed_truths():
+    """Guards the reasoning behind `_achievable_moments`.
+
+    If this ever fails, the finite-sample argument recorded in PLAN.md
+    section 1.3 no longer holds and the coverage expectations for
+    student_t_h4 need re-deriving.
+    """
+    truths = {t["name"]: t for t in _make_truths()}
+
+    gaussian = truths["gaussian"]
+    achievable = _achievable_moments(gaussian["rvs"], N_STARS)
+    population = _true_moments(gaussian["pdf"])
+    assert abs(achievable["kurtosis"] - population["kurtosis"]) < 0.25, (
+        "for a Gaussian truth the sample kurtosis estimator should be nearly "
+        f"unbiased at N={N_STARS}, got achievable={achievable['kurtosis']:.2f} "
+        f"vs population={population['kurtosis']:.2f}"
+    )
+
+    student = truths["student_t_h4"]
+    achievable = _achievable_moments(student["rvs"], N_STARS)
+    population = _true_moments(student["pdf"])
+    assert achievable["kurtosis"] < 0.6 * population["kurtosis"], (
+        "expected the sample kurtosis estimator to badly under-report the "
+        f"heavy tail at N={N_STARS}: achievable={achievable['kurtosis']:.2f}, "
+        f"population={population['kurtosis']:.2f}"
+    )
