@@ -20,24 +20,6 @@ Suggested execution order is the table at the end of that file.
   **Blocks calling this prior science-ready.** Numbers in
   `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
 
-- **[P1] Rotation gradient across a bin mimics tangential anisotropy**
-  Newly identified systematic, currently untested, and capable of manufacturing
-  exactly the signal we want to measure. Amorisco & Evans (2012) §2.3: "the
-  contribution of apparent rotation is degenerate with the signal produced by
-  tangential anisotropy" — a velocity gradient across an aperture convolves the
-  LOSVD with an arcsine kernel, giving flat-topped and then double-peaked
-  profiles, i.e. spurious negative h4.
-  ω Cen is exposed twice: real internal rotation at V/σ ≈ 0.5 peaking at 0.7
-  (van de Ven et al.), against AE12's finding that h4 is safe only up to
-  V_app/σ ≈ 0.7; and perspective rotation, which reaches 0.8 km/s across the
-  cluster (it spans ~2 full moons) and which van de Ven et al. had to remove
-  before the velocity fields even looked axisymmetric.
-  The induced flat-topping scales with the velocity gradient *within a bin*, so
-  finer bins reduce it — an independent second argument for N=150/~200 bins
-  over N=250/~120. **Add a truth that is an intrinsically Gaussian LOSVD
-  convolved with a within-bin rotation gradient and confirm we do not report it
-  as negative h4.**
-
 - **[P2] Efficiency check against the statistical optimum**
   Amorisco & Evans (2012) §3.3 show unbinned ML attains StD(μ) = 1/√N and
   StD(σ) = 1/√(2N), while *binned* Gauss-Hermite does not reach the latter —
@@ -226,6 +208,29 @@ Suggested execution order is the table at the end of that file.
   quantities), and has passed the §3.4 performance gate (see Completed).
   What's left: the explicitly-deferred §3.5 items (PM-axis marginalisation,
   3D, Dynamite 2D output format).
+
+## Considered and closed
+
+- **Within-bin rotation gradient faking tangential anisotropy — not a concern.**
+  Amorisco & Evans (2012) §2.3 note a velocity gradient across an aperture
+  convolves the LOSVD with an arcsine kernel, producing spurious flat-topping
+  that reads as negative h4, and that h4 is affected once V_app/σ ≳ 0.7. That
+  threshold is far away at our bin sizes. Taking ω Cen's inner rotation
+  gradient as ~1 km/s per arcmin (V ≈ 8 km/s at 8′, van de Ven et al.) against
+  σ ≈ 15 km/s, and 30k stars over r_h ≈ 4.65′:
+
+  | N/bin | bins | bin radius | ΔV across bin | V_app/σ | margin to 0.7 |
+  |---|---|---|---|---|---|
+  | 150 | 200 | 20″ | 0.66 km/s | 0.046 | 15× |
+  | 250 | 120 | 25″ | 0.85 km/s | 0.059 | 12× |
+  | 2000 | 15 | 72″ | 2.40 km/s | 0.166 | 4× |
+
+  Safe by 15× at the operating point, and still 4× at the coarse binning that
+  positive-h4 detection would need. Perspective rotation contributes ~0.03 km/s
+  across a bin (0.8 km/s over ~20′) and is negligible as a *shape* systematic —
+  it remains a correction to the mean velocity field, as van de Ven et al.
+  applied, but does not distort the within-bin LOSVD.
+  Recorded so this is not re-raised; revisit only if bins ever get much larger.
 
 ## Someday (long-term, not active)
 
