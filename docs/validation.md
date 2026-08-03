@@ -53,19 +53,36 @@ null space is quadratic, not flat. This is resolution-invariant to within
 (σ = 40 km/s, N = 150 stars, n_bins ∈ {20, 80}), the Gaussian-core prior
 shows |kurtosis bias| < 0.35 and |σ bias| < 3%, and the σ bias does not grow
 with bin count. The RW1 negative control still reproduces the known
-+1.1 kurtosis and +4% σ bias at n_bins = 80.
++1.1 kurtosis and +4% σ bias at n_bins = 80. Note that the pre-fix version of
+this result was uninformative for the non-Gaussian deviation: with the
+deviation term inert (marginal SD ~0.0036), a posterior collapsed onto a
+Gaussian trivially satisfied the Gaussian-truth bias thresholds.
 
 **Coverage** (`tests/test_coverage.py`, `n_real=25` per truth, `n_stars=150`,
 `n_bins=20`, four truths: Gaussian, Student-$t$ ($\nu=6$), skew-normal,
 counter-rotating bimodal): parametrised over both priors. For the
-**Gaussian-core prior** (without truncation), the Gaussian truth's σ, kurtosis,
-and tail_weight all have 1.000 empirical coverage (the intervals are
-conservative but valid). The non-Gaussian truths still show under-coverage in
-kurtosis and tail_weight — this is an inherent finite-data limitation, not the
-RW1 prior's flat-null-space bug. For the **RW1 prior**, `n_sigma_truncate=3.0`
-is applied (see `analysis.truncate_pdf_samples`); the test remains marked
-`xfail` pending a better tail-handling approach for heavy-tailed truths. See
-`PLAN.md` §1.3 for numbers.
+**Gaussian-core prior** (without truncation), the Gaussian truth shows
+over-coverage in kurtosis (1.000, all 25/25 intervals contain the truth) —
+the error bars are conservative but valid. Skewness is also over-covered at
+0.960. The non-Gaussian truths still show under-coverage in kurtosis and
+tail_weight, though improved from the pre-fix baseline (e.g. bimodal kurtosis
+0.320, up from 0.080). The earlier attribution in this document to "an inherent
+finite-data limitation, not the flat-null-space bug" is withdrawn: that
+diagnosis was made with an inert deviation term and cannot be supported. The
+true cause of residual under-coverage remains an open question. For the **RW1
+prior**, `n_sigma_truncate=3.0` is applied (see `analysis.truncate_pdf_samples`);
+the test remains marked `xfail` pending a better tail-handling approach for
+heavy-tailed truths. See `PLAN.md` §1.3 for numbers.
+
+**Non-Gaussian deviation prior** (`sigma3` in `generate_gaussian_core_curve`):
+the deviation scale is standardised via the Sørbye–Rue generalised-variance
+constant (Sørbye & Rue 2014, *Spatial Statistics* 8, 39–51), so `sigma3`
+directly means the typical log-density departure from a Gaussian LOSVD,
+independent of grid resolution. The prior on `sigma3` is a penalised-complexity
+(PC) prior (Simpson et al. 2017, *Statistical Science* 32, 1): an Exponential
+whose base model, `sigma3 = 0`, is an exactly Gaussian LOSVD. A prior-
+predictive check confirms the PC prior makes non-Gaussian LOSVDs with
+|excess kurtosis| p90 ≈ 1.36 reachable a priori.
 
 **Default prior**: as of commit 4b3bca2, `KinematicSolver.run()` defaults
 to `prior="gaussian_core"`. Pass `prior="rw1"` for the previous behaviour.

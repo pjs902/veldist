@@ -6,13 +6,21 @@ Suggested execution order is the table at the end of that file.
 ## Now
 
 - **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
-  The Gaussian-core prior (`prior="gaussian_core"`, now default) fixes the
-  kurtosis bias at source for Gaussian/mildly-skewed truths. But kurtosis
-  coverage for Student-t(df=6) and bimodal truths remains low even with the
-  new prior — this is now recognised as an irreducible finite-data limitation
-  at N=150, not the flat-null-space bug. A wider grid margin was tried and
-  made it worse; an adaptive/softer truncation is the remaining untried
-  direction. The test's RW1 xfail is retained for the old prior.
+  The Gaussian-core prior fixes the kurtosis bias for Gaussian truths and the
+  skewed-shoulder LOSVD is now recovered (kurtosis z-score < 3, was 199.82).
+  But kurtosis coverage for Student-t(ν=6) and bimodal truths remains low even
+  with the new prior:
+  - Student-t kurtosis: 0.040 (improved from 0.000 pre-fix, but still below
+    catastrophic floor 0.30)
+  - Bimodal kurtosis: 0.320 (improved from 0.080, now above catastrophic floor
+    but below nominal binom band)
+  - Skew-normal kurtosis/skewness: 0.000 (the posterior credible intervals
+    never contain the true skew-normal shape at N=150, n_bins=20)
+  Whether this is a genuinely irreducible finite-data limitation or a separate
+  model deficit (e.g. insufficient grid resolution, the N=150 sample size)
+  is an open question. The earlier claim that it was "irreducible" has been
+  withdrawn, since that diagnosis was made with an inert deviation term
+  (SD ~0.0036) that could not respond to any non-Gaussian truth.
 
 - **[P1] 2D solver: §3.5 deferred items** (`PLAN.md` §3.5)
   `KinematicSolver2D` is now feature-complete for "minimally working" per
@@ -32,6 +40,15 @@ Suggested execution order is the table at the end of that file.
   solver and export pipeline are both tested and stable
 
 ## Completed
+
+- RW3 deviation scaling fix (P0, `docs/superpowers/plans/2026-08-03-rw3-deviation-scaling.md`):
+  Replaced the ad-hoc `(bin_width/span)**2.5` scaling with Sørbye–Rue
+  generalised-variance standardisation and replaced `HalfNormal(1.0)` with an
+  `Exponential` PC prior. The deviation's marginal SD went from ~0.0036 to
+  ~1.0, making non-Gaussian LOSVDs visible to the likelihood. The skewed-
+  shoulder recovery test (`test_skewed_shoulder_distribution_recovery`) now
+  passes (kurtosis z-score < 3, was 199.82). Coverage for heavy-tailed truths
+  improved but remains below nominal — see the open item above.
 
 - Gaussian-null-space (RW3) prior (P0, `docs/superpowers/plans/2026-08-03-gaussian-null-space-prior.md`):
   Added `generate_gaussian_core_curve` (free Gaussian core + triple-integrated
