@@ -335,6 +335,43 @@ def test_gaussian_core_deviation_has_unit_marginal_sd(n_bins):
     )
 
 
+@pytest.mark.parametrize("rw_order", [3, 4, 5])
+def test_gaussian_core_null_space_is_polynomial_of_degree_order_minus_one(rw_order):
+    import jax
+    from numpyro.handlers import seed, substitute
+
+    from veldist.veldist import generate_gaussian_core_curve
+
+    n_bins = 37
+    centers, bin_width = _grid(n_bins)
+    rng = np.random.default_rng(3)
+    fixed = {
+        "v0": GRID_CENTER,
+        "s0": 1e8,
+        "sigma3": 1.0,
+        "d3": rng.normal(size=n_bins),
+    }
+    model_fn = substitute(seed(generate_gaussian_core_curve, jax.random.PRNGKey(0)), data=fixed)
+    curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width, rw_order=rw_order))
+
+    u = (centers - centers.mean()) / (centers.max() - centers.min())
+    scale = max(1.0, np.max(np.abs(curve)))
+
+    inside = np.stack([u**k for k in range(rw_order)], axis=1)
+    coef = np.linalg.lstsq(inside, curve, rcond=None)[0]
+    assert np.max(np.abs(inside @ coef)) < 1e-4 * scale, (
+        f"order {rw_order}: deviation has a non-zero projection onto "
+        f"polynomials of degree < {rw_order}; the QR projection is wrong"
+    )
+
+    resid = curve - inside @ coef
+    outside = (u**rw_order)[:, None]
+    coef_next = np.linalg.lstsq(outside, resid, rcond=None)[0]
+    assert np.max(np.abs(outside @ coef_next)) > 1e-3 * scale, (
+        f"order {rw_order}: deviation has no component along u^{rw_order}; " "the null space is larger than intended"
+    )
+
+
 def test_gaussian_core_prior_spans_nongaussian_shapes():
     """The PC prior must make non-Gaussian LOSVDs reachable a priori.
 

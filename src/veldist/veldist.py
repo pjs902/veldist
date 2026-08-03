@@ -219,7 +219,17 @@ def _rw_deviation_scale(n_bins, order=3):
     return float(1.0 / np.sqrt(np.exp(np.mean(np.log(var)))))
 
 
-def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
+def _legendre_basis(u, order):
+    x = 2.0 * u / jnp.max(jnp.abs(u))
+    cols = [jnp.ones_like(x)]
+    if order > 1:
+        cols.append(x)
+    for k in range(1, order - 1):
+        cols.append(((2 * k + 1) * x * cols[k] - k * cols[k - 1]) / (k + 1))
+    return jnp.stack(cols[:order], axis=1)
+
+
+def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
     """
     Generate a latent log-density curve whose smoothness prior has a
     *Gaussian* null space rather than a flat one.
@@ -330,14 +340,15 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0):
     core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
 
     # --- penalised non-Gaussian deviation ---
-    sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw_deviation_scale(N_bins, 3)
+    sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw_deviation_scale(N_bins, rw_order)
     d3 = numpyro.sample("d3", dist.Normal(0.0, 1.0).expand([N_bins]).to_event(1))
-    w = jnp.cumsum(jnp.cumsum(jnp.cumsum(d3 * sigma3)))
+    w = d3 * sigma3
+    for _ in range(rw_order):
+        w = jnp.cumsum(w)
 
-    # Project out {1, u, u^2} in a well-conditioned coordinate.
+    # Project out the null space: polynomials of degree < rw_order.
     u = (centers - mid) / span
-    basis = jnp.stack([jnp.ones_like(u), u, u**2], axis=1)
-    q, _ = jnp.linalg.qr(basis)
+    q, _ = jnp.linalg.qr(_legendre_basis(u, rw_order))
     deviation = w - q @ (q.T @ w)
 
     return core + deviation
@@ -405,7 +416,7 @@ def model(matrix, n_bins, bin_width=1.0):
     numpyro.factor("obs_log_lik", log_prob)
 
 
-def model_gaussian_core(matrix, n_bins, centers, bin_width=1.0):
+def model_gaussian_core(matrix, n_bins, centers, bin_width=1.0, rw_order=3):
     """
     NumPyro model using the Gaussian-null-space prior.
 
@@ -430,7 +441,7 @@ def model_gaussian_core(matrix, n_bins, centers, bin_width=1.0):
     None
         Defines the probabilistic graph; has no return value.
     """
-    latent_curve = generate_gaussian_core_curve(n_bins, centers, bin_width)
+    latent_curve = generate_gaussian_core_curve(n_bins, centers, bin_width, rw_order)
     intrinsic_pdf = jax.nn.softmax(latent_curve)
     numpyro.deterministic("intrinsic_pdf", intrinsic_pdf)
 
@@ -533,7 +544,7 @@ class KinematicSolver:
         self.matrix = precompute_design_matrix(vel, err, self.grid["centers"], bin_width=self.grid["width"])
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="gaussian_core"):
+    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="gaussian_core", rw_order=3):
         """
         Run the NUTS sampler.
 
@@ -590,6 +601,7 @@ class KinematicSolver:
         if prior == "gaussian_core":
             model_fn = model_gaussian_core
             model_kwargs["centers"] = jnp.asarray(self.grid["centers"])
+            model_kwargs["rw_order"] = rw_order
         else:
             model_fn = model
 
