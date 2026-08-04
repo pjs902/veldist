@@ -3,7 +3,9 @@
 import numpy as np
 import pytest
 
-from veldist.veldist import KinematicSolver
+from veldist.veldist import NUM_CHAINS, KinematicSolver
+
+NUM_SAMPLES = 100
 
 
 def _fitted_solver(prior, n_bins=20, seed=3):
@@ -13,7 +15,7 @@ def _fitted_solver(prior, n_bins=20, seed=3):
     solver = KinematicSolver()
     solver.setup_grid(center=200.0, width=400.0, n_bins=n_bins)
     solver.add_data(vel, err)
-    solver.run(num_warmup=100, num_samples=100, seed=seed, prior=prior)
+    solver.run(num_warmup=100, num_samples=NUM_SAMPLES, seed=seed, prior=prior)
     return solver
 
 
@@ -22,7 +24,8 @@ def _fitted_solver(prior, n_bins=20, seed=3):
 def test_run_accepts_both_priors(prior):
     solver = _fitted_solver(prior)
     pdf = np.asarray(solver.samples["intrinsic_pdf"])
-    assert pdf.shape == (100, 20)
+    # Total draws = num_samples * num_chains (default NUM_CHAINS=4).
+    assert pdf.shape == (NUM_SAMPLES * NUM_CHAINS, 20)
     np.testing.assert_allclose(pdf.sum(axis=1), 1.0, rtol=1e-5)
 
 

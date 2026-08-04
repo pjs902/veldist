@@ -40,12 +40,16 @@ def test_full_inference_workflow():
     solver.add_data(vel=observed_velocities, err=obs_errors)
 
     # Run inference with minimal sampling for speed
-    samples = solver.run(num_warmup=50, num_samples=50, gpu=False)
+    num_samples = 50
+    samples = solver.run(num_warmup=50, num_samples=num_samples, gpu=False)
 
     # Check that we got samples
     assert samples is not None
     assert "intrinsic_pdf" in samples
-    assert samples["intrinsic_pdf"].shape == (50, 30)
+    # Total draws = num_samples * num_chains (default NUM_CHAINS=4).
+    from veldist.veldist import NUM_CHAINS
+
+    assert samples["intrinsic_pdf"].shape == (num_samples * NUM_CHAINS, 30)
 
     # Check that samples are valid probabilities
     assert np.all(samples["intrinsic_pdf"] >= 0)
@@ -404,11 +408,15 @@ def test_convergence_diagnostics():
     solver = KinematicSolver()
     solver.setup_grid(center=0.0, width=80.0, n_bins=40)
     solver.add_data(vel=data["observed_velocities"], err=data["errors"])
-    samples = solver.run(num_warmup=500, num_samples=1000, gpu=False)
+    num_samples = 1000
+    samples = solver.run(num_warmup=500, num_samples=num_samples, gpu=False)
 
     # Check basic properties
     assert "intrinsic_pdf" in samples
-    assert samples["intrinsic_pdf"].shape == (1000, 40)
+    # Total draws = num_samples * num_chains (default NUM_CHAINS=4).
+    from veldist.veldist import NUM_CHAINS
+
+    assert samples["intrinsic_pdf"].shape == (num_samples * NUM_CHAINS, 40)
 
     # Each sample should be valid probabilities
     assert np.all(samples["intrinsic_pdf"] >= 0)
