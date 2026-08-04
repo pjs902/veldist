@@ -31,11 +31,15 @@ order hypothesis was not supported — see the null-space measurements doc):
 | in-band /45 | 23/45 | 24/45 |
 | catastrophic | 13 | 14 |
 | h3 coverage (skew_normal) | 0.200 | 0.210 |
-| sampler runtime | 1173 s | **32590 s** |
 
 Coverage is essentially identical at σ=7, confirming the problem is structural
-(empty grid), not a tuning issue. Runtime is not identical: Exp(0.20) took 28×
-longer for the same coverage.
+(empty grid), not a tuning issue.
+
+**Ignore the wall-clock runtimes in the campaign log.** The machine slept
+mid-run, so the 32590 s recorded for Exp(0.20) at σ=7 is elapsed time, not
+sampler time, and none of the four timings are comparable. If sampler cost ever
+becomes a tiebreaker between priors, measure it with num_steps / divergences per
+chain rather than wall clock.
 
 Raw campaign output: `2026-08-03-regularisation-campaign-log.txt` (this
 directory). Per-realisation JSON was written to `/tmp/campaign_results/` and is
@@ -50,10 +54,10 @@ Rationale:
 - Both candidates are effectively tied at σ=22 (41/45 in-band, 1 catastrophic).
   Exp(0.20) has marginally better h3 coverage (0.430 vs 0.400) and efficiency
   (1.04 vs 1.13), but these are within binomial noise at n_real=100.
-- Exp(0.20) costs 28× the sampler runtime at σ=7 (32590 s vs 1173 s) to buy
-  1/45 more in-band entries, i.e. nothing outside binomial noise. That is the
-  looser prior giving NUTS more room to wander in an already grid-starved
-  posterior. Coverage ties, cost does not, so the more conservative prior wins.
+- σ=7 does not separate them either (23/45 vs 24/45, within binomial noise).
+  With nothing measured favouring the looser prior, the tiebreaker is the
+  default principle: prefer the prior that shrinks harder toward the base
+  model. Exp(0.20) has not been shown to buy anything.
 - Exp(0.35) is close to the sweeps' leading candidate and was measured at
   n_real=100 rather than the sweep's n_real=25, so the 41/45 number is more
   reliable.
