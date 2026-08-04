@@ -33,31 +33,41 @@ __all__ = [
 # Penalised-complexity prior rate for the Gaussian-core deviation scale.
 # After Sorbye-Rue standardisation sigma3 is the typical log-density departure
 # from a Gaussian LOSVD, so sigma3 = 1 means a departure of a factor ~e at
-# typical velocities; this rate puts P(sigma3 > 1) = exp(-1.0) = 0.37.
+# typical velocities; this rate puts P(sigma3 > 1) = exp(-0.35) = 0.70.
 #
-# Chosen as the *loosest* rate that passes simulation-based calibration, because
-# SBC is a gate rather than an objective -- among rates that pass, the looser
-# one keeps more shape information and better per-bin calibration.
+# This is the loosest rate measured, and it is the right one *provided the
+# sampler is configured for the funnel* -- see ``target_accept_prob`` in
+# KinematicSolver.run, which defaults to 0.95 for exactly this reason. At the
+# NumPyro default of 0.8 this rate fails SBC (17% of simulations, all low ESS);
+# at 0.95 it passes (1/100). Tightening the prior was an alternative way to
+# make SBC pass, by removing the difficult geometry -- but that also removes
+# the shape information the geometry carries. Fixing the sampler is strictly
+# better, and costs only about 2x wall time.
 #
-# SBC failures (n_sims=100, 2% budget): 1.0 -> 2/100, 2.303 -> 3/100,
-# 5.0 -> 1/100. Those counts are within Poisson noise of each other, so
-# everything from 1.0 up is indistinguishable on SBC; only 0.35 is genuinely
-# worse (5/30 = 17%). Every failure is low ESS on this very site -- a funnel,
-# where a loose prior lets sigma3 approach zero and the sampler cannot traverse
-# the neck. It is a sampler pathology, not evidence the posterior is wrong.
+# Do NOT tighten this on the strength of moment coverage. Moments are lossy and
+# hide the cost. What tightening actually costs, measured:
 #
-# Do NOT tighten further on the strength of moment coverage. Moments are lossy
-# and hide the cost. Per-bin LOSVD coverage -- the artifact DYNAMITE actually
-# chi-squares -- averaged over informative bins (n_real=25, nominal 0.68):
+#   rate   per-bin coverage (informative bins, nominal 0.68)   h3/h4 coverage
+#          gaussian  skew_normal_h3  student_t_h4             mean   above 0.30
+#   0.35     0.724       0.710          0.709                 0.603     7/8
+#   1.0      0.730       0.680          0.687                 0.570     7/8
+#   5.0      0.716       0.609          0.646                 0.393     5/8
+#   10.0       --          --             --                  0.312     2/8
 #
-#   rate   gaussian  skew_normal_h3  student_t_h4
-#   0.35     0.732       0.692          0.714     (fails SBC)
-#   1.0      0.730       0.680          0.687     <- adopted
-#   5.0      0.716       0.609          0.646     (passes SBC, under-covers)
+# The 0.35 row is measured at the shipped target_accept_prob=0.95; the others
+# at NumPyro's 0.8, which is the only setting at which they pass SBC at all.
 #
-# Tightening to 5.0 looked free in the moments and costs 0.04-0.07 of per-bin
-# coverage on non-Gaussian truths, i.e. per-bin error bars that are too narrow.
-SIGMA3_RATE = 1.0  # Exp(1.0), adopted 2026-08-04 — see docs/superpowers/specs/2026-08-03-regularisation-decision.md
+# Every moment metric (coverage, efficiency, bias on v_mean and sigma) is flat
+# across this whole range, which is why the cost went unnoticed for so long.
+SIGMA3_RATE = 0.35  # Exp(0.35) — see docs/superpowers/specs/2026-08-03-regularisation-decision.md
+
+# NUTS target acceptance rate, which sets the adapted step size. Higher than
+# NumPyro's 0.8 because sigma3 sits in a funnel -- see KinematicSolver.run.
+# Exported as a constant so that anything constructing its own NUTS kernel
+# (notably the SBC harness in tests/test_calibration.py) validates the sampler
+# configuration we actually ship. A calibration test that builds its own kernel
+# at NumPyro's default is measuring something we do not run.
+TARGET_ACCEPT_PROB = 0.95
 
 # ==============================================================================
 # Design Matrix
@@ -590,7 +600,15 @@ class KinematicSolver:
         self.matrix = precompute_design_matrix(vel, err, self.grid["centers"], bin_width=self.grid["width"])
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="gaussian_core"):
+    def run(
+        self,
+        num_warmup=500,
+        num_samples=1000,
+        gpu=None,
+        seed=5567,
+        prior="gaussian_core",
+        target_accept_prob=TARGET_ACCEPT_PROB,
+    ):
         """
         Run the NUTS sampler.
 
@@ -610,6 +628,18 @@ class KinematicSolver:
             compatibility). When running many bins in a batch, pass distinct
             seeds per bin to avoid any correlation in the sampling chains; a
             simple convention is ``seed + bin_index`` (see ``fit_all_bins``).
+        target_accept_prob : float
+            NUTS target acceptance rate, which sets the adapted step size.
+            **Default 0.95 rather than NumPyro's 0.8, and this matters.**
+            ``sigma3`` sits in a funnel: as the deviation scale approaches
+            zero the posterior narrows into a neck whose curvature a step size
+            tuned on the funnel's mouth cannot handle, so chains stick there.
+            Measured over 100 SBC simulations at ``SIGMA3_RATE = 0.35``:
+            0.8 gives 17% failures with p5 ESS 50, while 0.95 gives 1% with
+            p5 ESS 217, for about twice the wall time. Extra warmup does not
+            substitute (1500 warmup at 0.8 still failed); the step size is the
+            binding constraint.
+            Lowering this to 0.8 will reintroduce the low-ESS failures.
         prior : {"rw1", "gaussian_core"}
             Which smoothness prior to use. ``"gaussian_core"`` (default) uses
             :func:`generate_gaussian_core_curve`, whose infinite-smoothing
@@ -650,7 +680,7 @@ class KinematicSolver:
         else:
             model_fn = model
 
-        nuts_kernel = NUTS(model_fn)
+        nuts_kernel = NUTS(model_fn, target_accept_prob=target_accept_prob)
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
 
         rng_key = jax.random.PRNGKey(int(seed))

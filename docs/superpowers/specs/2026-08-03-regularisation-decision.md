@@ -145,3 +145,52 @@ scatter estimator there is no penalty at any rate. Do not carry it forward.
 **What is given up:** h3/h4, now formally out of scope. Also note
 `test_gaussian_core_prior_spans_nongaussian_shapes` is a bracket, not a pin —
 it passes for every rate from 0.35 to 50+, so it cannot select a rate. SBC does.
+
+
+---
+
+## 2026-08-04, final: the prior was never the problem
+
+Every SBC failure was low ESS on `sigma3` — a funnel. As the deviation scale
+approaches zero the posterior narrows into a neck whose curvature a step size
+adapted on the funnel's mouth cannot handle, so chains stick. Tightening the
+prior "fixed" this by deleting the difficult geometry. **But the geometry is
+where the shape information lives**, which is why every tightening step cost
+h3/h4 and per-bin coverage.
+
+Raising NUTS's `target_accept_prob` from NumPyro's 0.8 to 0.95 keeps the
+geometry and samples it properly. At `SIGMA3_RATE = 0.35` (the loosest rate
+measured), n_sims=100:
+
+| target_accept_prob | warmup | failed | p5 ESS |
+|---|---|---|---|
+| 0.8 | 500 | 17% | 50 |
+| 0.8 | 1500 | 10% | 55 |
+| 0.9 | 500 | 0/100 | 63 |
+| **0.95** | **500** | **1/100** | **217** |
+
+Extra warmup does not substitute — the step size is the binding constraint.
+0.95 over 0.9 for the 3.5x better tail ESS at ~15% more wall time. Total cost
+of the change is about 2x sampling time; no warmup increase needed.
+
+### Final configuration
+
+| | SBC /100 | per-bin (skew_normal_h3) | h3/h4 mean | cost |
+|---|---|---|---|---|
+| Exp(0.35), tap 0.8 | 17 ✗ | 0.692 | 0.603 | 1x |
+| Exp(5.0), tap 0.8 | 1 ✓ | 0.609 | 0.393 | 1x |
+| Exp(1.0), tap 0.8 | 2 ✓ | 0.680 | 0.570 | 1x |
+| **Exp(0.35), tap 0.95** | **1 ✓** | **0.710** | **0.603** | ~2x |
+
+`SIGMA3_RATE = 0.35`, `target_accept_prob = 0.95`, warmup unchanged at 500.
+Per-bin coverage re-measured at the shipped settings: gaussian 0.724,
+skew_normal_h3 0.710, student_t_h4 0.709, against nominal 0.68, with no
+informative bin below the 0.30 floor.
+
+### The lesson
+
+Two knobs produced the same reading on the gate metric and completely
+different readings on everything else. When that happens the gate cannot
+choose between them, and optimising the gate picks arbitrarily — here it
+would have picked the one that throws away the science. Ask what else each
+knob moves.

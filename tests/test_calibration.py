@@ -31,7 +31,7 @@ import pytest
 from numpyro.infer import MCMC, NUTS, Predictive
 from scipy import stats
 
-from veldist.veldist import model, model_gaussian_core, precompute_design_matrix
+from veldist.veldist import model, model_gaussian_core, precompute_design_matrix, TARGET_ACCEPT_PROB
 from veldist.analysis import tail_weight as _tail_weight
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,9 @@ def _run_one_sbc_iteration(sim_idx, prior, base_seed=20260802):
         return None
 
     model_fn, kwargs = _model_and_kwargs(prior, matrix, N_BINS, BIN_CENTERS, BIN_WIDTH)
-    nuts_kernel = NUTS(model_fn)
+    # Must match what KinematicSolver.run ships, or SBC validates a sampler
+    # configuration nobody runs. sigma3 sits in a funnel and fails at 0.8.
+    nuts_kernel = NUTS(model_fn, target_accept_prob=TARGET_ACCEPT_PROB)
     mcmc = MCMC(
         nuts_kernel,
         num_warmup=NUM_WARMUP,

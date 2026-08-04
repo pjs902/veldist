@@ -20,33 +20,40 @@ h3/h4 limitation honestly rather than engineering around it.
 
 ## Now
 
-- **[P0] The adopted prior fails SBC; `Exp(5.0)` is the loosest that passes.**
-  Full sweep measured 2026-08-04, n_sims=30, JAX x64 enabled to match
-  `tests/conftest.py`. Failures against the 2% budget:
+- **[RESOLVED 2026-08-04] The prior was never the problem — the sampler was.**
+  Every SBC failure was low ESS on `sigma3`: a funnel, where the deviation
+  scale approaching zero narrows the posterior into a neck that a step size
+  adapted on the funnel's mouth cannot traverse. Tightening the prior made SBC
+  pass by *deleting* that geometry — and the geometry is where the shape
+  information lives, so every tightening step cost h3/h4 and per-bin coverage.
 
-  | `SIGMA3_RATE` | failed | verdict |
-  |---|---|---|
-  | 0.35 (current default) | 5/30 (16.7%) | ✗ |
-  | 1.0 | 1/30 (3.3%) | ✗ (marginal) |
-  | 2.303 (old default) | 2/30 (6.7%) | ✗ |
-  | **5.0** | **0/30** | ✓ |
-  | 10.0 | 0/30 | ✓ |
+  Raising `target_accept_prob` from NumPyro's 0.8 to 0.95 keeps the geometry
+  and samples it properly. At `SIGMA3_RATE=0.35`, n_sims=100: 0.8 → 17%
+  failures (p5 ESS 50), 0.95 → 1/100 (p5 ESS 217). Extra warmup does not
+  substitute — 1500 warmup at 0.8 still failed, so the step size is the
+  binding constraint. Cost is ~2x wall time, no warmup change.
 
-  **Every failure is low ESS on the `sigma3` site** (ESS 3.4–18.5 against a
-  threshold of 20) — a funnel/mixing problem. Zero NaN posteriors, zero
-  sampler exceptions. The looser the prior, the closer `sigma3` gets to the
-  neck of the funnel and the worse the sampler mixes; median ESS goes 399 at
-  Exp(0.35) to 879 at Exp(10).
-  **Rank calibration itself is fine at every rate**, including the quantities
-  that matter: `v_mean` KS p = 0.51–0.98, `sigma` KS p = 0.29–0.78. So the
-  gate fails on completion rate, not on miscalibrated uncertainties.
-  Reproduce: `pytest "tests/test_calibration.py::test_sbc_calibration[gaussian_core]"`.
-  **Note the runner exits 0 on failure — check the report text, not `$?`.**
-  **Open before adopting Exp(5.0):** confirm `v_mean`/`sigma` coverage and
-  efficiency survive the tightening. An earlier campaign suggested tight
-  priors have *worse* σ efficiency (2.69–4.27× optimum at Exp(2.303) vs 1.35×
-  at Exp(0.35)); those numbers are from a different grid and flagged as
-  outlier-sensitive, so they are being re-measured rather than trusted.
+  **Adopted: `SIGMA3_RATE=0.35`, `target_accept_prob=0.95` (new default in
+  `KinematicSolver.run`), warmup unchanged at 500.** This dominates every
+  alternative considered:
+
+  | config | SBC /100 | per-bin (skew) | h3/h4 mean | cost |
+  |---|---|---|---|---|
+  | Exp(0.35), tap 0.8 (old) | 17 ✗ | 0.692 | 0.603 | 1x |
+  | Exp(5.0), tap 0.8 | 1 ✓ | 0.609 | 0.393 | 1x |
+  | Exp(1.0), tap 0.8 | 2 ✓ | 0.680 | 0.570 | 1x |
+  | **Exp(0.35), tap 0.95** | **1 ✓** | **0.710** | **0.603** | ~2x |
+
+  Per-bin coverage re-measured at the shipped settings: 0.724 / 0.710 / 0.709
+  against nominal 0.68, no informative bin below the 0.30 floor.
+  **Do not lower `target_accept_prob` to 0.8**; it reintroduces the failures.
+
+- **[P1] Moments are lossy — check per-bin coverage.** Tightening `SIGMA3_RATE`
+  1.0 → 5.0 left *every* moment metric flat (coverage, efficiency, bias on
+  v_mean and sigma) while per-bin LOSVD coverage fell 0.680 → 0.609. Per-bin is
+  the artifact DYNAMITE chi-squares, so it is the one that matters when they
+  disagree. Guarded by `test_per_bin_losvd_coverage`; interpretation guide in
+  `docs/validation.md`.
 
 - **[P1] The test suite cannot see float32 bugs.** `tests/conftest.py` enables
   JAX x64 for the whole suite, but `KinematicSolver` runs in JAX's default
