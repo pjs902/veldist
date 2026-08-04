@@ -21,6 +21,8 @@ from typing import Callable
 import numpy as np
 from scipy import stats
 
+from veldist.analysis import half_68ci
+
 __all__ = [
     "ObservingProfile",
     "OMEGACAT",
@@ -366,8 +368,7 @@ class CalibrationResult:
 
     @staticmethod
     def _robust_scatter(x):
-        lo, hi = np.percentile(x, [16, 84])
-        return float(0.5 * (hi - lo))
+        return half_68ci(x)
 
     def efficiency(self):
         """Actual estimator scatter divided by the statistical optimum.

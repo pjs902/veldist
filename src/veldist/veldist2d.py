@@ -110,11 +110,6 @@ def setup_grid_2d(center, width, n_bins):
     }
 
 
-def _flat_index(ix, iy, k):
-    """np.ravel_multi_index wrapper for the grid's row-major convention."""
-    return np.ravel_multi_index((ix, iy), (k, k), order="C")
-
-
 # ==============================================================================
 # Design Matrix
 # ==============================================================================
