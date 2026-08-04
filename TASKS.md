@@ -48,6 +48,17 @@ h3/h4 limitation honestly rather than engineering around it.
   against nominal 0.68, no informative bin below the 0.30 floor.
   **Do not lower `target_accept_prob` to 0.8**; it reintroduces the failures.
 
+  Two further sampler defaults changed with it, both measured. `dense_mass`
+  is now True: the `d3` components are correlated through the cumulative sum
+  and the null-space projection, and switching from diagonal takes min ESS on
+  `intrinsic_pdf` from 119 to 1188 and max r_hat from **1.0161 to 1.0015**, in
+  *less* wall time. That r_hat is above the usual 1.01 threshold, so the
+  configuration this branch was about to ship was marginally non-converged.
+  `num_chains` is now 4, because with one chain there is no r_hat and nothing
+  could have reported that. All three settings are exported constants that the
+  SBC harness imports, after it was found testing `target_accept_prob=0.8`
+  while the solver shipped 0.95.
+
 - **[P1] Moments are lossy — check per-bin coverage.** Tightening `SIGMA3_RATE`
   1.0 → 5.0 left *every* moment metric flat (coverage, efficiency, bias on
   v_mean and sigma) while per-bin LOSVD coverage fell 0.680 → 0.609. Per-bin is
