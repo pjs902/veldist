@@ -20,7 +20,10 @@ extensions = [
 ]
 
 templates_path = ['_templates']
-exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+# 'superpowers' holds working notes (plans, specs, decision records), not
+# published documentation. It is gitignored, but Sphinx still finds it on a
+# local build and emits a toctree warning per file, which buries real warnings.
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'superpowers']
 
 html_theme = 'sphinx_book_theme'
 html_static_path = ['_static']

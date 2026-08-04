@@ -32,6 +32,11 @@ pip install -e .
 ```python
 from veldist import KinematicSolver
 
+# Make 4 CPU devices visible, so the 4 sampling chains run in parallel.
+# Must come before any other JAX work: the device count is fixed when JAX
+# initialises its backend. Results are identical without it, just ~4x slower.
+veldist.set_host_devices(4)
+
 # Initialize solver
 solver = KinematicSolver()
 

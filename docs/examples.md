@@ -36,6 +36,15 @@ solver.run(num_warmup=500, num_samples=1000, gpu=False)
 solver.plot_result()
 ```
 
+`run()` samples 4 chains with a dense mass matrix and
+`target_accept_prob=0.95`. Those defaults are measured rather than inherited:
+the deviation scale sits in a funnel that NumPyro's default step size cannot
+traverse, and a diagonal mass matrix cannot represent the correlations between
+neighbouring bins. See {doc}`validation` for the numbers. Call
+`veldist.set_host_devices(4)` before any other JAX work to run the chains in
+parallel; without it they run sequentially, at about 4x the wall time and with
+identical results.
+
 The grid should comfortably enclose the data ($\pm 3\sigma_\mathrm{obs}$ is
 a reasonable starting point) and the bin width $\Delta v = \mathrm{width} /
 n\_\mathrm{bins}$ should be comparable to the typical measurement uncertainty.
@@ -118,6 +127,37 @@ solvers = fit_all_bins(
 `fit_all_bins` uses `seed + bin_index` internally so that the chains for
 different bins are independent.  Bins with fewer than `min_stars` stars are
 returned as `None` and masked automatically in the output files.
+
+#### Matched-grid fitting for narrow-dispersion bins
+
+The shared velocity grid must hold the widest LOSVD in the field, so bins with
+a small dispersion spend most of their bins empty: at $\sigma = 7$ km/s on a
+grid sized for $\sigma = 22$, only ~30% of bins carry any mass, and the prior
+has to explain the rest. Coverage collapses there.
+
+Dynamite's one-grid requirement applies to the *output*, not to the inference.
+Passing an `ObservingProfile` as `match_grid` fits each bin on a grid sized to
+its own dispersion, then aggregates every posterior sample onto the shared
+output grid before the summary is taken:
+
+```python
+from veldist.calibration import OMEGACAT
+
+solvers = fit_all_bins(
+    bin_data_list,
+    grid_kwargs={"center": 0.0, "width": 600.0, "n_bins": 60},
+    match_grid=OMEGACAT,
+)
+```
+
+The aggregation is exact, being a sum of probability mass within output bins
+taken per posterior sample, so uncertainties propagate correctly. It requires
+each fitted bin to lie entirely within one output bin, which the function
+checks and raises on rather than approximating. The grid inference actually ran
+on is kept as `solver.fitted_grid`; `solver.grid` describes the shared output
+grid, so downstream code and the Dynamite writer need no changes.
+
+Default is `None`, which fits every bin on the shared grid as before.
 
 ### Writing Dynamite input files
 

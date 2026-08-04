@@ -75,9 +75,17 @@ taking per-bin coverage first and then the moments that carry real signal.
 ## 1D solver results
 
 **SBC** (`tests/test_calibration.py`, `n_bins=15`, `n_stars=200`,
-500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities pass the
-Bonferroni-corrected KS uniformity test for **both** the RW1 and
-Gaussian-core priors, with p-values in the range 0.52–0.97. The SBC harness
+500 warmup + 1200 samples, `n_sims=30`): passes for **both** the RW1 and
+Gaussian-core priors, with 0/30 failed simulations.
+
+This gate depends on the sampler configuration, not only on the model. At
+NumPyro's default `target_accept_prob=0.8` the Gaussian-core prior fails it,
+with 17% of simulations discarded for inadequate effective sample size on
+`sigma3`. The cause is funnel geometry: as the deviation scale approaches zero
+the posterior narrows into a neck that a step size adapted on the funnel's
+mouth cannot traverse, so chains stick. Raising the acceptance target to 0.95
+fixes it (1/100 failures at `n_sims=100`); extra warmup does not substitute,
+since 1500 warmup steps at 0.8 still failed. See "Sampler configuration" below. The SBC harness
 is now parametrised over ``SBC_PRIORS = ["rw1", "gaussian_core"]``
 (see `tests/test_calibration.py`). This SBC run caught an earlier bug: the
 original random-walk prior used `numpyro.factor` on an unconditioned base
@@ -87,7 +95,7 @@ rewritten generatively; SBC then passed cleanly.
 
 **Prior-predictive null-space test** (`tests/test_prior_predictive.py`):
 the Gaussian-core prior's prior-predictive median velocity dispersion is
-~45 km/s on a 400 km/s wide grid (vs. ~115 for uniform), confirming the
+~32 km/s on a 400 km/s wide grid (vs. ~115 for uniform), confirming the
 null space is quadratic, not flat. This is resolution-invariant to within
 3% relative spread across n_bins = 20/40/80.
 
@@ -135,19 +143,103 @@ directly means the typical log-density departure from a Gaussian LOSVD,
 independent of grid resolution. The prior on `sigma3` is a penalised-complexity
 (PC) prior (Simpson et al. 2017, *Statistical Science* 32, 1): an Exponential
 whose base model, `sigma3 = 0`, is an exactly Gaussian LOSVD. A prior-
-predictive check confirms the PC prior makes non-Gaussian LOSVDs with
-|excess kurtosis| p90 ≈ 1.36 reachable a priori.
+predictive check confirms the PC prior makes non-Gaussian LOSVDs reachable
+a priori: at `SIGMA3_RATE=0.35` and n_bins=40, prior-predictive
+|excess kurtosis| has p90 ≈ 38.8.
 
-**Default prior and regularisation**: the adopted configuration (2026-08-03,
-from the validation campaign decision) is `SIGMA3_RATE=0.35` (Exp(0.35)) at
-`rw_order=3`. At the science target (σ=22, n_real=100) this gives 41/45
-coverage entries in the nominal band, 1 catastrophic, with v_mean efficiency
-1.13× and sigma efficiency 1.35×. The decision record and full comparison
-table are in `docs/superpowers/specs/2026-08-03-regularisation-decision.md`.
+That test brackets rather than pins the rate. Measured p90 |excess kurtosis|
+is 38.8 at rate 0.35, 1.13 at 5.0 and 1.05 at 50, so every rate from 0.35
+upward passes its 0.3–50 bounds and it cannot select one. SBC and per-bin
+coverage select the rate; this test only catches the two gross failure modes
+(a prior too tight to represent any non-Gaussian shape, or so loose that draws
+saturate into near-delta spikes).
+
+**Default prior and regularisation**: the adopted configuration is
+`SIGMA3_RATE=0.35` (Exp(0.35)) at `rw_order=3`, the loosest rate measured. At
+the science target (σ=22, n_real=100) it gives 41/45 coverage entries in the
+nominal band and 1 catastrophic, with v_mean efficiency 1.13× and sigma
+efficiency 1.35×.
+
+Tightening the rate was tried as a way of passing SBC, and rejected. It does
+work, by removing the funnel geometry the sampler was struggling with, but the
+geometry is where the non-Gaussian shape information lives. The cost is
+invisible in the moments and plain in the per-bin numbers:
+
+| `SIGMA3_RATE` | per-bin coverage (gaussian / skew / student-t) | h3+h4 mean coverage |
+|---|---|---|
+| **0.35** | **0.724 / 0.710 / 0.709** | **0.603** |
+| 1.0 | 0.730 / 0.680 / 0.687 | 0.570 |
+| 5.0 | 0.716 / 0.609 / 0.646 | 0.393 |
+| 10.0 | — | 0.312 |
+
+Every moment metric (coverage, efficiency and bias on v_mean and sigma) is
+flat across that whole range, which is why the cost went unnoticed until
+per-bin coverage was measured directly. Fixing the sampler instead costs about
+2× wall time and nothing else. The decision record is in
+`docs/superpowers/specs/2026-08-03-regularisation-decision.md`.
+
+Two shape hypotheses were measured and ruled out, and should not be re-raised
+without new evidence. Raising the random-walk penalty order to 4 or 5 does not
+free h3/h4 (retention stays ~0.13–0.16), because the null space is a null space
+of the *log*-density and the softmax decouples it from the PDF moments. A
+mode-order split scale fails for the adjacent reason: all the shape *and* all
+the roughness live in the same two smoothest modes, so there is no separation
+for two scales to exploit.
 
 `KinematicSolver.run()` defaults to `prior="gaussian_core"`. Pass `prior="rw1"`
-for the previous behaviour. The penalty order defaults to 3 and is available
-as `rw_order=`.
+for the previous behaviour. The penalty order is fixed at 3; `rw_order` exists
+on `generate_gaussian_core_curve` and `model_gaussian_core` only so the tests
+above can re-measure the ruled-out hypothesis.
+
+## Sampler configuration
+
+The defaults in `KinematicSolver.run()` depart from NumPyro's in three ways,
+each measured rather than assumed. All three are exported as constants from
+`veldist.veldist` and imported by the SBC harness, so the gate cannot drift
+from what the solver ships.
+
+| Setting | veldist | NumPyro | Why |
+|---|---|---|---|
+| `target_accept_prob` | **0.95** | 0.8 | `sigma3` sits in a funnel; at 0.8, 17% of SBC simulations fail on inadequate ESS |
+| `dense_mass` | **True** | False | The `d3` components are correlated through the cumulative sum and the null-space projection |
+| `num_chains` | **4** | 1 | r_hat needs more than one chain, and nothing else detects a chain settling into the wrong mode |
+
+The dense mass matrix is the larger effect. Measured on a skew-normal mock (37
+bins, 150 stars, 4 chains), minimum ESS on `intrinsic_pdf` rises from 119 to
+1188 and maximum r_hat falls from 1.0161 to 1.0015, in *less* wall time: better
+conditioning means fewer leapfrog steps per sample. The r_hat figure matters on
+its own, since 1.0161 is above the conventional 1.01 threshold, and with a
+single chain nothing in the pipeline could have reported it.
+
+Chains run sequentially unless CPU devices are requested **before** JAX
+initialises its backend:
+
+```python
+import veldist
+veldist.set_host_devices(4)   # call before any other JAX work
+```
+
+Results are identical either way; only wall time differs, by about 4×.
+`run()` warns if the request arrives too late.
+
+## Per-bin LOSVD calibration
+
+Moment coverage is a lossy summary of what DYNAMITE actually consumes. Its
+$\chi^2$ treats `losvd_median` and `losvd_uncertainty` as per-bin measurements
+with independent Gaussian errors, so those per-bin intervals are what must be
+calibrated, and ~37 bins compressed into 5 scalars can hide over-wide intervals
+in one bin cancelling over-tight ones in another.
+
+`test_per_bin_losvd_coverage` (`tests/test_coverage.py`, `n_real=25`) measures
+it directly, against `clip_uncertainties` output rather than raw samples, since
+the uncertainty floors applied there are part of what gets written. Mean
+coverage over informative bins, against a nominal 0.68: gaussian 0.724,
+skew-normal 0.710, Student-$t$ 0.709, with no informative bin below the 0.30
+floor.
+
+Empty bins are excluded and reported separately. They are dominated by the
+relative uncertainty floor and over-cover trivially at ~0.88, so averaging them
+in would manufacture a passing number.
 
 ## 2D solver results
 

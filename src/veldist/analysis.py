@@ -498,7 +498,8 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
 
     Notes
     -----
-    The approximate Gauss-Hermite conversions (valid for |h3|, |h4| <~ 0.2):
+    The approximate Gauss-Hermite conversions (valid for ``|h3|``, ``|h4|``
+    less than about 0.2):
 
     .. code-block:: text
 
