@@ -20,40 +20,72 @@ h3/h4 limitation honestly rather than engineering around it.
 
 ## Now
 
-- **[P0] The adopted prior fails SBC, worse than the one it replaced.**
-  Measured 2026-08-04 at the adopted default (`SIGMA3_RATE=0.35`,
-  `prior="gaussian_core"`, n_sims=30): **6/30 (20%) simulations failed** — NaN
-  posterior, sampler exception, or inadequate ESS — against the 2% budget.
-  The old `Exp(2.303)` default was 2/30 (6.7%). Loosening made it **3× worse**.
-  This is the predicted mechanism, not a surprise: the failure was already
-  diagnosed as the `Exponential` PC prior's upper tail (`sigma3` ~3–4
-  saturating the softmax into near-delta LOSVDs), and loosening the rate makes
-  that tail fatter. `SIGMA3_RATE` was selected on coverage alone; coverage is
-  blind to this.
-  **Consequence: `Exp(0.35)` is not science-ready and the regularisation
-  decision is not closed.** Coverage improved (26/45 → 41/45 in-band at σ=22)
-  and calibration regressed; those were traded without the trade being
-  measured. Options, none yet tested: a prior with a lighter upper tail at the
-  same body (the six one-parameter families already swept all shared the
-  problem, so this likely means a bounded or truncated scale), or accepting a
-  tighter rate and recovering coverage elsewhere.
+- **[P0] The adopted prior fails SBC; `Exp(5.0)` is the loosest that passes.**
+  Full sweep measured 2026-08-04, n_sims=30, JAX x64 enabled to match
+  `tests/conftest.py`. Failures against the 2% budget:
+
+  | `SIGMA3_RATE` | failed | verdict |
+  |---|---|---|
+  | 0.35 (current default) | 5/30 (16.7%) | ✗ |
+  | 1.0 | 1/30 (3.3%) | ✗ (marginal) |
+  | 2.303 (old default) | 2/30 (6.7%) | ✗ |
+  | **5.0** | **0/30** | ✓ |
+  | 10.0 | 0/30 | ✓ |
+
+  **Every failure is low ESS on the `sigma3` site** (ESS 3.4–18.5 against a
+  threshold of 20) — a funnel/mixing problem. Zero NaN posteriors, zero
+  sampler exceptions. The looser the prior, the closer `sigma3` gets to the
+  neck of the funnel and the worse the sampler mixes; median ESS goes 399 at
+  Exp(0.35) to 879 at Exp(10).
+  **Rank calibration itself is fine at every rate**, including the quantities
+  that matter: `v_mean` KS p = 0.51–0.98, `sigma` KS p = 0.29–0.78. So the
+  gate fails on completion rate, not on miscalibrated uncertainties.
   Reproduce: `pytest "tests/test_calibration.py::test_sbc_calibration[gaussian_core]"`.
   **Note the runner exits 0 on failure — check the report text, not `$?`.**
+  **Open before adopting Exp(5.0):** confirm `v_mean`/`sigma` coverage and
+  efficiency survive the tightening. An earlier campaign suggested tight
+  priors have *worse* σ efficiency (2.69–4.27× optimum at Exp(2.303) vs 1.35×
+  at Exp(0.35)); those numbers are from a different grid and flagged as
+  outlier-sensitive, so they are being re-measured rather than trusted.
 
-- **[P1] Mode-order split scale.** With `rw_order` ruled out, this is the
-  remaining candidate for freeing h3/h4 without breaking SBC. Two `sigma3`
-  parameters — a loose one for the lowest few deviation modes (carrying h3/h4)
-  and a tight one for the rest — attacks the problem the plan identified:
-  one scalar cannot serve components needing opposite treatment.
-  Sequence this *after* the SBC item above: a split scale is harder to
-  calibrate than one scalar, and starting it from a base that fails SBC means
-  debugging two unknowns at once.
+- **[P1] The test suite cannot see float32 bugs.** `tests/conftest.py` enables
+  JAX x64 for the whole suite, but `KinematicSolver` runs in JAX's default
+  float32. Any numerical fragility in the production dtype is therefore
+  invisible to every test by default — which is exactly how the design-matrix
+  cancellation bug (fixed 2026-08-04, see Completed) survived. The x64 default
+  is there for good reasons (chained cumsum/QR precision), so the fix is not
+  to remove it but to run the numerically sensitive tests in both regimes.
+  `test_design_matrix_is_strictly_positive_in_float32` shows the pattern:
+  wrap the call in `jax.enable_x64(False)`.
 
-- **[P1] Matched-grid per-bin fitting** — the diagnosed remedy for the σ=7
-  collapse (see below). Fit each spatial bin on a grid matched to its local σ,
-  aggregate posterior samples onto the shared DYNAMITE output grid. Exact
-  provided the fitted grid is at least as fine as the output grid and edges
-  align — a precondition to enforce, not assume.
+- **[P2] Real ω Cen data.** Once the above is settled, move to real data — it
+  will inform tuning far better than the mock harness can. The harness truths
+  at σ=30 and σ=42 are outside ω Cen's 9–21 range, so further tuning against
+  it has limited value.
+
+## Ruled out by measurement — do not re-raise
+
+- **Mode-order split scale — measured, does not work.** (2026-08-04, prior
+  predictive, n=20k draws, script
+  `docs/superpowers/specs/2026-08-04-split-scale-measurement.py`.) The idea was
+  two `sigma3` parameters: loose on the low-order deviation modes that carry
+  h3/h4, tight on the high-order modes that are just wiggle. **There is no such
+  separation to exploit.** Above a 2-mode split, tightening every higher mode
+  to zero changes h3/h4 retention by <2% (1.007 → 1.025) and the degenerate
+  draw fraction not at all (0.148 vs 0.150) — all the h3/h4 spread already
+  lives in the two lowest modes. But so does the roughness: killing all modes
+  above the first four cuts non-degenerate PDF roughness only 3–7% (0.0762 →
+  0.0737), while switching the deviation off entirely cuts it 4× (→ 0.0177).
+  After softmax, mode order does not partition "shape we want" from "wiggle we
+  don't"; both come from the same few smoothest modes. The only knob that does
+  anything is the low-mode rate, which is the same knob as `SIGMA3_RATE`
+  (Exp(0.15) on the low modes inflates h3 spread 16× and drives degeneracy
+  0.15 → 0.28 — the identical loose-prior/degeneracy trade already known).
+  The prototype was validated first: it reproduced the published baseline
+  (h3 retention 0.125, h4 0.028) before measuring anything new.
+  **This is the second hypothesis killed by the same fact** — softmax mixes
+  what the log-density basis separates (the first was `rw_order`). Treat the
+  whole "reparameterise the prior to free h3/h4" direction as exhausted.
 
 ## Open, previously misfiled as resolved
 
@@ -309,6 +341,17 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   solver and export pipeline are both tested and stable
 
 ## Completed
+
+- Design-matrix cancellation bug (P0, commit 5cda2cc): `precompute_design_matrix`
+  could return *negative* probabilities (to -1.2e-7) for bins ~5-7 sigma from a
+  star, where both edge CDFs are ~1e-7 and their float32 difference cancels.
+  The negative propagated into `matrix @ intrinsic_pdf`, `log` of it is NaN,
+  and NUTS died at initialisation with numpyro's opaque "Unit distribution got
+  invalid log_factor parameter". The old `+ 1e-30` guarded exact zeros, a
+  different hazard, and was 22 orders of magnitude too small for this one;
+  `jnp.clip` covers both. Reachable in production (float32) and invisible to
+  the suite (x64) — see the P1 item on the precision gap.
+
 
 - RW3 deviation scaling fix (P0, `docs/superpowers/plans/2026-08-03-rw3-deviation-scaling.md`):
   Replaced the ad-hoc `(bin_width/span)**2.5` scaling with Sørbye–Rue
