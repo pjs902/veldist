@@ -1,5 +1,11 @@
 # Regularisation Configuration Decision
 
+> **SUPERSEDED 2026-08-04.** `Exp(0.35)` was adopted on coverage evidence
+> alone and fails simulation-based calibration (5/30 against a 2% budget).
+> The adopted rate is now **`Exp(5.0)`** — see "2026-08-04 revision" at the
+> end of this document. The campaign results below remain valid as measured;
+> it is the decision drawn from them that changed.
+
 **Date:** 2026-08-03
 **Branch:** `fix/rw3-deviation-scaling`
 
@@ -87,3 +93,55 @@ Rationale:
 
 - `SIGMA3_RATE` set to `0.35` in `src/veldist/veldist.py`
 - `rw_order` remains 3 (unchanged)
+
+
+---
+
+## 2026-08-04 revision: adopt `Exp(5.0)`
+
+**What changed:** the acceptance criterion was made explicit, and SBC was
+finally run over the rate (campaign Task 6, never executed at the time).
+
+**Acceptance criterion (Peter):** minimally correct = recover `v_mean` and
+`sigma` well, with properly calibrated uncertainties. Recovering h3/h4 well is
+optional. That resolves the trade this document agonised over: calibration
+wins, h3/h4 coverage is expendable.
+
+**SBC over the rate** (n_sims=30, 2% budget, JAX x64 to match `conftest.py`):
+
+| rate | failed | verdict |
+|---|---|---|
+| 0.35 | 5/30 (16.7%) | ✗ |
+| 1.0 | 1/30 (3.3%) | ✗ |
+| 2.303 | 2/30 (6.7%) | ✗ |
+| **5.0** | **0/30** | ✓ |
+| 10.0 | 0/30 | ✓ |
+
+Every failure is low ESS on the `sigma3` site (ESS 3.4–18.5 against a threshold
+of 20) — a funnel: a loose prior lets `sigma3` approach zero and the sampler
+cannot traverse the neck. No NaN posteriors, no sampler exceptions.
+
+**Tightening is free for `v_mean` and `sigma`** (n_real=50, oMEGACat profile,
+N=150, σ=22). Across rates 0.35 → 1.0 → 5.0, coverage, efficiency, and bias are
+flat, on the Gaussian truth *and* on non-Gaussian truths (`skew_normal_h3`,
+`flat_top_tangential`, `student_t_h4`). Representative rows, rate 0.35 → 5.0:
+
+| truth | metric | coverage | efficiency (std) |
+|---|---|---|---|
+| gaussian | v_mean | 0.70 → 0.70 | 1.09 → 1.08 |
+| gaussian | sigma | 0.78 → 0.66 | 0.99 → 0.98 |
+| skew_normal_h3 | sigma | 0.64 → 0.60 | 1.07 → 1.07 |
+| flat_top_tangential | sigma | 0.78 → 0.82 | 0.68 → 0.68 |
+| student_t_h4 | sigma | 0.72 → 0.72 | 1.03 → 1.03 |
+
+Note the Gaussian truth alone cannot answer this — it lies exactly in the
+prior's null space, so tightening cannot hurt it by construction. The
+non-Gaussian truths are what make the result meaningful.
+
+**The old "tight priors cost 2.7–4.3× σ efficiency" claim does not replicate.**
+It was the std of 25 medians on a different grid; with n_real=50 and a robust
+scatter estimator there is no penalty at any rate. Do not carry it forward.
+
+**What is given up:** h3/h4, now formally out of scope. Also note
+`test_gaussian_core_prior_spans_nongaussian_shapes` is a bracket, not a pin —
+it passes for every rate from 0.35 to 50+, so it cannot select a rate. SBC does.

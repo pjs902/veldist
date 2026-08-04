@@ -398,3 +398,106 @@ def test_map_level_bias_is_small_against_the_map_uncertainty():
         f"{per_bin_sigma:.3f}). Averaged over a map this is a spurious "
         "detection, not acceptable shrinkage."
     )
+
+
+# ---------------------------------------------------------------------------
+# Per-bin LOSVD calibration
+# ---------------------------------------------------------------------------
+
+
+def _true_bin_mass(pdf, centers, width, n_sub=64):
+    """Probability mass per velocity bin, by fine trapezoid inside each bin.
+
+    Must be the *integrated* mass, not the density at the bin centre:
+    ``losvd_median`` is mass per bin, so comparing against a centre-evaluated
+    density would inject a discretisation error that reads as miscalibration.
+    """
+    out = np.empty(len(centers))
+    for i, c in enumerate(centers):
+        x = np.linspace(c - width / 2.0, c + width / 2.0, n_sub)
+        out[i] = np.trapezoid(pdf(x), x)
+    return out
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("truth_name", ["gaussian", "skew_normal_h3", "student_t_h4"])
+def test_per_bin_losvd_coverage(truth_name):
+    """Per-bin credible intervals must contain the true bin mass at ~nominal.
+
+    **This is the artifact DYNAMITE actually consumes.** Its chi-squared
+    treats ``losvd_median`` and ``losvd_uncertainty`` as per-bin measurements
+    with independent Gaussian errors, so those intervals are what must be
+    calibrated. Under-estimated per-bin errors over-weight the kinematics and
+    bias the recovered orbit weights -- a wrong science result, not merely a
+    wrong diagnostic.
+
+    Moment coverage (``test_coverage_over_mock_realisations``) does NOT imply
+    this. Moments collapse ~37 bins into 5 scalars, and over-wide intervals in
+    one bin cancel against over-tight ones in another. Measured: tightening
+    SIGMA3_RATE from 1.0 to 5.0 left moment coverage and efficiency flat while
+    per-bin coverage fell 0.680 -> 0.609 on skew_normal_h3. Only the per-bin
+    measurement sees that at all.
+
+    Be clear about the assertion's reach, though: the band below is a guard
+    against *gross* miscalibration, not a discriminator between prior
+    strengths. At n_real=25 the per-truth noise is around +-0.03, so a 0.07
+    shift is not something a single threshold can separate from noise without
+    false failures. Choosing between candidate rates is done by running the
+    measurement across rates and comparing (see the SIGMA3_RATE comment in
+    veldist.py), not by this assertion.
+
+    Runs against ``clip_uncertainties`` output rather than raw samples, because
+    the uncertainty *floors* applied there are part of what gets written.
+
+    Empty bins are excluded and reported separately: they are dominated by the
+    relative floor and over-cover trivially (~0.88), so averaging them in would
+    manufacture a passing number.
+    """
+    from veldist.veldist import KinematicSolver
+
+    truth = next(t for t in make_truths() if t.name == truth_name)
+    sigma = OMEGACAT.sigma_max
+    pdf, rvs = truth.scaled(sigma)
+
+    hits = None
+    truth_mass = None
+    for i in range(N_REAL):
+        rng = np.random.default_rng(20260804 + i)
+        v = rvs(OMEGACAT.n_stars, rng)
+        err = OMEGACAT.draw_errors(OMEGACAT.n_stars, rng)
+        solver = KinematicSolver()
+        solver.setup_grid(center=0.0, width=OMEGACAT.grid_width, n_bins=OMEGACAT.n_bins)
+        solver.add_data(v + rng.normal(0.0, err), err)
+        solver.run(num_warmup=300, num_samples=600, seed=20260804 + i)
+        solver.clip_uncertainties()
+
+        median = np.asarray(solver.clipped_samples["losvd_median"])
+        half68 = np.asarray(solver.clipped_samples["losvd_uncertainty"])
+        if truth_mass is None:
+            truth_mass = _true_bin_mass(pdf, np.asarray(solver.grid["centers"]), solver.grid["width"])
+            hits = np.zeros(len(median))
+        hits += (np.abs(median - truth_mass) <= half68).astype(float)
+
+    coverage = hits / N_REAL
+    informative = truth_mass > 0.01 * truth_mass.max()
+    mean_cov = float(coverage[informative].mean())
+
+    # Measured at the adopted Exp(1.0): gaussian 0.730, skew_normal_h3 0.680,
+    # student_t_h4 0.687. The band is deliberately generous on the high side --
+    # over-coverage wastes information but does not produce a wrong chi-squared
+    # the way under-coverage does.
+    assert 0.60 <= mean_cov <= 0.85, (
+        f"{truth_name}: mean per-bin coverage over {int(informative.sum())} "
+        f"informative bins is {mean_cov:.3f}, outside [0.60, 0.85] against a "
+        "nominal 0.68. Under-coverage means the per-bin error bars written for "
+        "DYNAMITE are too narrow."
+    )
+
+    # No individual informative bin may be catastrophic. Measured worst bins
+    # sit at 0.40-0.44, in the LOSVD wings where mass is small but non-zero.
+    n_bad = int((coverage[informative] < 0.30).sum())
+    assert n_bad == 0, (
+        f"{truth_name}: {n_bad} informative bins have coverage below 0.30 "
+        f"(worst {coverage[informative].min():.2f}); those bins carry "
+        "essentially meaningless error bars into the DYNAMITE fit."
+    )

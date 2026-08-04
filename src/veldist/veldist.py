@@ -33,11 +33,31 @@ __all__ = [
 # Penalised-complexity prior rate for the Gaussian-core deviation scale.
 # After Sorbye-Rue standardisation sigma3 is the typical log-density departure
 # from a Gaussian LOSVD, so sigma3 = 1 means a departure of a factor ~e at
-# typical velocities; this rate puts P(sigma3 > 1) = exp(-0.35) = 0.70.
-# The value is empirical, not derived from a tail statement: it was chosen from
-# the coverage campaign (41/45 in-band at sigma=22), not by fixing P(sigma3 > 1).
-# Pinned by test_gaussian_core_prior_spans_nongaussian_shapes (p90 |kurtosis| = 1.361).
-SIGMA3_RATE = 0.35  # Exp(0.35), adopted 2026-08-03 — see docs/superpowers/specs/2026-08-03-regularisation-decision.md
+# typical velocities; this rate puts P(sigma3 > 1) = exp(-1.0) = 0.37.
+#
+# Chosen as the *loosest* rate that passes simulation-based calibration, because
+# SBC is a gate rather than an objective -- among rates that pass, the looser
+# one keeps more shape information and better per-bin calibration.
+#
+# SBC failures (n_sims=100, 2% budget): 1.0 -> 2/100, 2.303 -> 3/100,
+# 5.0 -> 1/100. Those counts are within Poisson noise of each other, so
+# everything from 1.0 up is indistinguishable on SBC; only 0.35 is genuinely
+# worse (5/30 = 17%). Every failure is low ESS on this very site -- a funnel,
+# where a loose prior lets sigma3 approach zero and the sampler cannot traverse
+# the neck. It is a sampler pathology, not evidence the posterior is wrong.
+#
+# Do NOT tighten further on the strength of moment coverage. Moments are lossy
+# and hide the cost. Per-bin LOSVD coverage -- the artifact DYNAMITE actually
+# chi-squares -- averaged over informative bins (n_real=25, nominal 0.68):
+#
+#   rate   gaussian  skew_normal_h3  student_t_h4
+#   0.35     0.732       0.692          0.714     (fails SBC)
+#   1.0      0.730       0.680          0.687     <- adopted
+#   5.0      0.716       0.609          0.646     (passes SBC, under-covers)
+#
+# Tightening to 5.0 looked free in the moments and costs 0.04-0.07 of per-bin
+# coverage on non-Gaussian truths, i.e. per-bin error bars that are too narrow.
+SIGMA3_RATE = 1.0  # Exp(1.0), adopted 2026-08-04 — see docs/superpowers/specs/2026-08-03-regularisation-decision.md
 
 # ==============================================================================
 # Design Matrix

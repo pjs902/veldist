@@ -381,8 +381,15 @@ def test_gaussian_core_prior_spans_nongaussian_shapes():
     draws saturate the softmax into spiky near-delta functions, which shows
     up as an enormous kurtosis tail.
 
-    This test pins SIGMA3_RATE. If it fails, change SIGMA3_RATE rather than
-    the bounds, and record the implied P(sigma3 > 1) in its comment.
+    This is a *bracket*, not a pin, despite what it used to claim. Measured
+    p90 |excess kurtosis| at n_bins=40: rate 0.35 -> 38.8, rate 5.0 -> 1.13,
+    rate 10.0 -> 1.08, rate 50.0 -> 1.05. So every rate from 0.35 upward
+    passes, and this test cannot select one. It only catches the two gross
+    failure modes. Note that the adopted rate is chosen by SBC (see
+    tests/test_calibration.py and TASKS.md), not here.
+
+    Note also that 38.8 at Exp(0.35) sits close to the near-delta ceiling --
+    consistent with the high degenerate-draw fraction that prior showed.
     """
     n_bins = 40
     centers, bin_width = _grid(n_bins)
