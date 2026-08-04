@@ -5,11 +5,48 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
+- **[P0] The adopted prior fails SBC, worse than the one it replaced.**
+  Measured 2026-08-04 at the adopted default (`SIGMA3_RATE=0.35`,
+  `prior="gaussian_core"`, n_sims=30): **6/30 (20%) simulations failed** — NaN
+  posterior, sampler exception, or inadequate ESS — against the 2% budget.
+  The old `Exp(2.303)` default was 2/30 (6.7%). Loosening made it **3× worse**.
+  This is the predicted mechanism, not a surprise: the failure was already
+  diagnosed as the `Exponential` PC prior's upper tail (`sigma3` ~3–4
+  saturating the softmax into near-delta LOSVDs), and loosening the rate makes
+  that tail fatter. `SIGMA3_RATE` was selected on coverage alone; coverage is
+  blind to this.
+  **Consequence: `Exp(0.35)` is not science-ready and the regularisation
+  decision is not closed.** Coverage improved (26/45 → 41/45 in-band at σ=22)
+  and calibration regressed; those were traded without the trade being
+  measured. Options, none yet tested: a prior with a lighter upper tail at the
+  same body (the six one-parameter families already swept all shared the
+  problem, so this likely means a bounded or truncated scale), or accepting a
+  tighter rate and recovering coverage elsewhere.
+  Reproduce: `pytest "tests/test_calibration.py::test_sbc_calibration[gaussian_core]"`.
+  **Note the runner exits 0 on failure — check the report text, not `$?`.**
+
 - **[P1] Mode-order split scale.** With `rw_order` ruled out, this is the
   remaining candidate for freeing h3/h4 without breaking SBC. Two `sigma3`
   parameters — a loose one for the lowest few deviation modes (carrying h3/h4)
   and a tight one for the rest — attacks the problem the plan identified:
   one scalar cannot serve components needing opposite treatment.
+  Sequence this *after* the SBC item above: a split scale is harder to
+  calibrate than one scalar, and starting it from a base that fails SBC means
+  debugging two unknowns at once.
+
+- **[P1] Matched-grid per-bin fitting** — the diagnosed remedy for the σ=7
+  collapse (see below). Fit each spatial bin on a grid matched to its local σ,
+  aggregate posterior samples onto the shared DYNAMITE output grid. Exact
+  provided the fitted grid is at least as fine as the output grid and edges
+  align — a precondition to enforce, not assume.
+
+## Open, previously misfiled as resolved
+
+These sat under "Resolved by the validation campaign" but were never resolved:
+the SBC regression (now re-measured and worse, promoted to Now above), the
+heavy-tailed kurtosis coverage item, the efficiency check, and the 2D §3.5
+items. Campaign **Task 6 ("Put SBC in the loop") was never executed** — which
+is why the adopted default shipped without its gate being re-measured.
 
 ## Resolved by the validation campaign
 
@@ -20,6 +57,8 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
 - **[P0] Regularisation adopted:** `Exp(0.35)` (`SIGMA3_RATE=0.35`), `rw_order=3`.
   41/45 in-band at σ=22 (n_real=100). Set as default.
   `docs/superpowers/specs/2026-08-03-regularisation-decision.md`.
+  ⚠️ **Adopted on coverage evidence only — it fails SBC at 20%. See the P0
+  item under Now; treat this default as provisional.**
 
 - **Penalty order hypothesis ruled out.** Orders 4 and 5 do not free h3/h4
   moments — the softmax nonlinearity decouples the log-density polynomial null
@@ -55,7 +94,9 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   aggregation onto the shared output grid; if it is err/sigma, there is no
   remedy and the map must be reported with the limitation stated.
 
-- **[P0] SBC regression from the RW3 scaling fix** (`tests/test_calibration.py`)
+- **[P0] SBC regression from the RW3 scaling fix** — **STILL OPEN, re-measured
+  and worse (6/30). Promoted to the Now section above; kept here for the
+  diagnosis history.** (`tests/test_calibration.py`)
   `test_sbc_calibration[gaussian_core]` passes on `main` and **fails on
   `fix/rw3-deviation-scaling`**: 2/30 simulations fail (NaN posterior, sampler
   exception, or inadequate ESS) against a 2% budget. The implementation plan's
@@ -70,7 +111,7 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   **Blocks calling this prior science-ready.** Numbers in
   `docs/superpowers/plans/2026-08-03-rw3-measurements.md`.
 
-- **[P2] Efficiency check against the statistical optimum**
+- **[P2] Efficiency check against the statistical optimum** — **OPEN, never done.**
   Amorisco & Evans (2012) §3.3 show unbinned ML attains StD(μ) = 1/√N and
   StD(σ) = 1/√(2N), while *binned* Gauss-Hermite does not reach the latter —
   binning costs precision even in the second moment, before any higher-moment
@@ -177,7 +218,7 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   Also check whether the harness truths need rescaling: `gaussian` at σ=30 and
   `bimodal_counter_rotation` at σ=42 are both well outside ω Cen's 9–21 range.
 
-- **[P2] Heavy-tailed kurtosis coverage still open** (`PLAN.md` §1.3)
+- **[P2] Heavy-tailed kurtosis coverage still open** — **OPEN.** (`PLAN.md` §1.3)
   The RW3 deviation scaling fix improved coverage broadly but did not close it.
   `test_coverage_over_mock_realisations[gaussian_core]` still fails, as it did
   on `main` before the fix — this is not a regression. Both columns below are
@@ -199,7 +240,7 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   the Gaussian truth's kurtosis coverage was 1.000 both before and after, so
   that row is evidence for nothing in either direction.
 
-- **[P1] 2D solver: §3.5 deferred items** (`PLAN.md` §3.5)
+- **[P1] 2D solver: §3.5 deferred items** — **OPEN, untouched.** (`PLAN.md` §3.5)
   `KinematicSolver2D` is now feature-complete for "minimally working" per
   the plan's own acceptance criterion (recovering ρ from a tilted bivariate
   Gaussian — done, passing), has its own SBC harness (passing, 6/6
