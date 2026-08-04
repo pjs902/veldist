@@ -17,7 +17,7 @@ that premature unification would cost more than the duplication.
 
 All GMRF / Cholesky / latent maths is done in float64
 (``jax.config.update("jax_enable_x64", True)``) even though the design
-matrix ``M`` is stored as float32 for memory -- see the ⚠ Gotchas in
+matrix ``M`` is stored as float32 for memory; see the ⚠ Gotchas in
 ``PLAN.md`` §3.1/§3.2 for why mixing precisions here is deliberate, not an
 oversight.
 """
@@ -25,7 +25,7 @@ oversight.
 import numpy as np
 import jax
 
-jax.config.update("jax_enable_x64", True)  # noqa: FBT003 -- jax's own API shape
+jax.config.update("jax_enable_x64", True)  # noqa: FBT003 (jax's own API shape)
 
 import jax.numpy as jnp
 import numpyro
@@ -53,8 +53,8 @@ def setup_grid_2d(center, width, n_bins):
     Define a square K x K velocity grid over a bivariate velocity space.
 
     The grid is flattened row-major (C order) using ``np.ravel_multi_index`` /
-    ``np.unravel_index`` for every index conversion -- never hand-written
-    arithmetic -- to avoid the row-major/column-major transposition bug
+    ``np.unravel_index`` for every index conversion, never hand-written
+    arithmetic, to avoid the row-major/column-major transposition bug
     flagged in ``PLAN.md`` §3.1: cell ``(ix, iy)`` maps to flat index
     ``m = ix * K + iy``.
 
@@ -144,7 +144,7 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
        evaluation points per cell per star), which handles arbitrary Sigma.
 
     The matrix is built in chunks over stars (default 5000) to bound peak
-    memory -- JAX allocates intermediates during construction, so building
+    memory, because JAX allocates intermediates during construction, so building
     the whole ``(N, K**2)`` array in one call can peak at 2-3x its final
     size. The final ``M`` is cast to float32 only at the very end of each
     chunk, after all quadrature/erf math is done in float64.
@@ -271,7 +271,7 @@ def _design_matrix_gl_quadrature(p1, p2, cov, edges_x, edges_y, k):
     # x_pts[ix, jnode] = mx[ix] + hx[ix]*node[jnode]
     x_pts = mx[:, None] + hx[:, None] * nodes[None, :]  # (K, 2)
     y_pts = my[:, None] + hy[:, None] * nodes[None, :]  # (K, 2)
-    wx_pts = hx[:, None] * gweights[None, :]  # (K, 2) -- half-width already in Jacobian
+    wx_pts = hx[:, None] * gweights[None, :]  # (K, 2); half-width already in Jacobian
     wy_pts = hy[:, None] * gweights[None, :]
 
     # Combine into (K, K, 4) grid of points & weights (2 nodes per axis -> 4 combos)
@@ -315,15 +315,15 @@ def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6)
 
     ``Q = D - W`` where ``W`` is the (symmetric) adjacency-weight matrix:
     weight ``edge_weight`` (default 1) for the 4 edge-neighbours and
-    ``diag_weight`` (default ``1/sqrt(2)``... actually see note below) for
+    ``diag_weight`` (default ``1/sqrt(2)``; see the note below) for
     the 4 diagonal neighbours, and ``D = diag(row sums of W)``.
 
     Built via explicit ``np.ravel_multi_index``-based adjacency lists (never
-    array-shift tricks) -- shift-based construction silently wraps around at
+    array-shift tricks), because shift-based construction silently wraps around at
     the grid boundary (periodic boundary leakage), which is the single most
     dangerous failure mode here (see ``PLAN.md`` §3.2 gotchas).
 
-    ``Q`` is singular by construction (constant-vector null space -- the
+    ``Q`` is singular by construction (constant-vector null space, the
     softmax removes that direction anyway). A ridge is added for the
     Cholesky factorisation, scaled relative to ``mean(diag(Q))`` (not an
     absolute value) so its meaning does not change if the connectivity
@@ -402,11 +402,11 @@ def model_2d(matrix, n_cells, L):
     L : jnp.ndarray (K**2, K**2)
         Cholesky factor of the (ridge-regularised) GMRF precision matrix Q,
         computed once outside the model and closed over (never recomputed
-        per NUTS step -- Cholesky of a fixed matrix is a one-time cost).
+        per NUTS step; Cholesky of a fixed matrix is a one-time cost).
 
     Notes
     -----
-    Latent parameterisation is non-centred and fully generative -- a real
+    Latent parameterisation is non-centred and fully generative: a real
     ``numpyro.sample`` site (``z``) followed by a deterministic transform --
     exactly as recommended in ``PLAN.md`` §1.2/§3.2, and *not* a
     ``numpyro.factor``-based penalty on an unconditioned base measure. A
@@ -416,7 +416,7 @@ def model_2d(matrix, n_cells, L):
     though NUTS inference itself would still be numerically correct.
 
     We want ``x = sigma * L^-T z``, i.e.
-    ``jax.scipy.linalg.solve_triangular(L.T, z, lower=False)`` -- solving the
+    ``jax.scipy.linalg.solve_triangular(L.T, z, lower=False)``, solving the
     *upper* triangular system ``L.T @ x = z`` for x. Using ``L`` directly
     with ``lower=True`` would instead give ``L^-1 z``, a different (wrong)
     covariance; see ``tests/test_veldist2d.py::test_solve_triangular_direction``
@@ -500,7 +500,7 @@ class KinematicSolver2D:
 
         L = np.linalg.cholesky(Q_reg)
         # Cholesky of a near-singular matrix returns NaNs silently (unlike
-        # scipy, which raises) -- check immediately, per PLAN.md §3.2.
+        # scipy, which raises); check immediately, per PLAN.md §3.2.
         if not np.all(np.isfinite(L)):
             msg = (
                 "Cholesky factorisation of the ridge-regularised GMRF "
@@ -522,7 +522,7 @@ class KinematicSolver2D:
         cov : array-like (N, 2, 2)
             Per-star measurement covariance matrices. Build as
             ``[[sigma_x**2, rho*sigma_x*sigma_y], [rho*sigma_x*sigma_y,
-            sigma_y**2]]`` -- note that catalogues such as Gaia report a
+            sigma_y**2]]``. Note that catalogues such as Gaia report a
             *correlation* ``rho`` (e.g. ``pmra_pmdec_corr``), not a
             covariance; feeding rho directly in place of the covariance
             entry produces a non-positive-definite matrix for most stars.

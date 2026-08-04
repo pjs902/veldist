@@ -33,7 +33,7 @@ __all__ = [
 ]
 
 # Gauss-Hermite conversions, lowest order (van der Marel & Franx 1993).
-# Only valid for weak non-Gaussianity -- Sanders & Evans (2020) note the h4
+# Only valid for weak non-Gaussianity; Sanders & Evans (2020) note the h4
 # relation is good to 10% only for |h4| < 0.01, so treat these as indicative
 # amplitude conversions, not as a route to DYNAMITE inputs.
 SKEW_PER_H3 = 4.0 * np.sqrt(3.0)
@@ -131,8 +131,8 @@ class ObservingProfile:
         on a grid matched to its own dispersion and aggregating the posterior
         samples onto the shared output grid afterwards. If the fitted grid is
         at least as fine as the output grid and their edges align, that
-        aggregation is exact -- it is just summing mass within output bins,
-        per sample -- so uncertainties propagate correctly.
+        aggregation is exact, being just a sum of mass within output bins
+        taken per sample, so uncertainties propagate correctly.
         """
         width = 2.0 * self.n_sigma_grid * sigma
         return width, int(round(width / self.bin_width))
@@ -210,7 +210,7 @@ class Truth:
 
 
 def _uniform_gauss(a, s):
-    """Uniform(-a, a) convolved with a Gaussian -- the Sanders & Evans (2020)
+    """Uniform(-a, a) convolved with a Gaussian, the Sanders & Evans (2020)
     negative-excess-kurtosis kernel. Excess kurtosis is -1.2 r^2 where r is the
     fraction of variance carried by the uniform part; -1.2 is the hard floor."""
 
@@ -228,7 +228,7 @@ def _split_uniform_gauss(a1, a2, s):
     """Two-piece uniform kernel, equal weight but different widths either side
     of zero, convolved with a Gaussian: the SE20 skewness option. Note a
     *shifted* uniform is still symmetric about its own midpoint and gives no
-    skewness at all -- the widths must differ."""
+    skewness at all; the widths must differ."""
 
     def pdf(x):
         x = np.asarray(x, dtype=float)
@@ -262,7 +262,7 @@ def _mixture(locs, scales, weights):
 def make_truths():
     """The mock LOSVD shapes, dimensionless. Scale with ``Truth.scaled(sigma)``.
 
-    Chosen to span the non-Gaussianity actually expected in a rotating,
+    Chosen to span the non-Gaussianity expected in a rotating,
     anisotropic globular cluster, at realistic h3/h4 amplitude (|h3| <~ 0.15,
     |h4| <~ 0.05-0.1). Physical motivation for each is in its ``note``.
     """
@@ -373,7 +373,7 @@ class CalibrationResult:
         """Actual estimator scatter divided by the statistical optimum.
 
         ~1 means the estimator extracts what the data contain. >1 means
-        information is being lost. **<1 is not better than optimal** -- it
+        information is being lost. **<1 is not better than optimal**: it
         means the prior is shrinking estimates, and must be read alongside the
         bias.
 
@@ -431,7 +431,7 @@ def calibrate(
     ``profile.sigma_min`` as well.** Across omega Cen's 7-22 km/s range
     err/sigma goes from 0.11 to 0.36 and the informative bin fraction from 95%
     to 30%, so a regularisation tuned at one end is not necessarily calibrated
-    at the other -- the narrow bins sit in the dwarf-spheroidal difficulty
+    at the other, since the narrow bins sit in the dwarf-spheroidal difficulty
     regime (Amorisco & Evans 2012 quote Sculptor at 0.33).
     """
     from veldist.veldist import KinematicSolver

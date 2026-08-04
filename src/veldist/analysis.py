@@ -230,7 +230,7 @@ def bimodality_score(pdf_samples):
     --------
     >>> score = bimodality_score(solver.samples["intrinsic_pdf"])
     >>> if score >= 2:
-    ...     print("Multimodal -- inspect full histogram before trusting moments")
+    ...     print("Multimodal; inspect full histogram before trusting moments")
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     mean_pdf = np.mean(pdf_samples, axis=0)
@@ -393,7 +393,7 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
         default because truncation is a lossy, threshold-dependent repair:
         it discards posterior mass at the chosen cut, which is desirable when
         that mass is known prior leakage but undesirable if a distribution
-        genuinely has real support there (e.g. a deliberately wide grid
+        has real support there (e.g. a deliberately wide grid
         margin for a heavy-tailed truth). Silently truncating by default
         would risk quietly biasing results for users who have not diagnosed
         whether leakage is present in their setup. Empirical testing (mock
@@ -419,7 +419,7 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     dict
         Each key maps to a ``(median, half_68ci)`` tuple of floats, in the
         same units as *grid_centers* for velocity quantities and dimensionless
-        for shape metrics -- **except** ``'bimodality_score'``, which is a
+        for shape metrics, **except** ``'bimodality_score'``, which is a
         plain ``int``.
 
         **Location**
@@ -559,7 +559,7 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     v_asym = means - medians  # (n_samples,)
 
     # ------------------------------------------------------------------
-    # Bimodality score (scalar -- from posterior mean, not per-sample)
+    # Bimodality score (scalar, from posterior mean, not per-sample)
     # ------------------------------------------------------------------
     bscore = bimodality_score(pdf_samples)
 
@@ -633,7 +633,7 @@ def compute_summary_maps(solvers):
             break
 
     if metrics is None:
-        raise ValueError("all solvers are None -- no data to build maps from")
+        raise ValueError("all solvers are None; no data to build maps from")
 
     # Build dict of arrays, NaN-filled
     maps = {}

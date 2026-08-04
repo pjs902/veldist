@@ -12,7 +12,7 @@ Simulation-Based Calibration (SBC; Talts et al. 2018) checks the sampler
 against the model itself: draw a parameter from the model's own prior,
 simulate synthetic data from it, run inference, and check that the true
 parameter's rank among the posterior draws is uniformly distributed. This
-is a test of implementation correctness — a wrong random-walk prior, an
+is a test of implementation correctness. A wrong random-walk prior, an
 off-by-half-bin design matrix, or a `numpyro.factor` term invisible to
 `Predictive` all show up as non-uniform rank histograms. It does **not**
 check whether the model describes real data well.
@@ -39,11 +39,11 @@ short version of how to read them:
 |---|---|---|---|
 | SBC failure fraction | What share of simulations could not be evaluated (NaN, crash, too few independent draws)? | ≤ 2% | It is a count: at n=30 a difference of one is noise. Only large gaps (17% vs 2%) are real. |
 | SBC rank uniformity (KS p) | Does the truth fall at a uniform quantile of the posterior? | p > 0.05 | Computed only over simulations that *completed*. If the hard cases are the ones failing, this is calibration on the easy subset. |
-| ESS | How many genuinely independent draws, out of the nominal count? | ≫ 20 | Says nothing about correctness — a chain can mix well around a wrong answer. |
+| ESS | How many independent draws, out of the nominal count? | ≫ 20 | Says nothing about correctness: a chain can mix well around a wrong answer. |
 | Moment coverage | Does the credible interval contain the true moment? | 0.68 | Gameable: a useless estimator with huge error bars scores perfectly. Read with efficiency. |
 | **Per-bin LOSVD coverage** | Does `losvd_median ± losvd_uncertainty` contain the true mass, bin by bin? | 0.68 | Empty bins over-cover trivially (~0.88) because the uncertainty floor dominates; they must be excluded. |
 | Efficiency | Estimator scatter ÷ statistical optimum (`σ/√N` for the mean, `σ/√(2N)` for the dispersion). | 1.0 | With few realisations a single bad fit dominates. Use a robust (16–84 percentile) scatter. |
-| Bias | Systematic offset in the recovered value. | ≈ 0 | Only meaningful against a scale — compare to the optimal precision, not to zero. |
+| Bias | Systematic offset in the recovered value. | ≈ 0 | Only meaningful against a scale: compare to the optimal precision, not to zero. |
 
 ### Three traps worth knowing
 
@@ -62,15 +62,15 @@ per-bin is the one that matters.
 `flat_top_tangential` and `student_t_h4` are symmetric, so their true skewness
 is ~0; a tight prior shrinks skewness toward 0 and scores near-perfect coverage
 for entirely the wrong reason. Read each coverage cell against whether that
-truth actually has signal in that moment. The same caution applies to any test
-case sitting where the prior already points — a Gaussian truth cannot measure
-what a Gaussian-core prior costs.
+truth has signal in that moment. The same caution applies to any test case
+sitting where the prior already points: a Gaussian truth cannot measure what a
+Gaussian-core prior costs.
 
 ### How they combine
 
 SBC is a **gate, not an objective**: pass/fail, with near-boundary results
-treated as ties. Among configurations that pass, choose on what is actually
-recovered — per-bin coverage first, then the moments that carry real signal.
+treated as ties. Among configurations that pass, choose on what is recovered,
+taking per-bin coverage first and then the moments that carry real signal.
 
 ## 1D solver results
 
@@ -104,13 +104,13 @@ Gaussian trivially satisfied the Gaussian-truth bias thresholds.
 `n_bins=20`, four truths: Gaussian, Student-$t$ ($\nu=6$), skew-normal,
 counter-rotating bimodal): parametrised over both priors. For the
 **Gaussian-core prior** (without truncation) this test currently **fails**, and
-also failed before the RW3 scaling fix — it is a standing known-red result, not
-a regression, and is marked `xfail(strict=False)` so that a genuine improvement
-shows up as an XPASS.
+also failed before the RW3 scaling fix. It is a standing known-red result
+rather than a regression, and is marked `xfail(strict=False)` so that an
+improvement shows up as an XPASS.
 
 The Gaussian truth shows over-coverage in kurtosis (1.000, all 25/25 intervals
 contain the truth) and skewness (0.960); the error bars are conservative but
-valid. This row is not evidence about the deviation term either way — kurtosis
+valid. This row is not evidence about the deviation term either way: kurtosis
 coverage was also 1.000 *before* the fix, because a posterior collapsed onto a
 Gaussian covers a Gaussian truth perfectly.
 
@@ -121,8 +121,8 @@ kurtosis 0.000 → 0.040 (still below the 0.30 floor); skew-normal skewness and
 kurtosis 0.000 → 0.000 (unchanged). The earlier attribution in this document to
 "an inherent finite-data limitation, not the flat-null-space bug" is withdrawn:
 that diagnosis was made with an inert deviation term and cannot be supported.
-The cause of the residual under-coverage — the skew-normal case above all — is
-an open question. Full table in
+The cause of the residual under-coverage, in the skew-normal case above all,
+is an open question. Full table in
 `docs/superpowers/plans/2026-08-03-rw3-measurements.md`. For the **RW1
 prior**, `n_sigma_truncate=3.0` is applied (see `analysis.truncate_pdf_samples`);
 the test remains marked `xfail` pending a better tail-handling approach for
@@ -163,7 +163,7 @@ the lesson learned from the 1D SBC bug above. This was verified via
 
 **Recovery** (`tests/test_veldist2d.py`, slow tests): the acceptance
 criterion for "2D minimally working" per the plan is recovering the full
-covariance — not just the marginals — of a tilted bivariate Gaussian, since
+covariance of a tilted bivariate Gaussian, not only its marginals, since
 marginal recovery alone would be equally well passed by a separable
 (non-GMRF) prior. `test_recover_tilted_gaussian` fits mock data drawn from a
 bivariate Gaussian with covariance $\mathrm{Var}(x)=\sigma_x^2$,
@@ -172,13 +172,13 @@ using $\sigma_x=8$, $\sigma_y=6$, $\rho=0.6$, and recovers all three
 independent covariance components within the posterior half-68CI
 (5$\sigma$ tolerance). `test_recover_isotropic_gaussian` is the $\rho=0$
 control. `test_2d_marginal_matches_1d` cross-checks the 2D solver's
-$\hat v_1$ marginal against a direct 1D fit of the same data — both pass.
+$\hat v_1$ marginal against a direct 1D fit of the same data. Both pass.
 One finding: these tests needed `n_stars=2000` rather than the plan-suggested
 200–400, because at lower star counts the GMRF prior induces a measurable
 finite-sample shrinkage bias in the recovered variance (the same underlying
-mechanism as the 1D kurtosis bias above — many free grid cells relative to
-star count). This was fixed by raising $N$, a genuine mitigation, rather than
-by loosening the tolerance.
+mechanism as the 1D kurtosis bias above: many free grid cells relative to
+star count). This was fixed by raising $N$, a real mitigation, rather than by
+loosening the tolerance.
 
 **Performance gate** (`PLAN.md` §3.4): the plan defines an explicit,
 measurable gate before considering any SVI/Pathfinder escalation. Run

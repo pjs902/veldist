@@ -46,7 +46,7 @@ This is deliberately *not* implemented as a directed walk with $u_0$ pinned
 at a fixed value: pinning one endpoint makes the prior asymmetric in bin
 index (bins near the pinned edge are regularised more tightly than bins far
 from it), which would bias the inferred LOSVD's *shape* toward one edge of
-the velocity grid. The RW1 form above treats every bin identically — it
+the velocity grid. The RW1 form above treats every bin identically: it
 depends only on the differences between neighbours, so no bin is special.
 Because this penalty alone leaves the overall level of $\mathbf{u}$
 completely unconstrained (any constant shift leaves all differences
@@ -59,11 +59,11 @@ constant shifts.
 The smoothing scale $\sigma_\mathrm{smooth}$ controls the typical step size
 between adjacent bins, rescaled by $\sqrt{\Delta v}$ (i.e.
 $\sigma_\mathrm{step} = \sigma_\mathrm{smooth}\sqrt{\Delta v}$) so that its
-meaning does not depend on how finely the velocity grid is subdivided — a
+meaning does not depend on how finely the velocity grid is subdivided. A
 grid refined to twice as many, half-as-wide bins should not, by itself,
 change how smooth the inferred LOSVD is.  A small value forces the inferred
-LOSVD to vary slowly; a large value allows sharp features.  Crucially,
-$\sigma_\mathrm{smooth}$ is not fixed by the user — it is a free
+LOSVD to vary slowly; a large value allows sharp features.
+$\sigma_\mathrm{smooth}$ is not fixed by the user. It is a free
 hyperparameter with a weakly informative prior, and its posterior is
 marginalised during sampling.  The sampler therefore adapts the smoothness
 to the signal-to-noise of the data automatically: a bin with many stars will
@@ -91,7 +91,7 @@ $$
 
 where $c_j$ is the centre of bin $j$.  Evaluating this naïvely for all $N$
 stars at every MCMC step is an $O(N K)$ operation that involves $N K$
-exponential evaluations — expensive for large samples.
+exponential evaluations, which is expensive for large samples.
 
 ### Pre-computing the design matrix
 
@@ -175,7 +175,7 @@ fixed penalty with a Gaussian random walk prior whose scale is marginalised
 during sampling; this avoids manual tuning and provides formal uncertainty
 estimates on the smoothing scale itself.
 
-### Falcón-Barroso & Martig (2021) — BayesLOSVD
+### Falcón-Barroso & Martig (2021): BayesLOSVD
 
 BayesLOSVD introduced a Bayesian, non-parametric LOSVD extraction framework
 for IFU spectra, using MCMC regularisation and a similar random walk prior.
@@ -183,7 +183,7 @@ The key difference is the data model: BayesLOSVD operates on integrated-light
 spectra and requires a template stellar library and a deconvolution step with
 the instrumental line-spread function.  `veldist` targets discrete stellar
 velocities, where the data are individual measurements with per-star error
-bars — no template is needed.  The design-matrix likelihood is specific to
+bars, and no template is needed.  The design-matrix likelihood is specific to
 this regime and cannot be used for spectral fitting.
 
 `veldist` uses the BayesLOSVD ECSV file format for Dynamite input, which
@@ -191,7 +191,7 @@ allows the two codes to be used in sequence: `veldist` extracts LOSVDs from
 resolved stellar data, which are then passed to Dynamite's `histLOSVD`
 kinematics handler.
 
-### Bovy, Hogg & Roweis (2011) — Extreme Deconvolution
+### Bovy, Hogg & Roweis (2011): Extreme Deconvolution
 
 Extreme Deconvolution (XD) also handles heteroscedastic per-object errors,
 but models the intrinsic distribution as a mixture of Gaussians rather than
@@ -199,4 +199,4 @@ a non-parametric histogram.  The mixture representation is efficient when the
 distribution is approximately Gaussian or a small sum of Gaussians, but
 cannot represent flat-topped, asymmetric, or multimodal LOSVDs without a
 large number of components.  `veldist` makes no shape assumption; the prior
-simply favours smooth solutions over rough ones.
+favours smooth solutions over rough ones.

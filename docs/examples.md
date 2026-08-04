@@ -8,8 +8,8 @@ individual velocity measurements and uncertainties.
 ![The core deconvolution problem](images/fig_deconvolution.png)
 
 *(a) The intrinsic LOSVD together with a sample of individual per-star error
-kernels. (b) The observed velocity distribution — the convolution of the
-intrinsic LOSVD with those error kernels — which is all that is directly
+kernels. (b) The observed velocity distribution, the convolution of the
+intrinsic LOSVD with those error kernels, which is all that is directly
 measured. (c) The posterior LOSVD recovered by `veldist`, compared against
 the true intrinsic distribution from panel (a).*
 
@@ -70,7 +70,7 @@ solver.plot_result()
 A Gauss-Hermite fit would assign anomalously large $h_3$ or $h_4$ values to
 such a distribution; the histogram representation captures both peaks directly.
 The `bimodality_score` returned by `compute_summary` will be $\geq 2$ for
-bins where this structure is genuinely supported by the data.
+bins where this structure is supported by the data.
 
 ![Posterior LOSVD for a two-component system](images/fig_bimodal.png)
 
@@ -135,12 +135,12 @@ write_dynamite_kinematics(
 
 This writes three files to `dynamite_input/`:
 
-- `bayes_losvd_kins.ecsv` — one row per solved bin, with interleaved
+- `bayes_losvd_kins.ecsv`: one row per solved bin, with interleaved
   `losvd_j` / `dlosvd_j` columns matching the BayesLOSVD ECSV format.
   The `dlosvd_j` values are half-widths of the 68% credible interval,
   consistent with the convention used by Falcón-Barroso & Martig (2021).
-- `aperture.dat` — pixel grid geometry for Dynamite.
-- `bins.dat` — pixel-to-bin mapping; skipped bins are written as 0.
+- `aperture.dat`: pixel grid geometry for Dynamite.
+- `bins.dat`: pixel-to-bin mapping; skipped bins are written as 0.
 
 The `bin_flux` column receives `solver.n_stars` for each bin when
 `bin_flux_mode='nstars'`.  This is the natural discrete-data analogue of IFU
@@ -231,8 +231,8 @@ with published kinematic maps from IFU surveys.  Note the sign: $\gamma_1 > 0$
 expected pattern on the receding side of a rotating system.
 
 The `tail_weight` metric and the `bimodality_score` have no GH analogues
-and are diagnostic of features that GH fitting cannot represent — heavy tails
-in the radially-anisotropic regime and genuinely bimodal LOSVDs from
+and are diagnostic of features that GH fitting cannot represent, such as heavy tails
+in the radially-anisotropic regime and bimodal LOSVDs from
 kinematically distinct populations.
 
 > **Kurtosis bias note:** The default smoothness prior
@@ -245,7 +245,7 @@ kinematically distinct populations.
 
 ![Summary metrics on two example LOSVDs](images/fig_summary_metrics.png)
 
-*Left: a symmetric, leptokurtic LOSVD (heavy tails — a radial-anisotropy
+*Left: a symmetric, leptokurtic LOSVD (heavy tails, a radial-anisotropy
 analogue) with its scalar summary metrics annotated. Right: an asymmetric,
 skewed LOSVD (a rotation-like analogue). Compare the sign and magnitude of
 `skewness`/`kurtosis` against the shapes shown here when interpreting a new
