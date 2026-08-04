@@ -101,8 +101,8 @@ def test_percentile_summary_gaussian():
     assert summary["median"][0] == pytest.approx(12, rel=0.01)
     assert summary["sigma_pct"][0] == pytest.approx(8, rel=0.01)
     assert summary["skew_pct"][0] == pytest.approx(0, abs=1e-2)
-    # Moors (1988) octile kurtosis of a Gaussian is ~1.23, not 0.
-    assert summary["kurtosis_pct"][0] == pytest.approx(1.233, rel=0.01)
+    # Excess Moors kurtosis: zeroed on a Gaussian, like GH's h4.
+    assert summary["kurtosis_pct"][0] == pytest.approx(0, abs=1e-2)
 
 
 def test_percentile_summary_skewnormal_sign():
@@ -115,6 +115,18 @@ def test_percentile_summary_skewnormal_sign():
     # Right-skewed distribution -> positive Bowley skewness, same sign
     # convention as compute_summary's moment-based skewness.
     assert summary["skew_pct"][0] > 0
+
+
+def test_percentile_summary_kurtosis_student_t_sign():
+    dist = stats.t(df=6)
+    centers, width = make_grid(-80, 80, 4000)
+    pmf = analytic_pmf(dist, centers, width)
+
+    summary = compute_percentile_summary(pmf, centers)
+
+    # Heavy-tailed (leptokurtic) distribution -> positive excess kurtosis_pct,
+    # same sign convention as compute_summary's moment-based kurtosis and h4.
+    assert summary["kurtosis_pct"][0] > 0
 
 
 def test_kurtosis_student_t():

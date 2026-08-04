@@ -656,6 +656,13 @@ def compute_summary_maps(solvers):
     return maps
 
 
+# Moors (1988) octile kurtosis of a standard Gaussian: ((P87.5-P62.5)+(P37.5-P12.5))/(P75-P25)
+# evaluated at scipy.stats.norm.ppf. Exact analytic value (not a fit), used
+# to zero kurtosis_pct on a Gaussian so it reads on the same scale as GH's h4
+# (0 = Gaussian, not Moors' raw ~1.23).
+_MOORS_KURTOSIS_GAUSSIAN = 1.2330951154852172
+
+
 def compute_percentile_summary(pdf_samples, grid_centers):
     """
     Compute percentile-based (order-statistic) moment analogues per sample.
@@ -692,10 +699,13 @@ def compute_percentile_summary(pdf_samples, grid_centers):
             ``[-1, 1]``; 0 for a symmetric distribution, matching sign
             convention with ``compute_summary``'s ``skewness``.
         ``'kurtosis_pct'``
-            Moors (1988) octile kurtosis
-            ``((P87.5-P62.5)+(P37.5-P12.5)) / (P75-P25)``. Unlike
-            ``compute_summary``'s ``kurtosis`` this is *not* zeroed on a
-            Gaussian: a Gaussian LOSVD gives approximately 1.23, not 0.
+            *Excess* Moors (1988) octile kurtosis:
+            ``((P87.5-P62.5)+(P37.5-P12.5)) / (P75-P25) - 1.233...``, the
+            raw Moors statistic minus its exact Gaussian reference value.
+            Zeroed on a Gaussian, positive for leptokurtic (heavy-tailed,
+            peaked) distributions -- the same convention as GH's ``h4``,
+            unlike the raw Moors statistic (which is ~1.23, not 0, for a
+            Gaussian).
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
@@ -710,7 +720,7 @@ def compute_percentile_summary(pdf_samples, grid_centers):
     iqr = p75 - p25
     safe_iqr = np.where(iqr > 0, iqr, np.nan)
     skew_pct_samples = ((p75 - p50) - (p50 - p25)) / safe_iqr
-    kurt_pct_samples = ((p875 - p625) + (p375 - p125)) / safe_iqr
+    kurt_pct_samples = ((p875 - p625) + (p375 - p125)) / safe_iqr - _MOORS_KURTOSIS_GAUSSIAN
 
     return {
         "median": (float(np.median(median_samples)), half_68ci(median_samples)),
