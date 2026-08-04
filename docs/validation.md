@@ -30,6 +30,48 @@ cleanly, because SBC's "truth" is always self-consistent with the model's
 prior. A smoothness prior that shrinks away genuine sharp features in real
 data is invisible to SBC but shows up directly in coverage.
 
+## Reading the metrics
+
+Each metric answers a different question and has a specific blind spot. The
+short version of how to read them:
+
+| Metric | Asks | Target | Blind spot |
+|---|---|---|---|
+| SBC failure fraction | What share of simulations could not be evaluated (NaN, crash, too few independent draws)? | ≤ 2% | It is a count: at n=30 a difference of one is noise. Only large gaps (17% vs 2%) are real. |
+| SBC rank uniformity (KS p) | Does the truth fall at a uniform quantile of the posterior? | p > 0.05 | Computed only over simulations that *completed*. If the hard cases are the ones failing, this is calibration on the easy subset. |
+| ESS | How many genuinely independent draws, out of the nominal count? | ≫ 20 | Says nothing about correctness — a chain can mix well around a wrong answer. |
+| Moment coverage | Does the credible interval contain the true moment? | 0.68 | Gameable: a useless estimator with huge error bars scores perfectly. Read with efficiency. |
+| **Per-bin LOSVD coverage** | Does `losvd_median ± losvd_uncertainty` contain the true mass, bin by bin? | 0.68 | Empty bins over-cover trivially (~0.88) because the uncertainty floor dominates; they must be excluded. |
+| Efficiency | Estimator scatter ÷ statistical optimum (`σ/√N` for the mean, `σ/√(2N)` for the dispersion). | 1.0 | With few realisations a single bad fit dominates. Use a robust (16–84 percentile) scatter. |
+| Bias | Systematic offset in the recovered value. | ≈ 0 | Only meaningful against a scale — compare to the optimal precision, not to zero. |
+
+### Three traps worth knowing
+
+**Efficiency below 1.0 is not a win.** Nothing beats the statistical optimum,
+so a value under 1.0 means the prior is shrinking estimates toward a common
+answer. It must be read alongside the bias, never on its own.
+
+**Moment coverage does not imply per-bin coverage.** Moments compress ~37 bins
+into 5 scalars, and over-wide intervals in one bin cancel over-tight ones in
+another. Measured: tightening `SIGMA3_RATE` from 1.0 to 5.0 left every moment
+metric flat while per-bin coverage fell 0.680 → 0.609 on `skew_normal_h3`.
+Per-bin is the artifact DYNAMITE $\chi^2$-weights, so when the two disagree,
+per-bin is the one that matters.
+
+**A shrinkage prior scores well on moments whose true value is zero.** Both
+`flat_top_tangential` and `student_t_h4` are symmetric, so their true skewness
+is ~0; a tight prior shrinks skewness toward 0 and scores near-perfect coverage
+for entirely the wrong reason. Read each coverage cell against whether that
+truth actually has signal in that moment. The same caution applies to any test
+case sitting where the prior already points — a Gaussian truth cannot measure
+what a Gaussian-core prior costs.
+
+### How they combine
+
+SBC is a **gate, not an objective**: pass/fail, with near-boundary results
+treated as ties. Among configurations that pass, choose on what is actually
+recovered — per-bin coverage first, then the moments that carry real signal.
+
 ## 1D solver results
 
 **SBC** (`tests/test_calibration.py`, `n_bins=15`, `n_stars=200`,
