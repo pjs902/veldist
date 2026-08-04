@@ -31,9 +31,11 @@ __all__ = [
 ]
 
 # Penalised-complexity prior rate for the Gaussian-core deviation scale.
-# Defined by P(sigma3 > 1) = 0.1, i.e. rate = -ln(0.1). After Sorbye-Rue
-# standardisation sigma3 is the typical log-density departure from a Gaussian
-# LOSVD, so sigma3 = 1 means a departure of a factor ~e at typical velocities.
+# After Sorbye-Rue standardisation sigma3 is the typical log-density departure
+# from a Gaussian LOSVD, so sigma3 = 1 means a departure of a factor ~e at
+# typical velocities; this rate puts P(sigma3 > 1) = exp(-0.35) = 0.70.
+# The value is empirical, not derived from a tail statement: it was chosen from
+# the coverage campaign (41/45 in-band at sigma=22), not by fixing P(sigma3 > 1).
 # Pinned by test_gaussian_core_prior_spans_nongaussian_shapes (p90 |kurtosis| = 1.361).
 SIGMA3_RATE = 0.35  # Exp(0.35), adopted 2026-08-03 — see docs/superpowers/specs/2026-08-03-regularisation-decision.md
 
@@ -200,14 +202,22 @@ def _rw_deviation_scale(n_bins, order=3):
     - order 3: null space {1, u, u^2}, i.e. quadratic log-densities.
       Gaussians are unpenalised, so v and sigma are free, but h3 and h4 are
       shrunk -- they are the first things inside the penalised space.
-    - order 4: adds u^3. Skewness becomes free.
-    - order 5: adds u^4. Skewness and kurtosis are both free, and the penalty
-      suppresses only structure beyond fourth order.
+    - order 4 adds u^3, order 5 adds u^4.
+
+    Note that raising the order does NOT free the corresponding *PDF* moments.
+    The null space is a null space of the log-density, and the softmax that
+    turns it into a PDF decouples the two: measured h3 retention is ~0.13-0.16
+    across orders 3-5. See the 2026-08-03 validation campaign; orders 4/5 are
+    kept only because the constant is cheap to generalise.
 
     Depends only on ``n_bins`` and ``order``. Cached because it costs an
     O(n^3) QR and matrix product and is evaluated at JAX trace time, where
     the result is constant-folded into the compiled model.
     """
+    # Computed on a uniform index grid. The caller projects on physical bin
+    # centres instead, which spans the same polynomial space -- and so gives
+    # the same projection -- as long as the grid is uniformly spaced, which
+    # setup_grid guarantees.
     idx = np.arange(n_bins, dtype=float)
     u = (idx - idx.mean()) / (n_bins - 1)
     basis = np.stack([u**k for k in range(order)], axis=1)
@@ -286,7 +296,7 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
 
     ``sigma3`` is standardised so that the *generalised variance* of the
     projected deviation -- the geometric mean of its per-bin marginal
-    variances -- is exactly 1 (see :func:`_rw3_deviation_scale`). This is the
+    variances -- is exactly 1 (see :func:`_rw_deviation_scale`). This is the
     standard Sorbye & Rue (2014) treatment for intrinsic GMRFs, and it makes
     ``sigma3`` directly interpretable as the typical log-density departure
     from a Gaussian LOSVD, independent of grid resolution.
@@ -544,7 +554,7 @@ class KinematicSolver:
         self.matrix = precompute_design_matrix(vel, err, self.grid["centers"], bin_width=self.grid["width"])
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="gaussian_core", rw_order=3):
+    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567, prior="gaussian_core"):
         """
         Run the NUTS sampler.
 
@@ -601,7 +611,6 @@ class KinematicSolver:
         if prior == "gaussian_core":
             model_fn = model_gaussian_core
             model_kwargs["centers"] = jnp.asarray(self.grid["centers"])
-            model_kwargs["rw_order"] = rw_order
         else:
             model_fn = model
 

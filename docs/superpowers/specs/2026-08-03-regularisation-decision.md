@@ -31,9 +31,16 @@ order hypothesis was not supported — see the null-space measurements doc):
 | in-band /45 | 23/45 | 24/45 |
 | catastrophic | 13 | 14 |
 | h3 coverage (skew_normal) | 0.200 | 0.210 |
+| sampler runtime | 1173 s | **32590 s** |
 
-Both are essentially identical at σ=7, confirming the problem is structural
-(empty grid), not a tuning issue.
+Coverage is essentially identical at σ=7, confirming the problem is structural
+(empty grid), not a tuning issue. Runtime is not identical: Exp(0.20) took 28×
+longer for the same coverage.
+
+Raw campaign output: `2026-08-03-regularisation-campaign-log.txt` (this
+directory). Per-realisation JSON was written to `/tmp/campaign_results/` and is
+not preserved; regenerate with the campaign driver in the validation-campaign
+plan (n_real=100, same seeds) if the per-truth detail is needed again.
 
 ## Decision
 
@@ -43,10 +50,10 @@ Rationale:
 - Both candidates are effectively tied at σ=22 (41/45 in-band, 1 catastrophic).
   Exp(0.20) has marginally better h3 coverage (0.430 vs 0.400) and efficiency
   (1.04 vs 1.13), but these are within binomial noise at n_real=100.
-- Exp(0.20) at σ=7 may be worse than Exp(0.35) since a looser prior in an
-  already grid-starved regime gives NUTS more dimensions to wander in — the
-  matched-grid diagnosis (Task 7) showed the σ=7 problem is structural, not a
-  tuning problem, so the more conservative prior is safer.
+- Exp(0.20) costs 28× the sampler runtime at σ=7 (32590 s vs 1173 s) to buy
+  1/45 more in-band entries, i.e. nothing outside binomial noise. That is the
+  looser prior giving NUTS more room to wander in an already grid-starved
+  posterior. Coverage ties, cost does not, so the more conservative prior wins.
 - Exp(0.35) is close to the sweeps' leading candidate and was measured at
   n_real=100 rather than the sweep's n_real=25, so the 41/45 number is more
   reliable.
@@ -61,7 +68,13 @@ Rationale:
    for skew_normal_h3's skewness/kurtosis, h3 is still below the [0.44, 0.92]
    band. The finite-sample achievable skewness at N=150 is 0.43 against a true
    0.45, so this is partly a fundamental data limit, not just model shrinkage.
-3. **The penalty order lever does not work as hypothesised.** The softmax
+3. **More degenerate prior draws.** The looser prior raises the fraction of
+   prior-predictive draws that put all their mass in one bin, so
+   `test_gaussian_core_prior_is_not_uniform` had its ceiling moved from 0.25 to
+   0.40. Prior draws are not posterior draws, so this is acceptable, but it is
+   the direct cost of the loosening and the number to watch if the rate is
+   loosened further.
+4. **The penalty order lever does not work as hypothesised.** The softmax
    nonlinearity decouples the log-density polynomial null space from the PDF
    moments, so raising rw_order to 4 or 5 does not free h3/h4. The next option
    is a mode-order split scale (two sigma3 parameters).

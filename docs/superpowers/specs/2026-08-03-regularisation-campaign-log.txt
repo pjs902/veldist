@@ -1,0 +1,65 @@
+
+============================================================
+[1/4] Prior: Exp(0.35) (rate=0.35)  |  sigma=22
+============================================================
+  Runtime: 1383s
+  Saved to /tmp/campaign_results/exp35_sigma22.json
+  Score: in_band 41/45, catastrophic 1
+  Efficiency: v_mean 1.13x, sigma 1.35x
+  h3/h4 coverage:
+    skew_normal_h3               0.400 / 0.560
+    student_t_h4                 0.670 / 0.260
+    flat_top_tangential          0.670 / 0.490
+    rotating_tangential          0.640 / 0.520
+    bimodal_counter_rotation     0.680 / 0.540
+  Elapsed: 1383s total, ETA 4150s (69.2m)
+
+============================================================
+[2/4] Prior: Exp(0.35) (rate=0.35)  |  sigma=7
+============================================================
+  Runtime: 1173s
+  Saved to /tmp/campaign_results/exp35_sigma7.json
+  Score: in_band 23/45, catastrophic 13
+  Efficiency: v_mean 0.98x, sigma 1.28x
+  h3/h4 coverage:
+    skew_normal_h3               0.200 / 0.300
+    student_t_h4                 0.990 / 0.100
+    flat_top_tangential          0.990 / 0.000
+    rotating_tangential          0.110 / 0.020
+    bimodal_counter_rotation     0.990 / 0.020
+  Elapsed: 2557s total, ETA 2557s (42.6m)
+
+============================================================
+[3/4] Prior: Exp(0.20) (rate=0.2)  |  sigma=22
+============================================================
+  Runtime: 1582s
+  Saved to /tmp/campaign_results/exp20_sigma22.json
+  Score: in_band 41/45, catastrophic 1
+  Efficiency: v_mean 1.04x, sigma 1.32x
+  h3/h4 coverage:
+    skew_normal_h3               0.430 / 0.580
+    student_t_h4                 0.630 / 0.230
+    flat_top_tangential          0.630 / 0.520
+    rotating_tangential          0.620 / 0.530
+    bimodal_counter_rotation     0.680 / 0.590
+  Elapsed: 4138s total, ETA 1379s (23.0m)
+
+============================================================
+[4/4] Prior: Exp(0.20) (rate=0.2)  |  sigma=7
+============================================================
+  Runtime: 32590s
+  Saved to /tmp/campaign_results/exp20_sigma7.json
+  Score: in_band 24/45, catastrophic 14
+  Efficiency: v_mean 0.99x, sigma 1.26x
+  h3/h4 coverage:
+    skew_normal_h3               0.210 / 0.510
+    student_t_h4                 0.980 / 0.210
+    flat_top_tangential          0.980 / 0.020
+    rotating_tangential          0.260 / 0.010
+    bimodal_counter_rotation     0.980 / 0.060
+  Elapsed: 36728s total, ETA 0s (0.0m)
+
+
+============================================================
+CAMPAIGN COMPLETE in 36728s (612.1m)
+Results in /tmp/campaign_results/
