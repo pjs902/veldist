@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:  # manual trigger; the only thing that runs the slow suite
 
 jobs:
   test:
@@ -37,7 +38,20 @@ jobs:
         run: |
           pytest tests/ -v --tb=short -m "not slow"
 
+      # The slow suite (SBC, coverage, per-bin calibration, 2D recovery) runs
+      # NUTS for real. KinematicSolver.run defaults to num_chains=4, which a
+      # GitHub runner serialises, so these are hours rather than minutes and
+      # are not worth blocking a push on. Run them locally before merging
+      # anything that touches the model, the prior, or the sampler:
+      #
+      #     python -c "import veldist; veldist.set_host_devices(4)"  # parallel
+      #     pytest tests/ -v --tb=short -m slow
+      #
+      # Triggered manually here (Actions tab -> Run workflow) when wanted.
       - name: Run slow tests
         run: |
           pytest tests/ -v --tb=short -m slow
-        if: matrix.os == 'ubuntu-latest' && matrix.python-version == '3.13'
+        if: >-
+          github.event_name == 'workflow_dispatch'
+          && matrix.os == 'ubuntu-latest'
+          && matrix.python-version == '3.13'

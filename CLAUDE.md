@@ -31,7 +31,17 @@ pytest tests/test_basic.py::test_setup_grid -v
 pytest tests/ -v --tb=short
 ```
 
-Slow tests (`@pytest.mark.slow`) run actual NUTS sampling and take minutes each. CI only runs them on ubuntu/Python 3.13. For local development, `not slow` is the default.
+Slow tests (`@pytest.mark.slow`) run actual NUTS sampling. **CI does not run them** — `KinematicSolver.run` defaults to `num_chains=4`, which a GitHub runner serialises, making the suite hours rather than minutes. They are `workflow_dispatch`-only (Actions tab → Run workflow).
+
+**Run them locally before merging anything that touches the model, the prior, or the sampler:**
+
+```bash
+# Make the 4 chains parallel; without this they serialise and it is ~4x slower.
+python -c "import veldist; veldist.set_host_devices(4)"
+pytest tests/ -v --tb=short -m slow
+```
+
+The gates that matter most there are `test_sbc_calibration` (both priors) and `test_per_bin_losvd_coverage`. Note the `rtk` pytest wrapper can report exit 0 on a failing run and has misreported collection, so read the summary line rather than trusting `$?`; `rtk proxy pytest ...` gives unfiltered output.
 
 ## Architecture
 
