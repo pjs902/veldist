@@ -28,6 +28,7 @@ __all__ = [
     "model",
     "fit_all_bins",
     "write_dynamite_kinematics",
+    "set_host_devices",
 ]
 
 # Penalised-complexity prior rate for the Gaussian-core deviation scale.
@@ -68,6 +69,44 @@ SIGMA3_RATE = 0.35  # Exp(0.35) — see docs/superpowers/specs/2026-08-03-regula
 # configuration we actually ship. A calibration test that builds its own kernel
 # at NumPyro's default is measuring something we do not run.
 TARGET_ACCEPT_PROB = 0.95
+
+# Adapt a full mass matrix, not NumPyro's default diagonal. The d3 components
+# are correlated through the cumulative sum and the null-space projection, and
+# a diagonal matrix cannot represent that. Measured (skew_normal_h3, 37 bins,
+# 150 stars, 4 chains): min ESS on intrinsic_pdf 119 -> 1188, max r_hat
+# 1.0161 -> 1.0015, in *less* wall time.
+DENSE_MASS = True
+
+# Multiple chains are the only way to get r_hat, and r_hat is what catches a
+# chain settling into the wrong mode -- a live risk when a bimodal LOSVD is one
+# of the shapes we expect. With the diagonal mass matrix and a single chain,
+# max r_hat was 1.0161 (above the usual 1.01 threshold) and nothing could see
+# it. Sequential on a single-device CPU; numpyro.set_host_device_count(4) makes
+# them parallel.
+NUM_CHAINS = 4
+
+
+def set_host_devices(ncpu=NUM_CHAINS):
+    """Make ``ncpu`` CPU devices visible to JAX, so chains run in parallel.
+
+    **Call this before any other JAX work**, ideally right after importing
+    veldist. It sets an XLA flag that is only read when JAX initialises its
+    backend, so once any array operation has run it is a silent no-op --
+    including the design-matrix construction in
+    :meth:`KinematicSolver.add_data`.
+
+    Without it, ``num_chains=4`` still gives correct results, just sequentially
+    at roughly 4x the wall time.
+
+    Returns the device count actually available afterwards.
+    """
+    # Set unconditionally, and do NOT guard on jax.local_device_count() first:
+    # querying the device count is itself enough to initialise the backend,
+    # which would make this call a no-op. (That bug was written, measured, and
+    # removed -- do not reintroduce the guard.)
+    numpyro.set_host_device_count(ncpu)
+    return jax.local_device_count()
+
 
 # ==============================================================================
 # Design Matrix
@@ -608,6 +647,9 @@ class KinematicSolver:
         seed=5567,
         prior="gaussian_core",
         target_accept_prob=TARGET_ACCEPT_PROB,
+        dense_mass=DENSE_MASS,
+        num_chains=NUM_CHAINS,
+        ncpu=NUM_CHAINS,
     ):
         """
         Run the NUTS sampler.
@@ -640,6 +682,34 @@ class KinematicSolver:
             substitute (1500 warmup at 0.8 still failed); the step size is the
             binding constraint.
             Lowering this to 0.8 will reintroduce the low-ESS failures.
+        dense_mass : bool
+            Adapt a full mass matrix rather than a diagonal one. **Default
+            True, unlike NumPyro.** The ``d3`` components are correlated
+            through the cumulative sum and the null-space projection, and a
+            diagonal mass matrix cannot represent that. Measured on a
+            skew_normal_h3 mock (37 bins, 150 stars, 4 chains): min ESS on
+            ``intrinsic_pdf`` goes 119 -> 1188 and max r_hat 1.0161 -> 1.0015,
+            in *less* wall time (better conditioning means fewer leapfrog
+            steps per sample). It is O(n^2) to adapt, so revisit only if
+            n_bins grows large.
+        num_chains : int
+            **Default 4, not 1.** Multiple chains are the only way to compute
+            r_hat, and r_hat is what catches a chain settling into the wrong
+            mode -- a live risk here, since a bimodal LOSVD is one of the
+            shapes we expect. On a single-device CPU these run sequentially;
+            call ``numpyro.set_host_device_count(4)`` before fitting to run
+            them in parallel, or pass ``ncpu``.
+        ncpu : int or None
+            Number of CPU devices to make visible to JAX, so that ``num_chains``
+            chains run in parallel rather than sequentially. Default matches
+            ``num_chains``. Pass None to leave the device count untouched.
+
+            **This can only take effect before JAX initialises its backend.**
+            By the time ``run()`` is reached, ``add_data`` has usually already
+            built the design matrix, so the request arrives too late and a
+            warning is emitted telling you to call :func:`set_host_devices`
+            immediately after importing veldist instead. Results are identical
+            either way; only wall time differs.
         prior : {"rw1", "gaussian_core"}
             Which smoothness prior to use. ``"gaussian_core"`` (default) uses
             :func:`generate_gaussian_core_curve`, whose infinite-smoothing
@@ -680,8 +750,21 @@ class KinematicSolver:
         else:
             model_fn = model
 
-        nuts_kernel = NUTS(model_fn, target_accept_prob=target_accept_prob)
-        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
+        if ncpu is not None and num_chains > 1:
+            if set_host_devices(ncpu) < min(ncpu, num_chains):
+                warnings.warn(
+                    f"Requested {ncpu} CPU devices but JAX exposes "
+                    f"{jax.local_device_count()}, so the {num_chains} chains will run "
+                    "sequentially (correct, just slower). The device count is fixed "
+                    "when JAX initialises its backend, which has already happened. "
+                    "Call veldist.set_host_devices() right after importing veldist "
+                    "to get parallel chains.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+
+        nuts_kernel = NUTS(model_fn, target_accept_prob=target_accept_prob, dense_mass=dense_mass)
+        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
 
         rng_key = jax.random.PRNGKey(int(seed))
         mcmc.run(rng_key, **model_kwargs)
