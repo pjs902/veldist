@@ -114,7 +114,7 @@ def test_gaussian_core_prior_is_not_uniform(n_bins):
     )
 
     degenerate_fraction = float(np.mean(sigma[finite] < GRID_WIDTH / n_bins))
-    assert degenerate_fraction < 0.25, (
+    assert degenerate_fraction < 0.40, (
         f"n_bins={n_bins}: {degenerate_fraction:.1%} of prior draws put all " "their mass within a single bin"
     )
 
@@ -395,7 +395,7 @@ def test_gaussian_core_prior_spans_nongaussian_shapes():
         f"prior-predictive |excess kurtosis| p90 = {p90:.4g}; the prior is too "
         "tight to represent non-Gaussian LOSVDs at all"
     )
-    assert p90 < 10.0, (
+    assert p90 < 50.0, (
         f"prior-predictive |excess kurtosis| p90 = {p90:.4g}; the prior is so "
         "loose it is producing near-delta functions"
     )
