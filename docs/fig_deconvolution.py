@@ -37,20 +37,19 @@ args = parser.parse_args()
 rng = np.random.default_rng(2024)
 
 # --------------------------------------------------------------------------
-# True intrinsic LOSVD: slightly asymmetric (rotation-like)
+# True intrinsic LOSVD: Gaussian with a mild shoulder
 # --------------------------------------------------------------------------
 v_grid = np.linspace(-120, 120, 300)
 
-# Gaussian core with a faint low-velocity tail
-core = np.exp(-0.5 * ((v_grid - 15.0) / 28.0) ** 2)
-tail = 0.25 * np.exp(-0.5 * ((v_grid + 50.0) / 35.0) ** 2) * (v_grid < 15)
-true_pdf = core + tail
+core = np.exp(-0.5 * ((v_grid - 5.0) / 24.0) ** 2)
+shoulder = 0.30 * np.exp(-0.5 * ((v_grid + 35.0) / 15.0) ** 2)
+true_pdf = core + shoulder
 true_pdf /= np.trapezoid(true_pdf, v_grid)
 
 # --------------------------------------------------------------------------
 # Synthetic dataset: N stars
 # --------------------------------------------------------------------------
-N = 300
+N = 400
 
 # Sample intrinsic velocities from the true PDF (rejection sampling)
 v_range = v_grid[-1] - v_grid[0]
@@ -158,7 +157,7 @@ if not args.no_inference:
         solver = KinematicSolver()
         solver.setup_grid(center=0.0, width=240.0, n_bins=55)
         solver.add_data(vel=v_obs, err=errors)
-        solver.run(num_warmup=500, num_samples=1000, gpu=False)
+        solver.run(num_warmup=600, num_samples=1200, gpu=False)
 
         pdf_mass = solver.samples["intrinsic_pdf"]
         # Convert to density for plotting

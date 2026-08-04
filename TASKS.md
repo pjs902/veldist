@@ -5,9 +5,34 @@ Suggested execution order is the table at the end of that file.
 
 ## Now
 
+- **[P1] Mode-order split scale.** With `rw_order` ruled out, this is the
+  remaining candidate for freeing h3/h4 without breaking SBC. Two `sigma3`
+  parameters — a loose one for the lowest few deviation modes (carrying h3/h4)
+  and a tight one for the rest — attacks the problem the plan identified:
+  one scalar cannot serve components needing opposite treatment.
+
+## Resolved by the validation campaign
+
 **Validation campaign plan:** `docs/superpowers/plans/2026-08-03-validation-campaign.md`
 (8 tasks: penalty order RW3/4/5, per-bin LOSVD calibration, map-level bias,
 SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
+
+- **[P0] Regularisation adopted:** `Exp(0.35)` (`SIGMA3_RATE=0.35`), `rw_order=3`.
+  41/45 in-band at σ=22 (n_real=100). Set as default.
+  `docs/superpowers/specs/2026-08-03-regularisation-decision.md`.
+
+- **Penalty order hypothesis ruled out.** Orders 4 and 5 do not free h3/h4
+  moments — the softmax nonlinearity decouples the log-density polynomial null
+  space from PDF moments. Documented in the measurements doc and the xfail
+  markers on `test_penalty_order_controls_which_moments_are_free`.
+
+- **Map-level bias measured.** skew_normal_h3 skewness shows 21.4σ bias over
+  200 bins at the current prior. New test `test_map_level_bias_is_small_against_the_map_uncertainty`
+  marked `xfail(21.4σ)`.
+
+- **σ=7 collapsed diagnosed.** The empty grid is the dominant cause, not err/σ.
+  Matched-grid fitting is the recommended remedy.
+  `docs/superpowers/plans/2026-08-03-narrow-dispersion-diagnosis.md`.
 
 - **[P0] The sigma=7 bins fail at every prior strength**
   Corrected-profile sweep, n_real=25, four Exponential rates from 2.303 to

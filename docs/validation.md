@@ -96,8 +96,16 @@ whose base model, `sigma3 = 0`, is an exactly Gaussian LOSVD. A prior-
 predictive check confirms the PC prior makes non-Gaussian LOSVDs with
 |excess kurtosis| p90 ≈ 1.36 reachable a priori.
 
-**Default prior**: as of commit 4b3bca2, `KinematicSolver.run()` defaults
-to `prior="gaussian_core"`. Pass `prior="rw1"` for the previous behaviour.
+**Default prior and regularisation**: the adopted configuration (2026-08-03,
+from the validation campaign decision) is `SIGMA3_RATE=0.35` (Exp(0.35)) at
+`rw_order=3`. At the science target (σ=22, n_real=100) this gives 41/45
+coverage entries in the nominal band, 1 catastrophic, with v_mean efficiency
+1.13× and sigma efficiency 1.35×. The decision record and full comparison
+table are in `docs/superpowers/specs/2026-08-03-regularisation-decision.md`.
+
+`KinematicSolver.run()` defaults to `prior="gaussian_core"`. Pass `prior="rw1"`
+for the previous behaviour. The penalty order defaults to 3 and is available
+as `rw_order=`.
 
 ## 2D solver results
 

@@ -35,7 +35,7 @@ __all__ = [
 # standardisation sigma3 is the typical log-density departure from a Gaussian
 # LOSVD, so sigma3 = 1 means a departure of a factor ~e at typical velocities.
 # Pinned by test_gaussian_core_prior_spans_nongaussian_shapes (p90 |kurtosis| = 1.361).
-SIGMA3_RATE = 2.302585092994046
+SIGMA3_RATE = 0.35  # Exp(0.35), adopted 2026-08-03 — see docs/superpowers/specs/2026-08-03-regularisation-decision.md
 
 # ==============================================================================
 # Design Matrix
