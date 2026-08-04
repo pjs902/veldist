@@ -3,6 +3,21 @@
 Detailed implementation plans for everything below: **`PLAN.md`**.
 Suggested execution order is the table at the end of that file.
 
+## Acceptance criterion
+
+**Minimally correct = recover `v_mean` and `sigma` well, with properly
+calibrated uncertainties.** (Peter, 2026-08-04.) If `h3`/`h4` cannot be
+recovered well but the uncertainties are calibrated, that is an acceptable
+outcome.
+
+This settles the trade that has driven the last several rounds of work.
+Loosening the `sigma3` prior buys h3/h4 coverage and breaks SBC; **calibration
+wins.** Work aimed only at freeing h3/h4 is out of scope, which retires two
+items that were previously P0/P1 (penalty order, mode-order split scale — both
+measured, both ruled out). What remains is: pick the prior that passes SBC,
+confirm `v_mean`/`sigma` coverage and efficiency survive it, and report the
+h3/h4 limitation honestly rather than engineering around it.
+
 ## Now
 
 - **[P0] The adopted prior fails SBC, worse than the one it replaced.**

@@ -864,7 +864,92 @@ class KinematicSolver:
 # ==============================================================================
 
 
-def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10):
+def aggregate_to_output_grid(pdf_samples, fitted_edges, output_edges):
+    """
+    Sum posterior LOSVD mass from a fitted grid onto the shared output grid.
+
+    Aggregation happens at the *sample* level, so uncertainties propagate:
+    each posterior draw is re-binned independently and the summaries in
+    :meth:`KinematicSolver.clip_uncertainties` are taken afterwards.
+
+    Exactness requires that every fitted bin lie entirely inside a single
+    output bin.  That single condition implies both halves of the usual
+    statement — the fitted grid is at least as fine as the output grid, and
+    their edges align — and it is what this function enforces.  A coarser or
+    misaligned fitted grid, or one extending past the output grid (which
+    would silently drop mass), raises ``ValueError``.
+
+    Parameters
+    ----------
+    pdf_samples : array-like, shape (n_samples, n_fitted_bins)
+        Posterior probability mass per fitted bin, one row per draw.
+    fitted_edges, output_edges : array-like
+        Bin edges of the fitted and shared output grids.
+
+    Returns
+    -------
+    ndarray, shape (n_samples, n_output_bins)
+        Probability mass on the output grid.  Row sums are preserved exactly
+        (up to floating-point summation order).
+    """
+    pdf_samples = np.asarray(pdf_samples)
+    fitted_edges = np.asarray(fitted_edges, dtype=float)
+    output_edges = np.asarray(output_edges, dtype=float)
+
+    # Tolerance is relative to the output resolution: edges built by two
+    # different linspace calls agree only to rounding.
+    tol = 1e-9 * (output_edges[-1] - output_edges[0])
+
+    centers = 0.5 * (fitted_edges[:-1] + fitted_edges[1:])
+    idx = np.searchsorted(output_edges, centers) - 1
+    inside = (
+        (idx >= 0)
+        & (idx < len(output_edges) - 1)
+        & (fitted_edges[:-1] >= output_edges[np.clip(idx, 0, len(output_edges) - 2)] - tol)
+        & (fitted_edges[1:] <= output_edges[np.clip(idx + 1, 1, len(output_edges) - 1)] + tol)
+    )
+    if not np.all(inside):
+        bad = int(np.argmin(inside))
+        msg = (
+            f"Fitted grid cannot be aggregated exactly onto the output grid: "
+            f"fitted bin {bad} spans [{fitted_edges[bad]:.6g}, {fitted_edges[bad + 1]:.6g}] "
+            f"which is not contained in a single output bin (output grid spans "
+            f"[{output_edges[0]:.6g}, {output_edges[-1]:.6g}] in {len(output_edges) - 1} bins). "
+            "The fitted grid must be at least as fine as the output grid, share its "
+            "edges, and lie within its range."
+        )
+        raise ValueError(msg)
+
+    out = np.zeros((pdf_samples.shape[0], len(output_edges) - 1))
+    np.add.at(out.T, idx, pdf_samples.T)
+    return out
+
+
+def _snap_grid(center, width, output_edges):
+    """Widen a matched grid to the nearest output-grid edges.
+
+    Returns ``setup_grid`` kwargs for the smallest run of whole output bins
+    covering ``[center - width/2, center + width/2]``, clipped to the output
+    grid.  Snapping this way makes the fitted grid a sub-range of the output
+    grid, so aggregation is exact by construction.
+
+    # ponytail: the fitted grid is a *sub-range* of the output grid, never a
+    # refinement of it, so the matched grid can only be narrower, not finer.
+    # If sub-output-bin resolution is ever wanted, subdivide each output bin
+    # by an integer factor here; aggregate_to_output_grid already accepts it.
+    """
+    n_out = len(output_edges) - 1
+    lo = int(np.clip(np.searchsorted(output_edges, center - width / 2.0, side="right") - 1, 0, n_out - 1))
+    hi = int(np.clip(np.searchsorted(output_edges, center + width / 2.0, side="left"), lo + 1, n_out))
+    edges = output_edges[lo : hi + 1]
+    return {
+        "center": 0.5 * (edges[0] + edges[-1]),
+        "width": edges[-1] - edges[0],
+        "n_bins": hi - lo,
+    }
+
+
+def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, match_grid=None):
     """
     Run the full inference pipeline for a list of Voronoi bins.
 
@@ -905,6 +990,14 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10):
     min_stars : int
         Minimum number of stars required to attempt inference.  Bins with
         fewer stars are skipped with a warning.  Default 10.
+    match_grid : ObservingProfile, optional
+        If given, each bin is *fitted* on a narrower grid matched to its own
+        dispersion (via :meth:`~veldist.calibration.ObservingProfile.matched_grid`,
+        snapped to whole output bins) and its posterior samples are then
+        aggregated back onto the shared output grid.  This avoids the mostly
+        empty shared grid that collapses h3 coverage at low dispersion.
+        Default ``None`` — every bin is fitted on the shared grid, exactly
+        as before.
 
     Returns
     -------
@@ -933,6 +1026,13 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10):
     n_total = len(bin_data_list)
     solvers = []
 
+    # Shared output grid edges: what every bin is reported on, matched or not.
+    output_edges = np.linspace(
+        grid_kwargs["center"] - grid_kwargs["width"] / 2,
+        grid_kwargs["center"] + grid_kwargs["width"] / 2,
+        grid_kwargs["n_bins"] + 1,
+    )
+
     for i, bin_data in enumerate(bin_data_list):
         print(f"Fitting bin {i + 1}/{n_total}...")
 
@@ -950,9 +1050,25 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10):
             continue
 
         solver = KinematicSolver()
-        solver.setup_grid(**grid_kwargs)
+        if match_grid is None:
+            solver.setup_grid(**grid_kwargs)
+        else:
+            # Deconvolved dispersion of this bin, floored at the measurement
+            # error so a pathologically tight bin still gets a usable grid.
+            sigma = np.sqrt(max(np.var(vel) - np.mean(err**2), np.median(err) ** 2))
+            width, _ = match_grid.matched_grid(sigma)
+            solver.setup_grid(**_snap_grid(np.median(vel), width, output_edges))
         solver.add_data(vel=vel, err=err)
         solver.run(seed=base_seed + i, **run_kwargs)
+
+        if match_grid is not None:
+            solver.fitted_grid = solver.grid
+            solver.samples = dict(solver.samples)
+            solver.samples["intrinsic_pdf"] = aggregate_to_output_grid(
+                solver.samples["intrinsic_pdf"], solver.grid["edges"], output_edges
+            )
+            solver.setup_grid(**grid_kwargs)
+
         solver.clip_uncertainties()
 
         solvers.append(solver)

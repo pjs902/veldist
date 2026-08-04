@@ -18,7 +18,14 @@ import pytest
 from astropy.table import Table
 
 from veldist.analysis import compute_summary
-from veldist.veldist import KinematicSolver, fit_all_bins, write_dynamite_kinematics
+from veldist.calibration import OMEGACAT
+from veldist.veldist import (
+    KinematicSolver,
+    _snap_grid,
+    aggregate_to_output_grid,
+    fit_all_bins,
+    write_dynamite_kinematics,
+)
 
 
 # ==============================================================================
@@ -210,6 +217,94 @@ class TestFitAllBins:
             solvers = fit_all_bins(bin_data_list, grid_kwargs, min_stars=10)
 
         assert solvers == [None, None]
+
+
+# ==============================================================================
+# matched-grid fitting + exact aggregation
+# ==============================================================================
+
+
+def _edges(center, width, n_bins):
+    return np.linspace(center - width / 2, center + width / 2, n_bins + 1)
+
+
+class TestMatchedGridAggregation:
+    def test_mass_is_conserved_exactly(self):
+        rng = np.random.default_rng(3)
+        out_edges = _edges(0.0, 100.0, 20)
+        # Fitted grid: output bins 6..14, subdivided by 4 (finer AND aligned).
+        fit_edges = np.linspace(out_edges[6], out_edges[14], 8 * 4 + 1)
+        draws = rng.dirichlet(np.ones(32), size=50)
+
+        agg = aggregate_to_output_grid(draws, fit_edges, out_edges)
+
+        assert agg.shape == (50, 20)
+        np.testing.assert_allclose(agg.sum(axis=1), draws.sum(axis=1), rtol=0, atol=1e-12)
+        # Mass lands only in the covered output bins, and in the right ones.
+        assert np.all(agg[:, :6] == 0.0)
+        assert np.all(agg[:, 14:] == 0.0)
+        np.testing.assert_allclose(agg[:, 6], draws[:, :4].sum(axis=1))
+
+    def test_identity_when_grids_match(self):
+        rng = np.random.default_rng(4)
+        out_edges = _edges(10.0, 60.0, 12)
+        draws = rng.dirichlet(np.ones(12), size=5)
+        np.testing.assert_allclose(aggregate_to_output_grid(draws, out_edges, out_edges), draws)
+
+    @pytest.mark.parametrize(
+        "fit_edges",
+        [
+            _edges(0.0, 100.0, 10),  # too coarse (2x the output bin width)
+            _edges(2.5, 50.0, 10),  # right resolution, edges offset by half a bin
+            _edges(0.0, 200.0, 40),  # aligned and fine, but extends past the output grid
+        ],
+        ids=["too_coarse", "misaligned", "overhangs"],
+    )
+    def test_bad_fitted_grids_are_rejected(self, fit_edges):
+        draws = np.full((3, len(fit_edges) - 1), 1.0 / (len(fit_edges) - 1))
+        with pytest.raises(ValueError, match="cannot be aggregated exactly"):
+            aggregate_to_output_grid(draws, fit_edges, _edges(0.0, 100.0, 20))
+
+    def test_snap_grid_is_a_whole_run_of_output_bins(self):
+        out_edges = _edges(0.0, 100.0, 20)  # 5 km/s bins
+        kw = _snap_grid(center=1.0, width=12.0, output_edges=out_edges)
+        snapped = _edges(**kw)
+        # Covers the request, and every snapped edge is an output edge.
+        assert snapped[0] <= -5.0 and snapped[-1] >= 7.0
+        assert np.all(np.isin(np.round(snapped, 9), np.round(out_edges, 9)))
+        # And is therefore aggregatable.
+        aggregate_to_output_grid(np.full((2, kw["n_bins"]), 1.0 / kw["n_bins"]), snapped, out_edges)
+
+    def test_snap_grid_clips_to_output_range(self):
+        out_edges = _edges(0.0, 100.0, 20)
+        # Request runs off the low end; the fitted grid stops at the output edge.
+        kw = _snap_grid(center=-60.0, width=200.0, output_edges=out_edges)
+        np.testing.assert_allclose(_edges(**kw), out_edges[:19])
+
+    @pytest.mark.slow
+    def test_matched_grid_fit_reports_on_shared_grid(self):
+        rng = np.random.default_rng(7)
+        vel = rng.normal(0.0, 7.0, 60)
+        err = np.full(60, 2.5)
+
+        grid_kwargs = {"center": 0.0, "width": 200.0, "n_bins": 40}
+        run_kwargs = {"num_warmup": 50, "num_samples": 100, "gpu": False, "seed": 11}
+
+        solvers = fit_all_bins(
+            [{"vel": vel, "err": err}],
+            grid_kwargs,
+            run_kwargs=run_kwargs,
+            match_grid=OMEGACAT,
+        )
+        solver = solvers[0]
+
+        # Fitted narrow, reported wide, mass preserved per sample.
+        assert solver.fitted_grid["n_bins"] < grid_kwargs["n_bins"]
+        assert solver.grid["n_bins"] == grid_kwargs["n_bins"]
+        agg = np.asarray(solver.samples["intrinsic_pdf"])
+        assert agg.shape[1] == grid_kwargs["n_bins"]
+        np.testing.assert_allclose(agg.sum(axis=1), 1.0, atol=1e-6)
+        assert solver.clipped_samples["losvd_median"].shape == (grid_kwargs["n_bins"],)
 
 
 # ==============================================================================
