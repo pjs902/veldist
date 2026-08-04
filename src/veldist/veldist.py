@@ -9,7 +9,7 @@ linear design matrix and a hierarchical smoothness prior.
 """
 
 import warnings
-from functools import lru_cache
+from functools import cache
 
 import numpy as np
 import jax
@@ -270,7 +270,7 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
     return curve
 
 
-@lru_cache(maxsize=None)
+@cache
 def _rw_deviation_scale(n_bins, order=3):
     """Sorbye-Rue scaling constant for the constrained RW-k deviation.
 
@@ -314,7 +314,7 @@ def _rw_deviation_scale(n_bins, order=3):
     return float(1.0 / np.sqrt(np.exp(np.mean(np.log(var)))))
 
 
-@lru_cache(maxsize=None)
+@cache
 def _null_space_basis(n_bins, order=3):
     """Orthonormal basis of the RW-k null space: polynomials of degree < k.
 
@@ -779,18 +779,17 @@ class KinematicSolver:
         else:
             model_fn = model
 
-        if ncpu is not None and num_chains > 1:
-            if set_host_devices(ncpu) < min(ncpu, num_chains):
-                warnings.warn(
-                    f"Requested {ncpu} CPU devices but JAX exposes "
-                    f"{jax.local_device_count()}, so the {num_chains} chains will run "
-                    "sequentially (correct, just slower). The device count is fixed "
-                    "when JAX initialises its backend, which has already happened. "
-                    "Call veldist.set_host_devices() right after importing veldist "
-                    "to get parallel chains.",
-                    RuntimeWarning,
-                    stacklevel=2,
-                )
+        if ncpu is not None and num_chains > 1 and set_host_devices(ncpu) < min(ncpu, num_chains):
+            warnings.warn(
+                f"Requested {ncpu} CPU devices but JAX exposes "
+                f"{jax.local_device_count()}, so the {num_chains} chains will run "
+                "sequentially (correct, just slower). The device count is fixed "
+                "when JAX initialises its backend, which has already happened. "
+                "Call veldist.set_host_devices() right after importing veldist "
+                "to get parallel chains.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
         nuts_kernel = NUTS(model_fn, target_accept_prob=target_accept_prob, dense_mass=dense_mass)
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
