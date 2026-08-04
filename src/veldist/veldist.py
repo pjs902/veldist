@@ -92,8 +92,24 @@ def precompute_design_matrix(obs_val, obs_err, bin_centers, bin_width=None):
     # The probability mass in Bin j is CDF(Right Edge) - CDF(Left Edge)
     prob_matrix = jnp.diff(cdf_values, axis=1)
 
-    # Numerical stability: Add epsilon to prevent log(0)
-    return prob_matrix + 1e-30
+    # Numerical stability. Two distinct hazards, and a small additive epsilon
+    # only covers the second one:
+    #
+    # 1. For a bin many sigma from a star, both edge CDFs round to the same
+    #    float and their difference suffers catastrophic cancellation, landing
+    #    slightly *negative* -- measured as low as -9e-8 in float32. A negative
+    #    entry propagates into `matrix @ intrinsic_pdf`, and `log` of a
+    #    non-positive number is NaN, which kills NUTS at initialisation. This
+    #    caused ~13% of SBC simulations to fail with a bare
+    #    "Unit distribution got invalid log_factor parameter", independent of
+    #    the prior. Clipping is what fixes it; `+ 1e-30` is 22 orders of
+    #    magnitude too small to repair a -9e-8 error.
+    # 2. A bin that legitimately holds no mass gives exactly 0, and log(0) is
+    #    -inf. The floor covers this too.
+    #
+    # The floor is tiny relative to any physically meaningful probability, so
+    # it does not distort the likelihood -- it only keeps it finite.
+    return jnp.clip(prob_matrix, 1e-30, None)
 
 
 # ==============================================================================

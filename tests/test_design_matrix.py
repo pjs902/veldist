@@ -3,6 +3,7 @@
 See PLAN.md section 1.4 "Design-matrix correctness (fast)".
 """
 
+import jax
 import numpy as np
 import pytest
 from scipy.integrate import quad
@@ -94,3 +95,40 @@ def test_design_matrix_offgrid_star_has_negligible_mass():
     # essentially just the epsilon floor accumulated over all bins
     assert row_sum < n_bins * 1e-25
     assert row_sum >= 0.0
+
+
+def test_design_matrix_is_strictly_positive_in_float32():
+    """No entry may be <= 0, however far the star is from the bin.
+
+    At roughly 5-7 sigma the two edge CDFs are ~1e-7 -- small but not
+    underflowed -- and their difference cancels into the negatives (about
+    -1.2e-7). A negative entry propagates into `matrix @ intrinsic_pdf`, and
+    log of a non-positive number is NaN, which kills NUTS at initialisation,
+    surfacing only as numpyro's opaque "Unit distribution got invalid
+    log_factor parameter".
+
+    This test must force float32. `conftest.py` enables JAX x64 for the whole
+    suite, but **production does not** -- `KinematicSolver` runs in JAX's
+    default float32, so this failure mode is reachable by real users and
+    invisible to every other test in this file. Do not drop the
+    `jax.enable_x64(False)` block; without it the test passes on the buggy
+    code and proves nothing.
+
+    Likewise do not shrink the errors: with errors small enough that both CDFs
+    underflow to exactly 0, the difference is exactly 0, which the old
+    `+ 1e-30` guard handled correctly.
+    """
+    centers = np.linspace(-140.0, 140.0, 15)
+    rng = np.random.default_rng(0)
+    vel = rng.uniform(-140.0, 140.0, 4000)
+    err = rng.uniform(3.0, 15.0, 4000)
+
+    with jax.enable_x64(False):
+        M = np.asarray(precompute_design_matrix(vel, err, centers, bin_width=20.0))
+
+    assert np.all(np.isfinite(M)), "design matrix contains non-finite entries"
+    n_bad = int((M <= 0).sum())
+    assert n_bad == 0, (
+        f"{n_bad} design-matrix entries are non-positive (min={M.min():.3g}) in "
+        "float32; log() of them is NaN and will kill the sampler at initialisation"
+    )
