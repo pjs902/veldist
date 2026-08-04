@@ -15,6 +15,7 @@ from scipy import stats
 from veldist.analysis import (
     bimodality_score,
     cdf_percentile,
+    compute_percentile_summary,
     compute_summary,
     compute_summary_maps,
     half_68ci,
@@ -88,6 +89,32 @@ def test_moments_skewnormal():
 
     true_skew = dist.stats(moments="s")
     assert summary["skewness"][0] == pytest.approx(float(true_skew), rel=0.02)
+
+
+def test_percentile_summary_gaussian():
+    dist = stats.norm(loc=12, scale=8)
+    centers, width = make_grid(-60, 84, 4000)
+    pmf = analytic_pmf(dist, centers, width)
+
+    summary = compute_percentile_summary(pmf, centers)
+
+    assert summary["median"][0] == pytest.approx(12, rel=0.01)
+    assert summary["sigma_pct"][0] == pytest.approx(8, rel=0.01)
+    assert summary["skew_pct"][0] == pytest.approx(0, abs=1e-2)
+    # Moors (1988) octile kurtosis of a Gaussian is ~1.23, not 0.
+    assert summary["kurtosis_pct"][0] == pytest.approx(1.233, rel=0.01)
+
+
+def test_percentile_summary_skewnormal_sign():
+    dist = stats.skewnorm(a=4, loc=0, scale=5)
+    centers, width = make_grid(-40, 40, 4000)
+    pmf = analytic_pmf(dist, centers, width)
+
+    summary = compute_percentile_summary(pmf, centers)
+
+    # Right-skewed distribution -> positive Bowley skewness, same sign
+    # convention as compute_summary's moment-based skewness.
+    assert summary["skew_pct"][0] > 0
 
 
 def test_kurtosis_student_t():

@@ -13,6 +13,8 @@ __all__ = [
     "truncate_pdf_samples",
     "compute_summary",
     "compute_summary_maps",
+    "compute_percentile_summary",
+    "compute_percentile_summary_maps",
 ]
 
 # ---------------------------------------------------------------------------
@@ -650,5 +652,106 @@ def compute_summary_maps(solvers):
                 else:
                     maps[m]["median"][i] = float(summary[m])  # e.g. bimodality_score
                     maps[m]["uncertainty"][i] = np.nan
+
+    return maps
+
+
+def compute_percentile_summary(pdf_samples, grid_centers):
+    """
+    Compute percentile-based (order-statistic) moment analogues per sample.
+
+    ``compute_summary``'s ``skewness``/``kurtosis`` are ordinary moments of
+    the posterior mean/variance, which a few heavy stars can dominate.
+    These analogues are built entirely from CDF percentiles instead, so a
+    single outlier star moves them by at most the width of one velocity bin.
+    They are not moments and are not expected to match GH h3/h4 or
+    ``compute_summary``'s skewness/kurtosis numerically; they are a more
+    robust *alternative* view of the same asymmetry/peakedness, evaluated
+    per posterior sample so uncertainty propagates the same way as
+    everywhere else in this module.
+
+    Parameters
+    ----------
+    pdf_samples : array-like, shape (n_samples, n_bins)
+        MCMC samples of the probability mass function, each row summing to 1.
+    grid_centers : array-like, shape (n_bins,)
+        Bin-centre velocities in ascending order.
+
+    Returns
+    -------
+    dict
+        Four keys, each ``(posterior_median, half_68ci)``:
+
+        ``'median'``
+            CDF P50 (this *is* the LOSVD median, not a moment).
+        ``'sigma_pct'``
+            ``(P84 - P16) / 2``, the percentile analogue of the standard
+            deviation (exact for a Gaussian).
+        ``'skew_pct'``
+            Bowley skewness ``((P75-P50)-(P50-P25)) / (P75-P25)``, in
+            ``[-1, 1]``; 0 for a symmetric distribution, matching sign
+            convention with ``compute_summary``'s ``skewness``.
+        ``'kurtosis_pct'``
+            Moors (1988) octile kurtosis
+            ``((P87.5-P62.5)+(P37.5-P12.5)) / (P75-P25)``. Unlike
+            ``compute_summary``'s ``kurtosis`` this is *not* zeroed on a
+            Gaussian: a Gaussian LOSVD gives approximately 1.23, not 0.
+    """
+    pdf_samples = np.asarray(pdf_samples, dtype=float)
+    grid_centers = np.asarray(grid_centers, dtype=float)
+
+    levels = [0.125, 0.16, 0.25, 0.375, 0.5, 0.625, 0.75, 0.84, 0.875]
+    q = cdf_percentile(pdf_samples, grid_centers, levels)
+    p125, p16, p25, p375, p50, p625, p75, p84, p875 = (q[:, i] for i in range(len(levels)))
+
+    median_samples = p50
+    sigma_pct_samples = (p84 - p16) / 2.0
+
+    iqr = p75 - p25
+    safe_iqr = np.where(iqr > 0, iqr, np.nan)
+    skew_pct_samples = ((p75 - p50) - (p50 - p25)) / safe_iqr
+    kurt_pct_samples = ((p875 - p625) + (p375 - p125)) / safe_iqr
+
+    return {
+        "median": (float(np.median(median_samples)), half_68ci(median_samples)),
+        "sigma_pct": (float(np.median(sigma_pct_samples)), half_68ci(sigma_pct_samples)),
+        "skew_pct": (float(np.nanmedian(skew_pct_samples)), half_68ci(skew_pct_samples[~np.isnan(skew_pct_samples)])),
+        "kurtosis_pct": (float(np.nanmedian(kurt_pct_samples)), half_68ci(kurt_pct_samples[~np.isnan(kurt_pct_samples)])),
+    }
+
+
+def compute_percentile_summary_maps(solvers):
+    """
+    Percentile-based summary maps, the ``compute_percentile_summary`` analogue
+    of :func:`compute_summary_maps`.
+
+    Parameters
+    ----------
+    solvers : list of :class:`~veldist.KinematicSolver` or None
+        As returned by :func:`~veldist.fit_all_bins`. ``None`` entries
+        (skipped bins) are silently mapped to ``NaN``.
+
+    Returns
+    -------
+    dict
+        Keys ``'median'``, ``'sigma_pct'``, ``'skew_pct'``, ``'kurtosis_pct'``.
+        Each value is a sub-dict with ``'median'`` and ``'uncertainty'``
+        arrays of shape ``(n_bins,)``, ``NaN`` for skipped bins.
+    """
+    n_bins = len(solvers)
+    metrics = ["median", "sigma_pct", "skew_pct", "kurtosis_pct"]
+    maps = {m: {"median": np.full(n_bins, np.nan), "uncertainty": np.full(n_bins, np.nan)} for m in metrics}
+
+    any_solved = False
+    for i, solver in enumerate(solvers):
+        if solver is not None:
+            any_solved = True
+            summary = compute_percentile_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
+            for m in metrics:
+                maps[m]["median"][i], maps[m]["uncertainty"][i] = summary[m]
+
+    if not any_solved:
+        msg = "all solvers are None; no data to build maps from"
+        raise ValueError(msg)
 
     return maps
