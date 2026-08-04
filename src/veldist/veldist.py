@@ -8,6 +8,8 @@ from discrete, heteroscedastic stellar observations using a pre-computed
 linear design matrix and a hierarchical smoothness prior.
 """
 
+import contextlib
+import io
 import warnings
 from functools import cache
 
@@ -679,6 +681,7 @@ class KinematicSolver:
         dense_mass=DENSE_MASS,
         num_chains=NUM_CHAINS,
         ncpu=NUM_CHAINS,
+        progress_bar=True,
     ):
         """
         Run the NUTS sampler.
@@ -739,6 +742,11 @@ class KinematicSolver:
             warning is emitted telling you to call :func:`set_host_devices`
             immediately after importing veldist instead. Results are identical
             either way; only wall time differs.
+        progress_bar : bool
+            Show NumPyro's per-chain NUTS progress bar. Default ``True``.
+            Set ``False`` when fitting many bins in a loop (as
+            :func:`fit_all_bins` does) so a single outer progress bar over
+            bins isn't drowned out by 4 chains' worth of bars per bin.
         prior : {"rw1", "gaussian_core"}
             Which smoothness prior to use. ``"gaussian_core"`` (default) uses
             :func:`generate_gaussian_core_curve`, whose infinite-smoothing
@@ -792,7 +800,13 @@ class KinematicSolver:
             )
 
         nuts_kernel = NUTS(model_fn, target_accept_prob=target_accept_prob, dense_mass=dense_mass)
-        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples, num_chains=num_chains)
+        mcmc = MCMC(
+            nuts_kernel,
+            num_warmup=num_warmup,
+            num_samples=num_samples,
+            num_chains=num_chains,
+            progress_bar=progress_bar,
+        )
 
         rng_key = jax.random.PRNGKey(int(seed))
         mcmc.run(rng_key, **model_kwargs)
@@ -1126,7 +1140,7 @@ def _snap_grid(center, width, output_edges):
     }
 
 
-def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, match_grid=None):
+def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, match_grid=None, show_progress=True):
     """
     Run the full inference pipeline for a list of Voronoi bins.
 
@@ -1175,6 +1189,14 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, matc
         empty shared grid that collapses h3 coverage at low dispersion.
         Default ``None``: every bin is fitted on the shared grid, exactly
         as before.
+    show_progress : bool
+        Show a single ``tqdm`` progress bar over bins instead of the
+        default per-bin, per-chain NUTS progress bars (which otherwise
+        print ``num_chains`` bars for *every* bin -- unreadable for more
+        than a handful of bins). Default ``True``. When enabled, each
+        bin's ``solver.run()`` call has NumPyro's own ``progress_bar``
+        forced to ``False`` unless ``run_kwargs`` already sets it
+        explicitly.
 
     Returns
     -------
@@ -1199,6 +1221,8 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, matc
     # Extract the base seed so we can derive per-bin seeds.
     run_kwargs = dict(run_kwargs)
     base_seed = run_kwargs.pop("seed", 5567)
+    if show_progress:
+        run_kwargs.setdefault("progress_bar", False)
 
     n_total = len(bin_data_list)
     solvers = []
@@ -1210,8 +1234,15 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, matc
         grid_kwargs["n_bins"] + 1,
     )
 
-    for i, bin_data in enumerate(bin_data_list):
-        print(f"Fitting bin {i + 1}/{n_total}...")
+    bin_iter = enumerate(bin_data_list)
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        bin_iter = tqdm(bin_iter, total=n_total, desc="Fitting bins", unit="bin")
+
+    for i, bin_data in bin_iter:
+        if not show_progress:
+            print(f"Fitting bin {i + 1}/{n_total}...")
 
         vel = np.asarray(bin_data["vel"])
         err = np.asarray(bin_data["err"])
@@ -1235,8 +1266,13 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, matc
             sigma = np.sqrt(max(np.var(vel) - np.mean(err**2), np.median(err) ** 2))
             width, _ = match_grid.matched_grid(sigma)
             solver.setup_grid(**_snap_grid(np.median(vel), width, output_edges))
-        solver.add_data(vel=vel, err=err)
-        solver.run(seed=base_seed + i, **run_kwargs)
+
+        # add_data/run print progress lines of their own; redirect those to
+        # keep the single outer tqdm bar clean instead of interleaving with
+        # ~3 printed lines per bin.
+        with contextlib.redirect_stdout(io.StringIO()) if show_progress else contextlib.nullcontext():
+            solver.add_data(vel=vel, err=err)
+            solver.run(seed=base_seed + i, **run_kwargs)
 
         if match_grid is not None:
             solver.fitted_grid = solver.grid
