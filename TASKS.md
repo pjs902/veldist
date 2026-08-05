@@ -192,15 +192,29 @@ h3/h4 limitation honestly rather than engineering around it.
   that 2D is the easier per-bin problem (larger N, comparable err/sigma) was
   confirmed.
 
-  **Mean_y offset (~+0.15 km/s at hst_bright) remains unexplained but
-  small.** A constant-mode projection residual (~1% of σ), only visible in the
-  tight-error-bar regime. Invisible at hst_faint. Not a blocker.
+  **Mean_y offset — checked (2026-08-05), not real.** The cell_per_sigma sweep
+  showed a +0.14 to +0.22 km/s mean_y bias at hst_bright with mean_x staying
+  small, and it looked reproducible: a from-scratch re-run at a second seed
+  epoch (20260901) landed on the same sign and magnitude (+0.22 across
+  K=9/15/19). That re-run's data generator turned out to have a real bug —
+  `rng.normal(0, err[:, None])` with no `size` argument broadcasts to shape
+  `(n, 1)`, silently adding the *same* noise draw to both PM components of a
+  star instead of independent per-axis noise (the shipped test suite,
+  `tests/test_coverage_2d.py`, does not have this bug — it draws `err_x`/
+  `err_y` separately). A controlled A/B at a third, independent seed (90000)
+  — buggy correlated-noise data vs. correct independent-axis noise, same
+  solver — gave the *same* small-and-insignificant result under both
+  conditions: mean_y bias +0.05 to +0.07 km/s, mean_x bias -0.21 to -0.22 km/s,
+  both well inside the ~0.17-0.23 km/s per-batch noise floor set by sampling
+  only n_real=20-25 realisations of 400 stars each (SE ~ sigma/sqrt(N)/
+  sqrt(n_real)). Landing on the same axis with similar sign in the first two
+  batches was coincidence, not a reproducible model defect — the bug does not
+  explain it either, since the A/B comparison shows it makes no difference.
+  No further action needed.
 
   **Still open:**
   - Sheppard correction if reporting continuous σ (not needed for DYNAMITE
     output, which chi-squares per-cell mass, not cell-centre moments).
-  - The mean_y residual if it turns out to be something other than a
-    constant-mode projection leakage.
 
 ## Ruled out by measurement — do not re-raise
 
