@@ -22,6 +22,8 @@ matrix ``M`` is stored as float32 for memory; see the ⚠ Gotchas in
 oversight.
 """
 
+from functools import cache
+
 import numpy as np
 import jax
 
@@ -377,6 +379,52 @@ def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6)
     Q_reg = Q + eps * np.eye(n_cells)
 
     return Q, Q_reg
+
+
+@cache
+def _null_space_basis_2d(k):
+    """Orthonormal basis of the bivariate-quadratic null space, (k*k, 6).
+
+    Spans ``{1, x, y, x^2, xy, y^2}`` -- exactly the log-densities of
+    bivariate Gaussians, which is what the prior must leave free so that the
+    velocity ellipsoid is not shrunk.
+
+    Built from tensor-product Legendre polynomials of total degree <= 2 rather
+    than the raw monomials, for the conditioning reason documented in
+    ``veldist.py::_legendre_basis``: the Vandermonde basis is badly conditioned
+    and its QR loses precision. Legendre spans the identical space, so the
+    projector is unchanged.
+
+    Uses an index grid rather than physical cell centres. Both give the same
+    projector: the orthogonal projector onto a subspace does not depend on
+    which basis spans it, and for a uniformly spaced grid the index and
+    physical coordinates differ only by an affine map. ``setup_grid_2d`` only
+    produces uniform grids.
+
+    Row-major flattened (``m = ix*k + iy``) to match ``setup_grid_2d``'s
+    ``centers_2d``. Cached: costs an O(k^2) QR, depends only on ``k``, and is
+    evaluated at JAX trace time where the result is constant-folded.
+    """
+    idx = np.arange(k, dtype=float)
+    u = 2.0 * (idx - idx.mean()) / (k - 1)  # -> [-1, 1]
+    p0 = np.ones_like(u)
+    p1 = u
+    p2 = 0.5 * (3.0 * u**2 - 1.0)
+
+    ix, iy = np.meshgrid(np.arange(k), np.arange(k), indexing="ij")
+    ix, iy = ix.ravel(), iy.ravel()
+
+    # Tensor products with total degree <= 2.
+    cols = [
+        p0[ix] * p0[iy],   # 1
+        p1[ix] * p0[iy],   # x
+        p0[ix] * p1[iy],   # y
+        p2[ix] * p0[iy],   # x^2
+        p1[ix] * p1[iy],   # xy
+        p0[ix] * p2[iy],   # y^2
+    ]
+    q, _ = np.linalg.qr(np.stack(cols, axis=1))
+    return q
 
 
 # ==============================================================================

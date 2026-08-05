@@ -479,3 +479,53 @@ def test_2d_marginal_matches_1d():
     assert abs(med_sigma_2d - med_sigma_1d) <= n_sigma * combined_sigma_ci, (
         f"2D-marginal vs 1D sigma mismatch:\n{report}"
     )
+
+
+# ==============================================================================
+# Null-space basis for the bivariate quadratic
+# ==============================================================================
+
+
+@pytest.mark.parametrize("k", [7, 9, 11, 15])
+def test_null_space_basis_2d_spans_quadratics_and_nothing_more(k):
+    """The basis must span exactly {1, x, y, x^2, xy, y^2}.
+
+    Two assertions, and the second matters as much as the first: a projector
+    that removed *too much* would pass an orthogonality-only check while
+    silently destroying the non-Gaussian signal the deviation is supposed to
+    carry.
+    """
+    from veldist.veldist2d import _null_space_basis_2d
+
+    q = _null_space_basis_2d(k)
+    assert q.shape == (k * k, 6)
+    np.testing.assert_allclose(q.T @ q, np.eye(6), atol=1e-10)
+
+    grid = setup_grid_2d(center=(0.0, 0.0), width=(40.0, 40.0), n_bins=k)
+    c = grid["centers_2d"]
+    x = (c[:, 0] - c[:, 0].mean()) / (c[:, 0].max() - c[:, 0].min())
+    y = (c[:, 1] - c[:, 1].mean()) / (c[:, 1].max() - c[:, 1].min())
+
+    proj = lambda v: v - q @ (q.T @ v)
+
+    # Every quadratic must be annihilated.
+    for v in [np.ones_like(x), x, y, x**2, x * y, y**2, 3.0 - 2.0 * x + 0.5 * x * y]:
+        assert np.max(np.abs(proj(v))) < 1e-9 * max(1.0, np.max(np.abs(v))), (
+            f"k={k}: a quadratic survived the projection; the null space is too small"
+        )
+
+    # A cubic must NOT be annihilated.
+    cubic = x**3
+    assert np.max(np.abs(proj(cubic))) > 1e-3 * np.max(np.abs(cubic)), (
+        f"k={k}: a cubic was annihilated; the null space is too large and the "
+        "deviation cannot carry non-Gaussian structure"
+    )
+
+
+def test_null_space_basis_2d_is_cached():
+    from veldist.veldist2d import _null_space_basis_2d
+
+    _null_space_basis_2d.cache_clear()
+    _null_space_basis_2d(9)
+    _null_space_basis_2d(9)
+    assert _null_space_basis_2d.cache_info().hits >= 1
