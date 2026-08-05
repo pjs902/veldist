@@ -16,6 +16,7 @@ from veldist.veldist import KinematicSolver, precompute_design_matrix
 from veldist.veldist2d import (
     KinematicSolver2D,
     build_gmrf_precision,
+    fit_all_bins_2d,
     precompute_design_matrix_2d,
     setup_grid_2d,
 )
@@ -755,3 +756,158 @@ def test_solver_2d_runs_under_both_priors(prior):
     if prior == "gaussian_core":
         for site in ["v0x", "v0y", "s0x", "s0y", "rho0", "sigma3"]:
             assert site in samples
+
+
+# ==============================================================================
+# clip_uncertainties
+# ==============================================================================
+
+
+def _fake_samples_2d(k=5, n_samples=50, seed=0):
+    """Build a synthetic, valid (row-sums-to-1) intrinsic_pdf sample set."""
+    rng = np.random.default_rng(seed)
+    n_cells = k * k
+    base = rng.dirichlet(np.ones(n_cells), size=n_samples)
+    return base
+
+
+def test_clip_uncertainties_2d_shapes_and_finite():
+    s = KinematicSolver2D()
+    s.grid = setup_grid_2d(center=(0.0, 0.0), width=(20.0, 20.0), n_bins=5)
+    s.samples = {"intrinsic_pdf": _fake_samples_2d(k=5)}
+
+    s.clip_uncertainties()
+
+    n_cells = 25
+    assert s.clipped_samples["pdf_median"].shape == (n_cells,)
+    assert s.clipped_samples["pdf_uncertainty"].shape == (n_cells,)
+    assert np.isfinite(s.clipped_samples["pdf_median"]).all()
+    assert np.isfinite(s.clipped_samples["pdf_uncertainty"]).all()
+
+
+def test_clip_uncertainties_2d_zero_spread_cell_hits_relative_floor():
+    k = 5
+    n_cells = k * k
+    n_samples = 50
+    pdf = _fake_samples_2d(k=k, n_samples=n_samples)
+
+    # Force cell 0 to be identical across every sample (zero spread), while
+    # renormalising the rest of each row so it still sums to 1.
+    fixed_val = 0.02
+    remainder = 1.0 - fixed_val
+    rest = pdf[:, 1:]
+    rest = rest / rest.sum(axis=1, keepdims=True) * remainder
+    pdf = np.concatenate([np.full((n_samples, 1), fixed_val), rest], axis=1)
+    assert pdf.shape == (n_samples, n_cells)
+
+    s = KinematicSolver2D()
+    s.grid = setup_grid_2d(center=(0.0, 0.0), width=(20.0, 20.0), n_bins=k)
+    s.samples = {"intrinsic_pdf": pdf}
+
+    s.clip_uncertainties(floor_fraction=0.01)
+
+    raw_half_width = np.zeros(n_cells)
+    for i in range(n_cells):
+        p16, p84 = np.percentile(pdf[:, i], [16, 84])
+        raw_half_width[i] = (p84 - p16) / 2.0
+    expected_floor = 0.01 * np.max(raw_half_width)
+
+    assert s.clipped_samples["pdf_uncertainty"][0] == pytest.approx(expected_floor, rel=1e-6)
+    assert s.clipped_samples["pdf_uncertainty"][0] > 0.0
+
+
+def test_clip_uncertainties_2d_does_not_modify_samples():
+    s = KinematicSolver2D()
+    s.grid = setup_grid_2d(center=(0.0, 0.0), width=(20.0, 20.0), n_bins=5)
+    pdf = _fake_samples_2d(k=5)
+    pdf_before = pdf.copy()
+    s.samples = {"intrinsic_pdf": pdf}
+
+    s.clip_uncertainties()
+
+    np.testing.assert_array_equal(pdf, pdf_before)
+    np.testing.assert_array_equal(s.samples["intrinsic_pdf"], pdf_before)
+
+
+def test_clip_uncertainties_2d_raises_before_run():
+    s = KinematicSolver2D()
+    with pytest.raises(ValueError, match="No posterior samples"):
+        s.clip_uncertainties()
+
+
+# ==============================================================================
+# fit_all_bins_2d
+# ==============================================================================
+
+
+def _make_pm_bin(n, seed):
+    rng = np.random.default_rng(seed)
+    pm1 = rng.normal(0, 5, n)
+    pm2 = rng.normal(0, 5, n)
+    cov = np.zeros((n, 2, 2))
+    cov[:, 0, 0] = cov[:, 1, 1] = 1.0
+    return {"pm1": pm1, "pm2": pm2, "cov": cov}
+
+
+def test_fit_all_bins_2d_returns_list_same_length():
+    bin_data_list = [_make_pm_bin(15, seed=i) for i in range(3)]
+    grid_kwargs = {"center": (0.0, 0.0), "width": (30.0, 30.0), "n_bins": 5}
+    run_kwargs = {"num_warmup": 2, "num_samples": 2, "seed": 100}
+
+    solvers = fit_all_bins_2d(bin_data_list, grid_kwargs, run_kwargs=run_kwargs, show_progress=False)
+
+    assert len(solvers) == 3
+    for solver in solvers:
+        assert solver is not None
+        assert solver.clipped_samples is not None
+
+
+def test_fit_all_bins_2d_skips_below_min_stars():
+    bin_data_list = [
+        _make_pm_bin(15, seed=0),
+        _make_pm_bin(3, seed=1),  # below min_stars
+        _make_pm_bin(15, seed=2),
+    ]
+    grid_kwargs = {"center": (0.0, 0.0), "width": (30.0, 30.0), "n_bins": 5}
+    run_kwargs = {"num_warmup": 2, "num_samples": 2, "seed": 100}
+
+    with pytest.warns(UserWarning, match="Skipping"):
+        solvers = fit_all_bins_2d(
+            bin_data_list, grid_kwargs, run_kwargs=run_kwargs, min_stars=10, show_progress=False
+        )
+
+    assert len(solvers) == 3
+    assert solvers[1] is None
+    assert solvers[0] is not None
+    assert solvers[2] is not None
+    assert solvers[0].clipped_samples is not None
+    assert solvers[2].clipped_samples is not None
+
+
+def test_fit_all_bins_2d_uses_distinct_seeds_per_bin():
+    """Two bins with identical data but different indices get different
+    seeds. Assert on the seeds actually used, not on posteriors differing
+    (which would be flaky for tiny num_samples)."""
+    import veldist.veldist2d as veldist2d_module
+
+    bin_data = _make_pm_bin(15, seed=0)
+    bin_data_list = [dict(bin_data), dict(bin_data)]
+    grid_kwargs = {"center": (0.0, 0.0), "width": (30.0, 30.0), "n_bins": 5}
+    run_kwargs = {"num_warmup": 2, "num_samples": 2, "seed": 100}
+
+    seen_seeds = []
+    original_run = veldist2d_module.KinematicSolver2D.run
+
+    def spy_run(self, *args, **kwargs):
+        seen_seeds.append(kwargs.get("seed"))
+        return original_run(self, *args, **kwargs)
+
+    veldist2d_module.KinematicSolver2D.run = spy_run
+    try:
+        fit_all_bins_2d(bin_data_list, grid_kwargs, run_kwargs=run_kwargs, show_progress=False)
+    finally:
+        veldist2d_module.KinematicSolver2D.run = original_run
+
+    assert len(seen_seeds) == 2
+    assert seen_seeds[0] != seen_seeds[1]
+    assert seen_seeds == [100, 101]

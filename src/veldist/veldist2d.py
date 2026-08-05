@@ -22,6 +22,9 @@ matrix ``M`` is stored as float32 for memory; see the ⚠ Gotchas in
 oversight.
 """
 
+import contextlib
+import io
+import warnings
 from functools import cache
 
 import numpy as np
@@ -44,6 +47,7 @@ __all__ = [
     "model_2d",
     "model_gaussian_core_2d",
     "generate_gaussian_core_field_2d",
+    "fit_all_bins_2d",
 ]
 
 #: Rate of the Exponential prior on the non-Gaussian deviation scale. Starts
@@ -641,6 +645,9 @@ class KinematicSolver2D:
         model.
     n_stars : int or None
     samples : dict or None
+    clipped_samples : dict or None
+        Per-cell summary statistics (median PM-distribution mass and clipped
+        uncertainties) populated by ``clip_uncertainties``.
     """
 
     def __init__(self):
@@ -651,6 +658,7 @@ class KinematicSolver2D:
         self.L = None
         self.n_stars = None
         self.samples = None
+        self.clipped_samples = None
 
     def setup_grid(
         self, center, width, n_bins, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6
@@ -789,3 +797,220 @@ class KinematicSolver2D:
         self.samples = mcmc.get_samples()
         print("Inference Complete.")
         return self.samples
+
+    def clip_uncertainties(self, floor_fraction=0.01, abs_floor=1e-10):
+        """
+        Apply uncertainty floors and store per-cell PM-distribution summary
+        statistics.
+
+        Direct port of :meth:`veldist.KinematicSolver.clip_uncertainties`;
+        see that method for the full rationale (uncertainty floors, why
+        marginal medians need not sum to 1). The only substantive difference
+        here is naming: the quantity summarised is a bivariate proper-motion
+        distribution, not a line-of-sight velocity distribution, so the keys
+        are ``pdf_median`` / ``pdf_uncertainty`` rather than
+        ``losvd_median`` / ``losvd_uncertainty``.
+
+        This is a **post-processing step** that does *not* modify the raw
+        posterior samples in ``self.samples``. It summarises the posterior
+        as per-cell marginal medians and half-CI-widths in probability-mass
+        space, then raises the uncertainties to a floor so that no cell
+        carries a zero into the Dynamite output writer.
+
+        - ``pdf_median`` stores the per-cell **marginal median** of the
+          posterior probability mass. Because the joint posterior is a
+          simplex but marginals are taken independently, the median values
+          typically *sum to 0.85-0.95*, not 1. This is expected and correct.
+        - ``pdf_uncertainty`` stores the **half-width** of the 68% credible
+          interval: ``(p84 - p16) / 2``. Used as symmetric +/-error bars.
+
+        Both quantities are **dimensionless probability mass per cell**.
+        They are *not* divided by cell area.
+
+        Motivation
+        ----------
+        Zero uncertainties in PM-distribution cells propagate into
+        Dynamite's internal NNLS projection matrices and produce ``econ``
+        zeros that cause weight-solving failures in large orbit-library
+        runs. The relative floor (``floor_fraction * max_uncertainty``) is
+        the primary safeguard; the absolute floor is a numerical backstop
+        for channels where the posterior is pathologically tight across the
+        board.
+
+        Parameters
+        ----------
+        floor_fraction : float
+            Relative floor as a fraction of the maximum per-cell half-CI-width
+            across all cells. Default 0.01 (1%).
+        abs_floor : float
+            Absolute floor applied after the relative floor. Default 1e-10.
+
+        Returns
+        -------
+        None
+            Sets ``self.clipped_samples`` as a dict with keys:
+
+            - ``'pdf_median'``:      per-cell marginal median, probability
+              mass (dimensionless); shape (K**2,), flat row-major.
+            - ``'pdf_uncertainty'``: clipped half-width of 68% CI,
+              probability mass; shape (K**2,), flat row-major.
+        """
+        if self.samples is None:
+            msg = "No posterior samples found. Call run() before clip_uncertainties()."
+            raise ValueError(msg)
+
+        # Work in probability-mass space throughout.
+        # self.samples["intrinsic_pdf"] has shape (n_samples, K**2);
+        # each row is a valid probability mass function (sums to 1).
+        pdf_mass = np.asarray(self.samples["intrinsic_pdf"])
+
+        # Sanity check: the MEAN of valid mass samples must also sum to ~1.
+        mean_mass = np.mean(pdf_mass, axis=0)
+        mean_sum = np.sum(mean_mass)
+        if not np.isclose(mean_sum, 1.0, rtol=1e-3):
+            msg = (
+                f"Posterior mean PM distribution sums to {mean_sum:.6f}, expected ~1.0. "
+                "Check that self.samples['intrinsic_pdf'] contains valid probability "
+                "mass functions (each row should sum to 1)."
+            )
+            raise ValueError(msg)
+
+        # Per-cell marginal statistics.
+        median_mass = np.percentile(pdf_mass, 50, axis=0)
+        p16 = np.percentile(pdf_mass, 16, axis=0)
+        p84 = np.percentile(pdf_mass, 84, axis=0)
+
+        # Half-width of 68% CI (used as symmetric +/-uncertainty in Dynamite).
+        raw_half_width = (p84 - p16) / 2.0
+
+        # Relative floor: a fraction of the widest half-CI in this map.
+        rel_floor = floor_fraction * np.max(raw_half_width)
+
+        clipped = np.maximum(raw_half_width, rel_floor)
+        clipped = np.maximum(clipped, abs_floor)
+
+        self.clipped_samples = {
+            "pdf_median": median_mass,
+            "pdf_uncertainty": clipped,
+        }
+
+
+# ==============================================================================
+# Batch API
+# ==============================================================================
+
+
+def fit_all_bins_2d(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, show_progress=True):
+    """
+    Run the full inference pipeline for a list of spatial (Voronoi) bins.
+
+    Direct port of :func:`veldist.fit_all_bins` for the 2D (proper-motion)
+    solver. For each bin, this executes the ``setup_grid`` -> ``add_data``
+    -> ``run`` -> ``clip_uncertainties`` pipeline and returns a list of
+    :class:`KinematicSolver2D` instances ready for the Dynamite output
+    writer. Bins with too few stars are skipped (returning ``None`` at that
+    position) so the writer can mask them.
+
+    Unlike 1D's :func:`~veldist.fit_all_bins`, there is no ``match_grid``
+    equivalent here and none will be added: every bin is fitted on the same
+    shared ``grid_kwargs``. This is not a simplification made for
+    convenience -- Dynamite's 2D kinematics ``.npz`` format carries a single
+    scalar ``vxrange``/``vyrange`` for the whole map, so there is no
+    per-aperture grid slot even at output time, and a per-bin matched grid
+    would have nowhere to go.
+
+    Each bin receives a unique RNG seed derived as ``base_seed + bin_index``
+    to avoid correlations between sampling chains.
+
+    Parameters
+    ----------
+    bin_data_list : list of dict
+        One dict per Voronoi bin. Required keys:
+
+        - ``'pm1'``, ``'pm2'``: arrays of observed proper-motion components.
+        - ``'cov'``: array of per-star 2x2 measurement covariance matrices.
+
+        Any additional keys (e.g. spatial metadata) are ignored here and
+        can be passed separately to the output writer.
+    grid_kwargs : dict
+        Keyword arguments forwarded to :meth:`KinematicSolver2D.setup_grid`
+        (``center``, ``width``, ``n_bins``, ...). Shared across all bins.
+    run_kwargs : dict, optional
+        Keyword arguments forwarded to :meth:`KinematicSolver2D.run`
+        (e.g. ``num_warmup``, ``num_samples``, ``gpu``, ``prior``). The
+        ``seed`` key, if present, is used as the *base* seed; each bin then
+        receives ``seed + bin_index``. Defaults to ``{}`` (all ``run``
+        defaults apply).
+    min_stars : int
+        Minimum number of stars required to attempt inference. Bins with
+        fewer stars are skipped with a warning. Default 10.
+    show_progress : bool
+        Show a single ``tqdm`` progress bar over bins instead of the
+        default per-bin, per-chain NUTS progress bars. Default ``True``.
+
+        Note: unlike 1D's ``KinematicSolver.run``,
+        ``KinematicSolver2D.run`` currently has no ``progress_bar``
+        parameter to suppress NumPyro's own per-chain bars, so this only
+        controls the single outer bar over bins; it is not forwarded to
+        ``run()``.
+
+    Returns
+    -------
+    solvers : list
+        One entry per input bin. Entries are either a fully solved
+        :class:`KinematicSolver2D` (with ``samples`` and
+        ``clipped_samples`` populated) or ``None`` for skipped bins.
+    """
+    if run_kwargs is None:
+        run_kwargs = {}
+
+    # Extract the base seed so we can derive per-bin seeds.
+    run_kwargs = dict(run_kwargs)
+    base_seed = run_kwargs.pop("seed", 5567)
+
+    n_total = len(bin_data_list)
+    solvers = []
+
+    bin_iter = enumerate(bin_data_list)
+    if show_progress:
+        from tqdm.auto import tqdm
+
+        bin_iter = tqdm(bin_iter, total=n_total, desc="Fitting bins", unit="bin")
+
+    for i, bin_data in bin_iter:
+        if not show_progress:
+            print(f"Fitting bin {i + 1}/{n_total}...")
+
+        pm1 = np.asarray(bin_data["pm1"])
+        pm2 = np.asarray(bin_data["pm2"])
+        cov = np.asarray(bin_data["cov"])
+
+        if len(pm1) < min_stars:
+            warnings.warn(
+                f"Bin {i} has only {len(pm1)} star(s) (minimum is {min_stars}). "
+                "Skipping. This bin will appear as None in the output list and "
+                "should be masked in the Dynamite input files.",
+                stacklevel=2,
+            )
+            solvers.append(None)
+            continue
+
+        solver = KinematicSolver2D()
+        solver.setup_grid(**grid_kwargs)
+
+        # add_data/run print progress lines of their own; redirect those to
+        # keep the single outer tqdm bar clean instead of interleaving with
+        # printed lines per bin.
+        with contextlib.redirect_stdout(io.StringIO()) if show_progress else contextlib.nullcontext():
+            solver.add_data(pm1=pm1, pm2=pm2, cov=cov)
+            solver.run(seed=base_seed + i, **run_kwargs)
+
+        solver.clip_uncertainties()
+
+        solvers.append(solver)
+
+    n_solved = sum(s is not None for s in solvers)
+    n_skipped = n_total - n_solved
+    print(f"Done. {n_solved}/{n_total} bins solved" + (f", {n_skipped} skipped." if n_skipped else "."))
+
+    return solvers
