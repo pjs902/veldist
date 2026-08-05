@@ -181,18 +181,26 @@ h3/h4 limitation honestly rather than engineering around it.
   continuous sigma is wanted for science, it needs an explicit Sheppard
   correction in post-processing — that is a real, separate deliverable.
 
-  **What is actually open:** the 2D harness has no `ObservingProfile`. Grid
-  width (40×40) and `ERR_RANGE` (0.5–2.0) were inherited from
-  `test_calibration_2d.py`, whose own comment calls the grid an "arbitrary
-  physical span". 2D needs the equivalent of the 1D "Observational
-  calibration" exercise in `test_coverage.py`: real PM dispersion, real
-  errors, real star counts, and a K chosen against them. Measured PM regime
-  from the oMEGACat uncertainty-vs-magnitude figure: cut at 0.3 mas/yr
-  ≈ 7.7 km/s (1 mas/yr ≈ 25.7 km/s at 5.4 kpc), median error ~0.011 mas/yr
-  ≈ 0.28 km/s at the bright end rising to ~6.4 km/s at m≈25.5, against an
-  inner dispersion ~0.7 mas/yr ≈ 17 km/s — so err/σ ≈ 0.04–0.11, comparable
-  to or better than the LOS case's 0.11. **2D is the easier per-bin problem,
-  not the harder one.**
+  **Resolution (2026-08-05):** The profiling/calibration gap that was "what is
+  actually open" is resolved. `calibration2d.py` provides three calibrated PM
+  observing profiles (HST_BRIGHT, HST_FAINT, GAIA_OUTER) with grid width and
+  bin count derived from the oMEGaCat measurement regime. A cell_per_sigma
+  sweep (K ∈ {9,11,13,15,17,19}, n=25, both HST regimes, both truths, under
+  the gaussian_core prior) established cell_per_sigma=0.47 (K=15, 225 cells,
+  1.8 stars/cell) as the effective limit — finer grids break on anisotropic
+  truths at N=400. The default was set at that value. The GMRF-era discovery
+  that 2D is the easier per-bin problem (larger N, comparable err/sigma) was
+  confirmed.
+
+  **Mean_y offset (~+0.15 km/s at hst_bright) remains unexplained but
+  small.** A constant-mode projection residual (~1% of σ), only visible in the
+  tight-error-bar regime. Invisible at hst_faint. Not a blocker.
+
+  **Still open:**
+  - Sheppard correction if reporting continuous σ (not needed for DYNAMITE
+    output, which chi-squares per-cell mass, not cell-centre moments).
+  - The mean_y residual if it turns out to be something other than a
+    constant-mode projection leakage.
 
 ## Ruled out by measurement — do not re-raise
 

@@ -243,34 +243,42 @@ in would manufacture a passing number.
 
 ## 2D solver results
 
-**SBC** (`tests/test_calibration_2d.py`, `K=10` (100 cells), `n_stars=250`,
-500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities (`mean_x`,
-`mean_y`, `sigma_x`, `sigma_y`, `rho`, `smoothness_sigma`) pass; 0/30
-simulations failed. The 2D model's GMRF prior was already implemented
-generatively (`z ~ N(0, I)` plus a deterministic Cholesky-whitening
-transform, never a bare `numpyro.factor` penalty) from the start, following
-the lesson learned from the 1D SBC bug above. This was verified via
-`test_prior_predictive_is_smooth_2d`, which checks that `Predictive` draws of
-`intrinsic_pdf` are diffuse GMRF-like fields and not near-one-hot spikes.
+All results below use the ``gaussian_core`` prior (``prior="gaussian_core"``
+in ``KinematicSolver2D.run``, now the default). The legacy ``gmrf`` prior is
+retained only for comparison.
 
-**Recovery** (`tests/test_veldist2d.py`, slow tests): the acceptance
-criterion for "2D minimally working" per the plan is recovering the full
-covariance of a tilted bivariate Gaussian, not only its marginals, since
-marginal recovery alone would be equally well passed by a separable
-(non-GMRF) prior. `test_recover_tilted_gaussian` fits mock data drawn from a
-bivariate Gaussian with covariance $\mathrm{Var}(x)=\sigma_x^2$,
-$\mathrm{Var}(y)=\sigma_y^2$, $\mathrm{Cov}(x,y)=\rho\sigma_x\sigma_y$,
-using $\sigma_x=8$, $\sigma_y=6$, $\rho=0.6$, and recovers all three
-independent covariance components within the posterior half-68CI
-(5$\sigma$ tolerance). `test_recover_isotropic_gaussian` is the $\rho=0$
-control. `test_2d_marginal_matches_1d` cross-checks the 2D solver's
-$\hat v_1$ marginal against a direct 1D fit of the same data. Both pass.
-One finding: these tests needed `n_stars=2000` rather than the plan-suggested
-200–400, because at lower star counts the GMRF prior induces a measurable
-finite-sample shrinkage bias in the recovered variance (the same underlying
-mechanism as the 1D kurtosis bias above: many free grid cells relative to
-star count). This was fixed by raising $N$, a real mitigation, rather than by
-loosening the tolerance.
+**SBC** (`tests/test_calibration_2d.py`, `K=10` (100 cells), `n_stars=250`,
+500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities pass under both
+priors with 0/30 failures. The 2D model's prior is implemented generatively
+(``z ~ N(0, I)`` plus deterministic Cholesky-whitening, never a bare
+``numpyro.factor`` penalty), following the 1D SBC lesson. Verified via
+``test_prior_predictive_is_smooth_2d``.
+
+**Recovery** — ``test_coverage_over_mock_realisations_2d`` (moment coverage)
+and ``test_per_cell_losvd_coverage_2d`` (per-cell coverage), parametrised
+over three properly calibrated observing profiles (``HST_BRIGHT``,
+``HST_FAINT``, ``GAIA_OUTER`` from ``calibration2d.py``) and two truths
+(isotropic, anisotropic):
+
+| Profile | err/sigma | N_stars | K (cells) | Moment cov. | Per-cell cov. | Notes |
+|---|---|---|---|---|---|---|
+| HST_BRIGHT | 0.014 | 400 | 15 (225) | PASS both truths | PASS both truths | Tightest test — no slack to hide bias |
+| HST_FAINT | 0.147 | 400 | 15 (225) | PASS both truths | PASS both truths | Error kernel resolved at K=15 |
+| GAIA_OUTER | 0.625 | 2000 | 15 (225) | XFAIL | XFAIL | Known-weak; err/sigma exceeds 1D's structural-failure threshold (0.36) |
+
+Parameters: ``num_warmup=300``, ``num_samples=600``, ``prior="gaussian_core"``,
+``n_real=25``, `99%` binomial band `[0.44, 0.92]` on `mean_x/mean_y/sigma_x/
+sigma_y`; ``rho`` reported but not gating.
+
+Scored against the **discretised truth** (true per-cell probability mass):
+using the continuous truth would charge the model for the `~h²/12` Sheppard
+discretisation offset, which is not a model defect. The discretised
+comparison is also what Dynamite chi-squares.
+
+**The profiling campaign that set these defaults** is recorded in the
+``cell_per_sigma`` docstring in ``calibration2d.py`` and in TASKS.md. K=15
+(cell_per_sigma=0.47, 1.8 stars/cell) was identified as the effective limit
+for N=400; K=19 (1.1 stars/cell) breaks on anisotropic truths.
 
 **Performance gate** (`PLAN.md` §3.4): the plan defines an explicit,
 measurable gate before considering any SVI/Pathfinder escalation. Run
@@ -309,8 +317,14 @@ pytest tests/test_coverage.py -m slow -v
 # 2D SBC
 pytest tests/test_calibration_2d.py -m slow -v
 
-# 2D recovery tests (tilted/isotropic Gaussian, 1D/2D marginal consistency)
+# 2D coverage (moment + per-cell, parametrised over 3 profiles × 2 priors)
+pytest tests/test_coverage_2d.py -m slow -v
+
+# 2D unit tests (recovery, marginal consistency, design matrix)
 pytest tests/test_veldist2d.py -m slow -v
+
+# 2D Dynamite output writer + profile tests
+pytest tests/test_dynamite2d.py tests/test_calibration2d_profile.py -v
 ```
 
 The §3.4 performance gate is a one-off measurement, not a pytest test (it
