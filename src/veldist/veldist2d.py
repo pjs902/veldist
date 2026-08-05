@@ -42,7 +42,15 @@ __all__ = [
     "precompute_design_matrix_2d",
     "build_gmrf_precision",
     "model_2d",
+    "model_gaussian_core_2d",
+    "generate_gaussian_core_field_2d",
 ]
+
+#: Rate of the Exponential prior on the non-Gaussian deviation scale. Starts
+#: at the value 1D adopted after its regularisation campaign
+#: (docs/superpowers/specs/2026-08-03-regularisation-decision.md). NOT yet
+#: measured for 2D -- do not assume it transfers.
+SIGMA3_RATE_2D = 0.35
 
 
 # ==============================================================================
@@ -501,6 +509,114 @@ def model_2d(matrix, n_cells, L):
     per_star_prob = jnp.dot(matrix, intrinsic_pdf)
     log_prob = jnp.sum(jnp.log(per_star_prob))
     numpyro.factor("obs_log_lik", log_prob)
+
+
+def generate_gaussian_core_field_2d(k, centers_2d, L):
+    """Latent log-density field: free bivariate-Gaussian core + penalised deviation.
+
+    The infinite-smoothing limit of this prior is a bivariate Gaussian, not a
+    uniform over the velocity grid. That is the whole point: the pure-GMRF
+    prior in :func:`model_2d` has a uniform limit whose dispersion is
+    ``grid_width/sqrt(12)`` -- 34 km/s on a 119 km/s grid against a true 17 --
+    so weakly-constrained fits are pulled toward a far broader distribution and
+    every recovered dispersion is biased high. Measured on the pure GMRF
+    (isotropic sigma=17, err/sigma=0.014, scored against the discretised
+    truth): sigma_x bias +2.34 at N=100 and +0.51 at N=500, growing with k.
+
+    A general quadratic form in (vx, vy) softmaxes to exactly a bivariate
+    Gaussian, so ``v0x``, ``v0y``, ``s0x``, ``s0y``, ``rho0`` map one-to-one
+    onto the PDF's mean and covariance -- the velocity ellipsoid. Structure
+    beyond second order remains penalised, exactly as h3/h4 are in 1D.
+
+    Parameters
+    ----------
+    k : int
+        Grid size per axis. Total cells ``k**2``.
+    centers_2d : array-like, shape (k**2, 2)
+        Physical cell centres from :func:`setup_grid_2d`. Required because the
+        core is quadratic in *velocity*, not in cell index.
+    L : jnp.ndarray, shape (k**2, k**2)
+        Cholesky factor of the ridge-regularised GMRF precision.
+
+    Returns
+    -------
+    field : jnp.ndarray, shape (k**2,)
+        Latent log-density, to be passed through ``softmax``.
+    """
+    centers_2d = jnp.asarray(centers_2d)
+    cx = centers_2d[:, 0]
+    cy = centers_2d[:, 1]
+    span_x = jnp.max(cx) - jnp.min(cx)
+    span_y = jnp.max(cy) - jnp.min(cy)
+    mid_x = jnp.mean(cx)
+    mid_y = jnp.mean(cy)
+
+    # --- Gaussian null space: free, unpenalised ---
+    # LogNormal rather than HalfNormal on the widths: half-distributions put
+    # substantial mass near zero, and a near-zero width collapses the
+    # distribution onto one cell. 1D measured a prior-predictive median sigma
+    # of exactly 0.00 for >99% of draws that way (veldist.py:454).
+    #
+    # The divisor is 6, not 1D's 8. The grid is sized at +/-3.5 sigma, so
+    # span ~ 7 sigma and a prior median matching the expected dispersion wants
+    # a divisor near 6.2; span/6 gives 17.7 km/s against a 17 km/s truth.
+    # 1D's span/8 is 0.875 sigma, which is fine on a 37-bin grid but lands the
+    # median on exactly 1.00 cell at 2D's K=9, putting half of all prior draws
+    # below the grid resolution. Measured sub-cell fraction: 0.50 at
+    # (span/8, 1.0) vs 0.35 at (span/6, 0.75).
+    v0x = numpyro.sample("v0x", dist.Normal(mid_x, span_x / 4.0))
+    v0y = numpyro.sample("v0y", dist.Normal(mid_y, span_y / 4.0))
+    s0x = numpyro.sample("s0x", dist.LogNormal(jnp.log(span_x / 6.0), 0.75))
+    s0y = numpyro.sample("s0y", dist.LogNormal(jnp.log(span_y / 6.0), 0.75))
+    # Uniform(-0.95, 0.95) is the LKJ(2, 1) marginal with the degenerate
+    # endpoints clipped, written explicitly so rho0 is a rankable site.
+    rho0 = numpyro.sample("rho0", dist.Uniform(-0.95, 0.95))
+
+    dx = (cx - v0x) / jnp.clip(s0x, 1e-3)
+    dy = (cy - v0y) / jnp.clip(s0y, 1e-3)
+    quad = (dx**2 - 2.0 * rho0 * dx * dy + dy**2) / (1.0 - rho0**2)
+    core = -0.5 * quad
+
+    # --- penalised non-Gaussian deviation ---
+    sigma3 = numpyro.sample(
+        "sigma3", dist.Exponential(SIGMA3_RATE_2D)
+    ) * _gmrf_deviation_scale_2d(k)
+    z = numpyro.sample("z", dist.Normal(0.0, 1.0).expand([k * k]).to_event(1))
+    # x = sigma * L^-T z, i.e. solve the UPPER triangular system L.T @ x = z.
+    # Using L with lower=True would give L^-1 z, a different covariance; see
+    # test_solve_triangular_direction.
+    w = sigma3 * jax.scipy.linalg.solve_triangular(L.T, z, lower=False)
+
+    # Project out the quadratic null space. Cached constant, so a matmul
+    # rather than a QR per leapfrog step.
+    q_ns = jnp.asarray(_null_space_basis_2d(k))
+    deviation = w - q_ns @ (q_ns.T @ w)
+
+    return core + deviation
+
+
+def model_gaussian_core_2d(matrix, n_cells, L, centers_2d):
+    """The 2D NumPyro model with the Gaussian-core prior.
+
+    Parameters
+    ----------
+    matrix : jnp.ndarray, shape (N_stars, k**2)
+        Pre-computed 2D design matrix.
+    n_cells : int
+        Number of grid cells, ``k**2``.
+    L : jnp.ndarray, shape (k**2, k**2)
+        Cholesky factor of the ridge-regularised GMRF precision.
+    centers_2d : jnp.ndarray, shape (k**2, 2)
+        Physical cell centres.
+    """
+    k = int(round(float(n_cells) ** 0.5))
+    field = generate_gaussian_core_field_2d(k, centers_2d, L)
+
+    intrinsic_pdf = jax.nn.softmax(field)
+    numpyro.deterministic("intrinsic_pdf", intrinsic_pdf)
+
+    per_star_prob = jnp.dot(matrix, intrinsic_pdf)
+    numpyro.factor("obs_log_lik", jnp.sum(jnp.log(per_star_prob)))
 
 
 # ==============================================================================

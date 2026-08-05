@@ -589,3 +589,129 @@ def test_gmrf_deviation_scale_2d_matches_recorded_constants():
     assert _gmrf_deviation_scale_2d(11) == pytest.approx(2.230200, rel=1e-5)
     assert _gmrf_deviation_scale_2d(13) == pytest.approx(2.171252, rel=1e-5)
     assert _gmrf_deviation_scale_2d(15) == pytest.approx(2.125077, rel=1e-5)
+
+
+def test_gaussian_core_2d_recovers_a_bivariate_gaussian_when_deviation_is_off():
+    """With sigma3 pinned near zero, softmax(field) must BE the bivariate
+    Gaussian named by the core parameters.
+
+    This is the property the whole design rests on: a quadratic log-density
+    softmaxes to exactly a bivariate Gaussian, so v0/s0/rho0 map one-to-one
+    onto the PDF's mean and covariance -- the velocity ellipsoid. If this
+    fails, the core is not doing what the design claims and nothing downstream
+    is trustworthy.
+    """
+    import jax
+    from numpyro.handlers import seed, substitute
+    from veldist.veldist2d import generate_gaussian_core_field_2d, build_gmrf_precision
+
+    k = 21
+    s0x_true, s0y_true, rho_true = 6.0, 4.0, 0.5
+    grid = setup_grid_2d(center=(0.0, 0.0), width=(48.0, 48.0), n_bins=k)
+    centers = grid["centers_2d"]
+    _, q_reg = build_gmrf_precision(k)
+    L = jnp.asarray(np.linalg.cholesky(q_reg))
+
+    fixed = {
+        "v0x": 0.0, "v0y": 0.0,
+        "s0x": s0x_true, "s0y": s0y_true, "rho0": rho_true,
+        "sigma3": 1e-8,
+        "z": np.zeros(k * k),
+    }
+    fn = substitute(seed(generate_gaussian_core_field_2d, jax.random.PRNGKey(0)),
+                    data=fixed)
+    field = np.asarray(fn(k, jnp.asarray(centers), L))
+    pdf = np.exp(field - field.max())
+    pdf /= pdf.sum()
+
+    cx, cy = centers[:, 0], centers[:, 1]
+    mx, my = pdf @ cx, pdf @ cy
+    vx = pdf @ (cx - mx) ** 2
+    vy = pdf @ (cy - my) ** 2
+    cxy = pdf @ ((cx - mx) * (cy - my))
+    sx, sy = np.sqrt(vx), np.sqrt(vy)
+
+    # Grid is 48 km/s wide with 21 cells -> cell 2.29, so discretisation adds
+    # ~cell^2/12 = 0.44 to a variance of 36; ~0.6% on sigma. 3% is ample.
+    assert abs(sx / s0x_true - 1) < 0.03, f"sigma_x {sx:.3f} vs core {s0x_true}"
+    assert abs(sy / s0y_true - 1) < 0.03, f"sigma_y {sy:.3f} vs core {s0y_true}"
+    assert abs(cxy / (sx * sy) - rho_true) < 0.03
+
+
+def test_gaussian_core_2d_deviation_is_orthogonal_to_quadratics():
+    """With the core flattened, the field must be pure deviation, and the
+    deviation must have no component along any bivariate quadratic.
+
+    If it does, the deviation can imitate the core: the two become degenerate,
+    NUTS loses identifiability, and the shrinkage this design removes comes
+    straight back in through the deviation.
+    """
+    import jax
+    from numpyro.handlers import seed, substitute
+    from veldist.veldist2d import (
+        generate_gaussian_core_field_2d, build_gmrf_precision, _null_space_basis_2d,
+    )
+
+    k = 11
+    grid = setup_grid_2d(center=(0.0, 0.0), width=(40.0, 40.0), n_bins=k)
+    centers = grid["centers_2d"]
+    _, q_reg = build_gmrf_precision(k)
+    L = jnp.asarray(np.linalg.cholesky(q_reg))
+
+    rng = np.random.default_rng(3)
+    fixed = {
+        "v0x": 0.0, "v0y": 0.0,
+        "s0x": 1e8, "s0y": 1e8,  # flattens the quadratic core to ~0
+        "rho0": 0.0,
+        "sigma3": 1.0,
+        "z": rng.normal(size=k * k),
+    }
+    fn = substitute(seed(generate_gaussian_core_field_2d, jax.random.PRNGKey(0)),
+                    data=fixed)
+    field = np.asarray(fn(k, jnp.asarray(centers), L))
+
+    q_ns = _null_space_basis_2d(k)
+    residual = q_ns.T @ field
+    scale = max(1.0, np.max(np.abs(field)))
+    assert np.max(np.abs(residual)) < 1e-6 * scale, (
+        f"deviation has a component along the quadratic null space "
+        f"(max {np.max(np.abs(residual)):.3e}); the projection is wrong"
+    )
+    # And the deviation must not be identically zero.
+    assert np.max(np.abs(field)) > 1e-6
+
+
+def test_model_gaussian_core_2d_prior_predictive_is_not_degenerate():
+    """Predictive draws must be smooth, normalised, and not near-one-hot.
+
+    Verifies empirically -- rather than assuming from code structure -- that
+    the parameterisation is fully generative and Predictive-compatible. A
+    factor-based penalty would forward-sample to a spike here.
+    """
+    import jax
+    from numpyro.infer import Predictive
+    from veldist.veldist2d import model_gaussian_core_2d, build_gmrf_precision
+
+    k = 11
+    grid = setup_grid_2d(center=(0.0, 0.0), width=(40.0, 40.0), n_bins=k)
+    _, q_reg = build_gmrf_precision(k)
+    L = jnp.asarray(np.linalg.cholesky(q_reg))
+
+    pred = Predictive(model_gaussian_core_2d, num_samples=200)
+    draws = pred(
+        jax.random.PRNGKey(0),
+        matrix=jnp.zeros((5, k * k)),
+        n_cells=k * k,
+        L=L,
+        centers_2d=jnp.asarray(grid["centers_2d"]),
+    )
+    pdfs = np.asarray(draws["intrinsic_pdf"])
+    assert pdfs.shape == (200, k * k)
+    assert np.isfinite(pdfs).all()
+    np.testing.assert_allclose(pdfs.sum(axis=1), 1.0, atol=1e-5)
+    assert np.median(pdfs.max(axis=1)) < 0.8, (
+        "prior-predictive draws are spiky; Predictive may not be forward-"
+        "sampling through the generative transform"
+    )
+    for site in ["v0x", "v0y", "s0x", "s0y", "rho0", "sigma3"]:
+        assert site in draws, f"{site} missing from Predictive output"
