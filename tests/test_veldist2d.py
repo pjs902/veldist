@@ -715,3 +715,43 @@ def test_model_gaussian_core_2d_prior_predictive_is_not_degenerate():
     )
     for site in ["v0x", "v0y", "s0x", "s0y", "rho0", "sigma3"]:
         assert site in draws, f"{site} missing from Predictive output"
+
+
+def test_solver_2d_rejects_unknown_prior():
+    from veldist.veldist2d import KinematicSolver2D
+
+    s = KinematicSolver2D()
+    s.setup_grid(center=(0.0, 0.0), width=(40.0, 40.0), n_bins=9)
+    rng = np.random.default_rng(0)
+    n = 40
+    cov = np.zeros((n, 2, 2))
+    cov[:, 0, 0] = cov[:, 1, 1] = 1.0
+    s.add_data(rng.normal(0, 5, n), rng.normal(0, 5, n), cov)
+    with pytest.raises(ValueError, match="Unknown prior"):
+        s.run(num_warmup=1, num_samples=1, prior="nonsense")
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("prior", ["gmrf", "gaussian_core"])
+def test_solver_2d_runs_under_both_priors(prior):
+    """Both priors must produce finite, normalised posterior PDFs."""
+    from veldist.veldist2d import KinematicSolver2D
+
+    s = KinematicSolver2D()
+    s.setup_grid(center=(0.0, 0.0), width=(40.0, 40.0), n_bins=9)
+    rng = np.random.default_rng(1)
+    n = 150
+    xy = rng.multivariate_normal([0, 0], [[36, 0], [0, 36]], size=n)
+    err = rng.uniform(0.5, 2.0, n)
+    cov = np.zeros((n, 2, 2))
+    cov[:, 0, 0] = cov[:, 1, 1] = err**2
+    s.add_data(xy[:, 0] + rng.normal(0, err), xy[:, 1] + rng.normal(0, err), cov)
+
+    samples = s.run(num_warmup=200, num_samples=200, seed=7, prior=prior)
+    pdf = np.asarray(samples["intrinsic_pdf"])
+    assert pdf.shape[1] == 81
+    assert np.isfinite(pdf).all()
+    np.testing.assert_allclose(pdf.sum(axis=1), 1.0, atol=1e-5)
+    if prior == "gaussian_core":
+        for site in ["v0x", "v0y", "s0x", "s0y", "rho0", "sigma3"]:
+            assert site in samples

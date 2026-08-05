@@ -729,7 +729,8 @@ class KinematicSolver2D:
         )
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567):
+    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567,
+            prior="gaussian_core"):
         """
         Run the NUTS sampler.
 
@@ -739,6 +740,14 @@ class KinematicSolver2D:
         gpu : bool or None
             See :meth:`veldist.KinematicSolver.run`.
         seed : int
+        prior : {"gaussian_core", "gmrf"}
+            Which prior to use. ``"gaussian_core"`` (default) gives the
+            latent field a free bivariate-Gaussian core, so the velocity
+            ellipsoid is unpenalised and the infinite-smoothing limit is a
+            Gaussian. ``"gmrf"`` is the original pure Gauss-Markov random
+            field, retained for comparison; its smoothing limit is a *uniform*
+            distribution over the velocity grid, measured to bias sigma_x high
+            by +0.5 (N=500) to +2.3 (N=100) km/s on a sigma=17 truth.
 
         Returns
         -------
@@ -751,6 +760,10 @@ class KinematicSolver2D:
             msg = "Run setup_grid() first."
             raise ValueError(msg)
 
+        if prior not in ("gmrf", "gaussian_core"):
+            msg = f"Unknown prior {prior!r}; expected 'gmrf' or 'gaussian_core'."
+            raise ValueError(msg)
+
         if gpu is True:
             numpyro.set_platform("gpu")
         elif gpu is False:
@@ -758,16 +771,20 @@ class KinematicSolver2D:
 
         print("Starting NUTS MCMC (2D)...")
         L_jax = jnp.asarray(self.L)
-        nuts_kernel = NUTS(model_2d)
-        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
+        model_kwargs = {
+            "matrix": jnp.asarray(self.matrix),
+            "n_cells": self.grid["n_cells"],
+            "L": L_jax,
+        }
+        if prior == "gaussian_core":
+            model_fn = model_gaussian_core_2d
+            model_kwargs["centers_2d"] = jnp.asarray(self.grid["centers_2d"])
+        else:
+            model_fn = model_2d
 
-        rng_key = jax.random.PRNGKey(int(seed))
-        mcmc.run(
-            rng_key,
-            matrix=jnp.asarray(self.matrix),
-            n_cells=self.grid["n_cells"],
-            L=L_jax,
-        )
+        nuts_kernel = NUTS(model_fn)
+        mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
+        mcmc.run(jax.random.PRNGKey(int(seed)), **model_kwargs)
 
         self.samples = mcmc.get_samples()
         print("Inference Complete.")
