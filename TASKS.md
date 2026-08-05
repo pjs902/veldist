@@ -94,10 +94,16 @@ h3/h4 limitation honestly rather than engineering around it.
   to `HalfNormal(3.0)`.
 
   **Retracted root cause.** An earlier entry here blamed the absence of a
-  Sørbye-Rue rescale in `build_gmrf_precision`. Measured directly: the GMRF
-  generalised variance moves only 6% from K=10 to K=20 (SR scale 1.777 →
-  1.670), which cannot explain a σ bias that tripled over that range. Real
-  but minor; do not treat it as the driver.
+  Sørbye-Rue rescale in `build_gmrf_precision`. Measured directly on the
+  6-dimensional quadratic projection that the rescale actually uses, the
+  constant drifts about −12% from K=9 to K=21 (2.311 → 2.028). That still
+  cannot explain a σ bias that *tripled* over the same range, so the
+  retraction stands — real but not the driver.
+
+  Note the first figure recorded here was ~6% (SR scale 1.777 → 1.670 over
+  K=10→20). That was computed by projecting out only the *constant* vector, a
+  1-dimensional null space, and understated the drift by about half. The
+  conclusion was unaffected, but do not re-cite the 6% number.
 
   **Actual driver: `N_STARS`.** The harness used 150 stars/bin — the *LOS*
   `OMEGACAT` number — copied into 2D without checking. PM catalogues go ~6 mag

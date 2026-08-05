@@ -537,17 +537,14 @@ def test_null_space_basis_2d_is_cached():
 
 
 @pytest.mark.parametrize("k", [7, 9, 11])
-def test_gmrf_deviation_scale_2d_normalises_generalised_variance(k):
-    """After scaling, the projected field's generalised variance must be 1.
+def test_gmrf_deviation_scale_2d_makes_sampled_fields_unit_scale(k):
+    """Draw actual fields and check the scale does what it claims.
 
-    That is the definition of the Sorbye-Rue constant: the geometric mean of
-    the per-cell marginal variances of the null-space-projected covariance
-    equals 1, so `sigma3` means "typical log-density departure from the
-    Gaussian null space" regardless of grid resolution.
-
-    Computed here from pinv(Q) directly, which is a different arithmetic route
-    to the same object than whatever the implementation uses, so agreement is
-    meaningful rather than circular.
+    Independent of the implementation's arithmetic: the constant is derived
+    there by linear algebra on pinv(Q), and checked here by sampling through
+    the same Cholesky path the model actually uses. A wrong projection or a
+    wrong precision matrix changes the sampled spread and this test fails,
+    where the previous formula-mirroring test could not.
     """
     from veldist.veldist2d import (
         _gmrf_deviation_scale_2d,
@@ -555,16 +552,40 @@ def test_gmrf_deviation_scale_2d_normalises_generalised_variance(k):
         build_gmrf_precision,
     )
 
-    scale = _gmrf_deviation_scale_2d(k)
-    assert np.isfinite(scale) and scale > 0
-
+    _, q_reg = build_gmrf_precision(k)
+    L = np.linalg.cholesky(q_reg)
     q_ns = _null_space_basis_2d(k)
-    proj = np.eye(k * k) - q_ns @ q_ns.T
-    q_mat, _ = build_gmrf_precision(k)
-    sigma = proj @ np.linalg.pinv(q_mat) @ proj.T
-    var = np.clip(np.diag(sigma), 1e-300, None)
-    gen_var = np.exp(np.mean(np.log(var)))
+    scale = _gmrf_deviation_scale_2d(k)
 
-    # scale is 1/sqrt(gen_var), so scaling the field by it makes the
-    # generalised variance of the result exactly 1.
-    np.testing.assert_allclose(gen_var * scale**2, 1.0, rtol=1e-6)
+    rng = np.random.default_rng(20260805)
+    n_draw = 4000
+    z = rng.normal(size=(k * k, n_draw))
+    # Same transform as the model: w = L^-T z, i.e. solve L.T @ w = z.
+    w = np.linalg.solve(L.T, z)
+    w = w - q_ns @ (q_ns.T @ w)          # project out the quadratic null space
+    w = w * scale                         # apply the constant under test
+
+    var = w.var(axis=1)
+    gen_var = np.exp(np.mean(np.log(np.clip(var, 1e-300, None))))
+    # 4000 draws -> ~2% standard error on a variance; 10% is a comfortable band
+    # that still fails hard if the scale is wrong by the ~20% it varies over k.
+    assert abs(gen_var - 1.0) < 0.10, (
+        f"k={k}: sampled generalised variance {gen_var:.4f} != 1; the scale "
+        "does not normalise the field it is applied to"
+    )
+
+
+def test_gmrf_deviation_scale_2d_matches_recorded_constants():
+    """Regression guard on the committed values.
+
+    Mirrors veldist.py's test_rw_deviation_scale_order_3_is_unchanged. These
+    are measured against the 6-dimensional quadratic projection; note they are
+    NOT the values obtained by projecting out only the constant vector, which
+    is a different (1-dimensional) null space and gives ~1.79 at k=9.
+    """
+    from veldist.veldist2d import _gmrf_deviation_scale_2d
+
+    assert _gmrf_deviation_scale_2d(9) == pytest.approx(2.310540, rel=1e-5)
+    assert _gmrf_deviation_scale_2d(11) == pytest.approx(2.230200, rel=1e-5)
+    assert _gmrf_deviation_scale_2d(13) == pytest.approx(2.171252, rel=1e-5)
+    assert _gmrf_deviation_scale_2d(15) == pytest.approx(2.125077, rel=1e-5)

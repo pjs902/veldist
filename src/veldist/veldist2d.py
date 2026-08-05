@@ -437,10 +437,10 @@ def _gmrf_deviation_scale_2d(k):
     null space" independently of grid resolution (Sorbye & Rue 2014, Spatial
     Statistics 8, 39; this is what ``scale.model=TRUE`` does in R-INLA).
 
-    Measured size: the generalised variance moves only ~6% from k=10 to k=20
-    (0.317 -> 0.358). This is a correctness tidy so that a tuned
-    ``SIGMA3_RATE_2D`` transfers across grids -- it is NOT the fix for the
-    dispersion bias, and an earlier hypothesis that it was has been retracted.
+    Measured size: the scale drifts about -12% from k=9 to k=21 (2.311 ->
+    2.028). This is a correctness tidy so that a tuned ``SIGMA3_RATE_2D``
+    transfers across grids -- it is NOT the fix for the dispersion bias, and
+    an earlier hypothesis that it was has been retracted.
 
     Cached: O(k^6) pinv, depends only on ``k``.
     """
