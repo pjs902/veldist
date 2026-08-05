@@ -63,7 +63,7 @@ class ObservingProfile2D:
         stars/cell) was the effective limit for the HST regimes. Finer cells
         (K=17) buys marginal improvement at +28% compute; K=19 (1.1 stars/cell)
         breaks on anisotropic truths. The GMRF-era numbers (+2.34 bias at K=9)
-        are obsolete — the null-space fix removed them, so this was re-chosen
+        are obsolete: the null-space fix removed them, so this was re-chosen
         post-gaussian_core as the spec required.
     """
 

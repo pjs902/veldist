@@ -254,7 +254,7 @@ priors with 0/30 failures. The 2D model's prior is implemented generatively
 ``numpyro.factor`` penalty), following the 1D SBC lesson. Verified via
 ``test_prior_predictive_is_smooth_2d``.
 
-**Recovery** — ``test_coverage_over_mock_realisations_2d`` (moment coverage)
+**Recovery**: ``test_coverage_over_mock_realisations_2d`` (moment coverage)
 and ``test_per_cell_losvd_coverage_2d`` (per-cell coverage), parametrised
 over three properly calibrated observing profiles (``HST_BRIGHT``,
 ``HST_FAINT``, ``GAIA_OUTER`` from ``calibration2d.py``) and two truths
@@ -262,7 +262,7 @@ over three properly calibrated observing profiles (``HST_BRIGHT``,
 
 | Profile | err/sigma | N_stars | K (cells) | Moment cov. | Per-cell cov. | Notes |
 |---|---|---|---|---|---|---|
-| HST_BRIGHT | 0.014 | 400 | 15 (225) | PASS both truths | PASS both truths | Tightest test — no slack to hide bias |
+| HST_BRIGHT | 0.014 | 400 | 15 (225) | PASS both truths | PASS both truths | Tightest test: no slack to hide bias |
 | HST_FAINT | 0.147 | 400 | 15 (225) | PASS both truths | PASS both truths | Error kernel resolved at K=15 |
 | GAIA_OUTER | 0.625 | 2000 | 15 (225) | XFAIL | XFAIL | Known-weak; err/sigma exceeds 1D's structural-failure threshold (0.36) |
 
