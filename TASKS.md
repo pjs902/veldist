@@ -81,6 +81,113 @@ h3/h4 limitation honestly rather than engineering around it.
   at σ=30 and σ=42 are outside ω Cen's 9–21 range, so further tuning against
   it has limited value.
 
+- **[P1] 2D solver: the harness was never calibrated to the PM observing
+  regime, and its failures were mostly that.** Added the 2D analogues of the
+  1D correctness gates (`tests/test_coverage_2d.py`: moment coverage +
+  per-cell LOSVD coverage, alongside the pre-existing
+  `test_sbc_calibration_2d`).
+
+  **One real bug fixed:** `model_2d`'s `smoothness_sigma ~ HalfNormal(0.1)`
+  was drastically too tight at any star count — the posterior wanted ≈3.3 but
+  the prior forced it to ≈0.84, giving a near-uniform fit (isotropic truth
+  σ=6 recovered as ~9.0, against 11.5 for a perfectly uniform grid). Widened
+  to `HalfNormal(3.0)`.
+
+  **Retracted root cause.** An earlier entry here blamed the absence of a
+  Sørbye-Rue rescale in `build_gmrf_precision`. Measured directly: the GMRF
+  generalised variance moves only 6% from K=10 to K=20 (SR scale 1.777 →
+  1.670), which cannot explain a σ bias that tripled over that range. Real
+  but minor; do not treat it as the driver.
+
+  **Actual driver: `N_STARS`.** The harness used 150 stars/bin — the *LOS*
+  `OMEGACAT` number — copied into 2D without checking. PM catalogues go ~6 mag
+  deeper than the spectroscopy (faint limit 24 vs 18), so the science target
+  is 250–500 stars/bin in the inner region and up to ~2000 in the outer
+  (Gaia) region. Sweeping N at K=10, isotropic σ=6:
+
+  | N_stars | stars/cell | σ bias | tail mass vs truth |
+  |---|---|---|---|
+  | 150 | 1.5 | +0.369 | 4.3× |
+  | 500 | 5.0 | +0.046 | 2.8× |
+  | 1500 | 15.0 | −0.033 | 2.0× |
+  | 5000 | 50.0 | −0.094 | 1.5× |
+
+  The dispersion bias is negligible by N=500, i.e. across the whole science
+  range. Prior scale ∈ {3,5,10} and `target_accept_prob` ∈ {0.8,0.95} were
+  also swept and had **no effect** — do not re-tune those.
+
+  Far-field leak into the grid corners is real and persists (tail mass 1.5–2×
+  truth even at N=5000) but is second-order once the data pins the bulk.
+  Truncating at 3σ is not the fix: it biases σ *low* by −0.3 at every N,
+  because it removes genuine mass along with leaked mass — the same trade 1D
+  found with `n_sigma_truncate`.
+
+  **DYNAMITE 2D output format: it exists.** Previously listed here as
+  deferred/undecided, so `veldist2d` risked producing an output with no
+  consumer. It has one. DYNAMITE PR #442 "2d histograms" (merged 2026-06-03,
+  commit `9ccc416`) adds `ProperMotions` and `Histogram2D` to
+  `dynamite/kinematics.py`. **On `main`, NOT in any tagged release** —
+  `v5.0.0` (2026-01-14) predates it, so pin to a commit. An earlier attempt
+  (PR #307) was closed unmerged as incomplete.
+
+  Format is a NumPy `.npz` (not ECSV/FITS), keys: `PM_2dhist` and
+  `PM_2dhist_sigma`, both `(n_apertures, n_bins[0], n_bins[1])`, plus
+  `binID_dynamite`, `nstarbin`, `vxrange`, `vyrange`, `xbin`, `ybin`. The
+  conventional `aperture.dat`/`bins.dat` pair is unchanged — only the velocity
+  data moved to `.npz`. Three conventions line up with what we already emit:
+
+  - values are **probability mass normalised to 1 per spatial bin** — exactly
+    `intrinsic_pdf`'s convention, no density conversion needed;
+  - the grid is **uniform and symmetric about zero**,
+    `linspace(-vxrange, vxrange, n_bins+1)` — matches `setup_grid_2d(center=(0,0))`;
+  - the chi² **flattens K×K to K² and treats each cell as an independent
+    Gaussian** via the same NNLS path as 1D `BayesLOSVD`
+    (`weight_solvers.py::construct_nnls_matrix_and_rhs`). So per-cell coverage
+    is the gating artifact for 2D, for the same reason per-bin coverage is in
+    1D.
+
+  Constraints and hazards:
+  - **Bin counts must be ODD** (`set_default_hist_bins` raises `ValueError`
+    otherwise). Any even-K measurement is unshippable — the first pass of the
+    star-count sweep used K ∈ {8,10,12} and had to be discarded.
+  - DYNAMITE allows **rectangular** grids (its dev config uses 15×11);
+    `setup_grid_2d` takes a scalar `n_bins` and only builds square K×K.
+  - Passing `hist_width`/`hist_center`/`hist_bins` in the config **raises** —
+    "2d histogram metadata is always determined by the data!" — yet the
+    checked-in `dev_tests/user_test_config_ml_with_pm.yaml` still supplies
+    them, so upstream fixtures are stale and this feature is not yet
+    test-covered. Expect the interface to move before release.
+  - `chi2_kinmap` is hardcoded to `GaussHermite` and returns NaN for
+    `ProperMotions`; no tutorial notebook covers PM (all 8 in
+    `docs/tutorial_notebooks/` are 1D).
+
+- **[P1] 2D harness bug: sigma was scored against the wrong truth.** The
+  star-count sweep compared posterior sigma — computed from **cell centres** of
+  a K×K histogram — against the **continuous** true sigma. Binning inflates the
+  second moment by ~h²/12 (Sheppard), which at K=9 over a 119 km/s grid is a
+  fixed +0.5 km/s offset on sigma=17. At `hst_bright` (err/sigma=0.014) the
+  posterior interval is only ~sigma/sqrt(2N) ≈ 0.76 km/s, so that offset alone
+  collapses coverage to 0.04–0.24 while `mean_x`/`mean_y` stay fine at
+  0.68–0.80 — the signature of a discretisation offset, not a model defect.
+  Fair comparison is against the **discretised** truth (true probability mass
+  per cell, moments at cell centres), which is also exactly what DYNAMITE
+  chi-squares. Sweep now scores both and reports them separately. If the
+  continuous sigma is wanted for science, it needs an explicit Sheppard
+  correction in post-processing — that is a real, separate deliverable.
+
+  **What is actually open:** the 2D harness has no `ObservingProfile`. Grid
+  width (40×40) and `ERR_RANGE` (0.5–2.0) were inherited from
+  `test_calibration_2d.py`, whose own comment calls the grid an "arbitrary
+  physical span". 2D needs the equivalent of the 1D "Observational
+  calibration" exercise in `test_coverage.py`: real PM dispersion, real
+  errors, real star counts, and a K chosen against them. Measured PM regime
+  from the oMEGACat uncertainty-vs-magnitude figure: cut at 0.3 mas/yr
+  ≈ 7.7 km/s (1 mas/yr ≈ 25.7 km/s at 5.4 kpc), median error ~0.011 mas/yr
+  ≈ 0.28 km/s at the bright end rising to ~6.4 km/s at m≈25.5, against an
+  inner dispersion ~0.7 mas/yr ≈ 17 km/s — so err/σ ≈ 0.04–0.11, comparable
+  to or better than the LOS case's 0.11. **2D is the easier per-bin problem,
+  not the harder one.**
+
 ## Ruled out by measurement — do not re-raise
 
 - **Mode-order split scale — measured, does not work.** (2026-08-04, prior

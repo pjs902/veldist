@@ -417,7 +417,7 @@ def model_2d(matrix, n_cells, L):
     covariance; see ``tests/test_veldist2d.py::test_solve_triangular_direction``
     for the numerical check this is validated against.
     """
-    smoothness_sigma = numpyro.sample("smoothness_sigma", dist.HalfNormal(0.1))
+    smoothness_sigma = numpyro.sample("smoothness_sigma", dist.HalfNormal(3.0))
 
     z = numpyro.sample("z", dist.Normal(0.0, 1.0).expand([n_cells]).to_event(1))
     x = smoothness_sigma * jax.scipy.linalg.solve_triangular(L.T, z, lower=False)
