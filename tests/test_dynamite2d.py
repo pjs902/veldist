@@ -114,6 +114,22 @@ class TestGridMismatch:
             write_dynamite_kinematics_2d([s0, s1], tmp_path, meta)
 
 
+class TestGridCentring:
+    def test_off_centre_grid_raises(self, tmp_path):
+        s0 = fake_solver_2d(center=(5.0, 0.0))
+        meta = _voronoi_metadata_2d(n_bins_total=1, nx=1, ny=1)
+
+        with pytest.raises(ValueError, match="centred"):
+            write_dynamite_kinematics_2d([s0], tmp_path, meta)
+
+    def test_off_centre_y_axis_raises(self, tmp_path):
+        s0 = fake_solver_2d(center=(0.0, -3.0))
+        meta = _voronoi_metadata_2d(n_bins_total=1, nx=1, ny=1)
+
+        with pytest.raises(ValueError, match="centred"):
+            write_dynamite_kinematics_2d([s0], tmp_path, meta)
+
+
 class TestOddBinsConstraint:
     def test_even_k_raises(self, tmp_path):
         s0 = fake_solver_2d(k=8)

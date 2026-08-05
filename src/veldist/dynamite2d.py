@@ -78,7 +78,6 @@ def write_dynamite_kinematics_2d(
     npz_filename="pm_2dhist.npz",
     aperture_filename="aperture.dat",
     bins_filename="bins.dat",
-    bin_flux_mode="nstars",
     uncertainty_floor_fraction=0.01,
     uncertainty_abs_floor=1e-10,
 ):
@@ -145,12 +144,6 @@ def write_dynamite_kinematics_2d(
         File name for the aperture file. Default ``'aperture.dat'``.
     bins_filename : str
         File name for the bins file. Default ``'bins.dat'``.
-    bin_flux_mode : str
-        Accepted for signature parity with the 1D writer but currently
-        unused: the ``.npz`` format has no ``bin_flux`` field (its
-        flux-like analogue is ``nstarbin``, which is always the per-bin
-        star count regardless of this argument). Reserved in case a future
-        Dynamite revision adds one.
     uncertainty_floor_fraction, uncertainty_abs_floor : float
         Forwarded to :meth:`~veldist.veldist2d.KinematicSolver2D.clip_uncertainties`
         when auto-invoked. Defaults match 1D's validated values (not yet
@@ -215,6 +208,24 @@ def write_dynamite_kinematics_2d(
                 f"solver at index {solved_indices[0]}. All bins must share "
                 "the same (vx, vy) grid -- Dynamite's .npz format carries a "
                 "single scalar vxrange/vyrange for the whole map."
+            )
+            raise ValueError(msg)
+
+    # DYNAMITE reconstructs the velocity axis as linspace(-vxrange, +vxrange,
+    # K+1), so a grid that is not centred on zero would be silently shifted on
+    # read-back -- every mean proper motion displaced, with nothing raising.
+    # Check both axes against a tolerance scaled to the grid, not an absolute
+    # epsilon, so this behaves the same at any velocity scale.
+    for axis_name, edges in (("x", edges_x), ("y", edges_y)):
+        centre = 0.5 * (edges[0] + edges[-1])
+        span = edges[-1] - edges[0]
+        if abs(centre) > 1e-9 * span:
+            msg = (
+                f"velocity grid is not centred on zero: {axis_name}-axis centre "
+                f"is {centre:.6g} over a span of {span:.6g}. DYNAMITE assumes a "
+                f"symmetric [-v{axis_name}range, +v{axis_name}range] axis, so an "
+                "off-centre grid would be silently shifted on read-back. "
+                "Re-fit with center=(0.0, 0.0) in setup_grid."
             )
             raise ValueError(msg)
 
