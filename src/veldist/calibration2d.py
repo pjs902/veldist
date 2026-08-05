@@ -57,11 +57,14 @@ class ObservingProfile2D:
     n_sigma_grid : float
         Half-width of the velocity grid in units of ``sigma_ref``.
     cell_per_sigma : float
-        Target cell width in units of ``sigma_ref``. **Set by measurement, not
-        assumption.** Under the pure-GMRF prior the dispersion bias worsens
-        with finer cells (+2.34 at k=9 to +2.79 at k=13, N=100), but that is a
-        property of the prior being replaced, so this must be re-chosen after
-        the gaussian_core change rather than inherited from those numbers.
+        Target cell width in units of ``sigma_ref``. **Set by measurement:**
+        sweeping cell_per_sigma ∈ {0.78, 0.64, 0.54, 0.47, 0.41, 0.37} under
+        the ``gaussian_core`` prior at N=400, K=0.47 (→K=15, 225 cells, 1.8
+        stars/cell) was the effective limit for the HST regimes. Finer cells
+        (K=17) buys marginal improvement at +28% compute; K=19 (1.1 stars/cell)
+        breaks on anisotropic truths. The GMRF-era numbers (+2.34 bias at K=9)
+        are obsolete — the null-space fix removed them, so this was re-chosen
+        post-gaussian_core as the spec required.
     """
 
     name: str
@@ -70,7 +73,7 @@ class ObservingProfile2D:
     err_cut: float
     n_stars: int
     n_sigma_grid: float = 3.5
-    cell_per_sigma: float = 0.78
+    cell_per_sigma: float = 0.47
 
     @property
     def grid_width(self):
@@ -119,15 +122,21 @@ class ObservingProfile2D:
 #: 0.011 mas/yr = 0.24 km/s. err/sigma ~ 0.014: the errors are about 1% of the
 #: signal, so there is very little left to deconvolve.
 HST_BRIGHT = ObservingProfile2D(
-    name="hst_bright", sigma_ref=17.0, err_median=0.24,
-    err_cut=PM_QUALITY_CUT_KMS, n_stars=400,
+    name="hst_bright",
+    sigma_ref=17.0,
+    err_median=0.24,
+    err_cut=PM_QUALITY_CUT_KMS,
+    n_stars=400,
 )
 
 #: HST, faint end, near the quality cut. Comparable to the 1D LOS regime,
 #: whose err/sigma is 0.11.
 HST_FAINT = ObservingProfile2D(
-    name="hst_faint", sigma_ref=17.0, err_median=2.5,
-    err_cut=PM_QUALITY_CUT_KMS, n_stars=400,
+    name="hst_faint",
+    sigma_ref=17.0,
+    err_median=2.5,
+    err_cut=PM_QUALITY_CUT_KMS,
+    n_stars=400,
 )
 
 #: Gaia DR3, outer region. Gaia is ~30x worse than HST at the same magnitude
@@ -137,8 +146,12 @@ HST_FAINT = ObservingProfile2D(
 #: with 13x the stars as the only compensation. Larger errors also demand a
 #: wider grid, hence the raised n_sigma_grid.
 GAIA_OUTER = ObservingProfile2D(
-    name="gaia_outer", sigma_ref=8.0, err_median=5.0,
-    err_cut=4.0 * PM_QUALITY_CUT_KMS, n_stars=2000, n_sigma_grid=4.0,
+    name="gaia_outer",
+    sigma_ref=8.0,
+    err_median=5.0,
+    err_cut=4.0 * PM_QUALITY_CUT_KMS,
+    n_stars=2000,
+    n_sigma_grid=4.0,
 )
 
 PROFILES_2D = {p.name: p for p in (HST_BRIGHT, HST_FAINT, GAIA_OUTER)}
