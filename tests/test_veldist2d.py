@@ -529,3 +529,42 @@ def test_null_space_basis_2d_is_cached():
     _null_space_basis_2d(9)
     _null_space_basis_2d(9)
     assert _null_space_basis_2d.cache_info().hits >= 1
+
+
+# ==============================================================================
+# GMRF deviation scale (Sorbye-Rue normalisation)
+# ==============================================================================
+
+
+@pytest.mark.parametrize("k", [7, 9, 11])
+def test_gmrf_deviation_scale_2d_normalises_generalised_variance(k):
+    """After scaling, the projected field's generalised variance must be 1.
+
+    That is the definition of the Sorbye-Rue constant: the geometric mean of
+    the per-cell marginal variances of the null-space-projected covariance
+    equals 1, so `sigma3` means "typical log-density departure from the
+    Gaussian null space" regardless of grid resolution.
+
+    Computed here from pinv(Q) directly, which is a different arithmetic route
+    to the same object than whatever the implementation uses, so agreement is
+    meaningful rather than circular.
+    """
+    from veldist.veldist2d import (
+        _gmrf_deviation_scale_2d,
+        _null_space_basis_2d,
+        build_gmrf_precision,
+    )
+
+    scale = _gmrf_deviation_scale_2d(k)
+    assert np.isfinite(scale) and scale > 0
+
+    q_ns = _null_space_basis_2d(k)
+    proj = np.eye(k * k) - q_ns @ q_ns.T
+    q_mat, _ = build_gmrf_precision(k)
+    sigma = proj @ np.linalg.pinv(q_mat) @ proj.T
+    var = np.clip(np.diag(sigma), 1e-300, None)
+    gen_var = np.exp(np.mean(np.log(var)))
+
+    # scale is 1/sqrt(gen_var), so scaling the field by it makes the
+    # generalised variance of the result exactly 1.
+    np.testing.assert_allclose(gen_var * scale**2, 1.0, rtol=1e-6)

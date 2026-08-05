@@ -427,6 +427,31 @@ def _null_space_basis_2d(k):
     return q
 
 
+@cache
+def _gmrf_deviation_scale_2d(k):
+    """Sorbye-Rue scaling constant for the null-space-projected 2D GMRF.
+
+    Returns the factor making the generalised variance -- the geometric mean
+    of the per-cell marginal variances of the projected field -- equal to 1,
+    so that ``sigma3`` means "typical log-density departure from the Gaussian
+    null space" independently of grid resolution (Sorbye & Rue 2014, Spatial
+    Statistics 8, 39; this is what ``scale.model=TRUE`` does in R-INLA).
+
+    Measured size: the generalised variance moves only ~6% from k=10 to k=20
+    (0.317 -> 0.358). This is a correctness tidy so that a tuned
+    ``SIGMA3_RATE_2D`` transfers across grids -- it is NOT the fix for the
+    dispersion bias, and an earlier hypothesis that it was has been retracted.
+
+    Cached: O(k^6) pinv, depends only on ``k``.
+    """
+    q_ns = _null_space_basis_2d(k)
+    proj = np.eye(k * k) - q_ns @ q_ns.T
+    q_mat, _ = build_gmrf_precision(k)
+    sigma = proj @ np.linalg.pinv(q_mat) @ proj.T
+    var = np.clip(np.diag(sigma), 1e-300, None)
+    return float(1.0 / np.sqrt(np.exp(np.mean(np.log(var)))))
+
+
 # ==============================================================================
 # Model Inference
 # ==============================================================================
