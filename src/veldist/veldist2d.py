@@ -403,9 +403,9 @@ def _null_space_basis_2d(k):
 
     Built from tensor-product Legendre polynomials of total degree <= 2 rather
     than the raw monomials, for the conditioning reason documented in
-    ``veldist.py::_legendre_basis``: the Vandermonde basis is badly conditioned
-    and its QR loses precision. Legendre spans the identical space, so the
-    projector is unchanged.
+    ``veldist.py::_null_space_basis``: the Vandermonde basis is badly
+    conditioned and its QR loses precision. Legendre spans the identical
+    space, so the projector is unchanged.
 
     Uses an index grid rather than physical cell centres. Both give the same
     projector: the orthogonal projector onto a subspace does not depend on

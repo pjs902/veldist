@@ -29,8 +29,11 @@ def test_n_bins_is_odd_for_every_cell_per_sigma():
 
 
 def test_grid_width_spans_the_requested_sigma_range():
+    # HST_BRIGHT: sigma_ref=17.0, n_sigma_grid=3.5 -> +/-3.5 sigma each side.
+    # Hardcoded, not recomputed from the property's own formula, so a
+    # regression in that formula would actually be caught.
     p = HST_BRIGHT
-    assert p.grid_width == pytest.approx(2 * p.n_sigma_grid * p.sigma_ref)
+    assert p.grid_width == pytest.approx(119.0)
 
 
 def test_err_over_sigma_matches_the_documented_regimes():

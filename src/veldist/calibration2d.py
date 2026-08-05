@@ -59,7 +59,7 @@ class ObservingProfile2D:
     cell_per_sigma : float
         Target cell width in units of ``sigma_ref``. **Set by measurement:**
         sweeping cell_per_sigma ∈ {0.78, 0.64, 0.54, 0.47, 0.41, 0.37} under
-        the ``gaussian_core`` prior at N=400, K=0.47 (→K=15, 225 cells, 1.8
+        the ``gaussian_core`` prior at N=400, cell_per_sigma=0.47 (→K=15, 225 cells, 1.8
         stars/cell) was the effective limit for the HST regimes. Finer cells
         (K=17) buys marginal improvement at +28% compute; K=19 (1.1 stars/cell)
         breaks on anisotropic truths. The GMRF-era numbers (+2.34 bias at K=9)
