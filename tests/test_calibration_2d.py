@@ -38,6 +38,7 @@ from scipy import stats
 from veldist.veldist2d import (
     build_gmrf_precision,
     model_2d,
+    model_gaussian_core_2d,
     precompute_design_matrix_2d,
     setup_grid_2d,
 )
@@ -56,6 +57,7 @@ GRID_CENTER = (0.0, 0.0)
 GRID = setup_grid_2d(center=GRID_CENTER, width=GRID_WIDTH, n_bins=K)
 N_CELLS = GRID["n_cells"]
 CENTERS_2D = GRID["centers_2d"]
+CENTERS_2D_JAX = jnp.asarray(CENTERS_2D)
 EDGES_X = GRID["edges_x"]
 EDGES_Y = GRID["edges_y"]
 
@@ -75,7 +77,6 @@ QUANTITY_NAMES = [
     "sigma_x",
     "sigma_y",
     "rho",
-    "smoothness_sigma",
 ]
 
 MAX_FAILURE_FRACTION = 0.02
@@ -104,7 +105,7 @@ def _moments_from_pdf_samples_2d(pdf_samples, centers_2d):
     return mean_x, mean_y, sigma_x, sigma_y, rho
 
 
-def _draw_prior(rng_key, n_stars_dummy):
+def _draw_prior(rng_key, n_stars_dummy, model_fn=model_2d, extra_kwargs=None):
     """Draw a single prior sample of theta_tilde via Predictive, no conditioning.
 
     Mirrors `test_calibration.py::_draw_prior`: the `matrix` argument is
@@ -113,9 +114,12 @@ def _draw_prior(rng_key, n_stars_dummy):
     prior (ancestral) samples. A dummy zeros matrix of the right shape is
     passed for shape purposes only.
     """
+    extra_kwargs = extra_kwargs or {}
     dummy_matrix = jnp.zeros((n_stars_dummy, N_CELLS))
-    predictive = Predictive(model_2d, num_samples=1)
-    prior_sample = predictive(rng_key, matrix=dummy_matrix, n_cells=N_CELLS, L=L_JAX)
+    predictive = Predictive(model_fn, num_samples=1)
+    prior_sample = predictive(
+        rng_key, matrix=dummy_matrix, n_cells=N_CELLS, L=L_JAX, **extra_kwargs
+    )
     return prior_sample
 
 
@@ -176,18 +180,25 @@ def _simulate_observations(rng, intrinsic_pdf, n_stars):
     return obs_x, obs_y, cov
 
 
-def _run_one_sbc_iteration(sim_idx, base_seed=20260803):
+def _run_one_sbc_iteration(
+    sim_idx,
+    base_seed=20260803,
+    model_fn=model_2d,
+    extra_kwargs=None,
+    hyper_name="smoothness_sigma",
+):
     """Run a single 2D SBC simulation. Returns dict of ranks, or None on failure."""
+    extra_kwargs = extra_kwargs or {}
     key = jax.random.PRNGKey(base_seed + sim_idx)
     prior_key, mcmc_key = jax.random.split(key)
 
-    prior_sample = _draw_prior(prior_key, N_STARS)
+    prior_sample = _draw_prior(
+        prior_key, N_STARS, model_fn=model_fn, extra_kwargs=extra_kwargs
+    )
     true_intrinsic_pdf = np.asarray(prior_sample["intrinsic_pdf"][0])  # (N_CELLS,)
-    true_smoothness_sigma = float(np.asarray(prior_sample["smoothness_sigma"][0]))
+    true_hyper = float(np.asarray(prior_sample[hyper_name][0]))
 
-    if not np.all(np.isfinite(true_intrinsic_pdf)) or not np.isfinite(
-        true_smoothness_sigma
-    ):
+    if not np.all(np.isfinite(true_intrinsic_pdf)) or not np.isfinite(true_hyper):
         return None
 
     rng = np.random.default_rng(base_seed + 1000 + sim_idx)
@@ -197,7 +208,7 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260803):
     if not np.all(np.isfinite(np.asarray(matrix))):
         return None
 
-    nuts_kernel = NUTS(model_2d)
+    nuts_kernel = NUTS(model_fn)
     mcmc = MCMC(
         nuts_kernel,
         num_warmup=NUM_WARMUP,
@@ -205,17 +216,21 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260803):
         progress_bar=False,
     )
     try:
-        mcmc.run(mcmc_key, matrix=jnp.asarray(matrix), n_cells=N_CELLS, L=L_JAX)
+        mcmc.run(
+            mcmc_key,
+            matrix=jnp.asarray(matrix),
+            n_cells=N_CELLS,
+            L=L_JAX,
+            **extra_kwargs,
+        )
     except Exception:
         return None
 
     samples = mcmc.get_samples()
     pdf_samples = np.asarray(samples["intrinsic_pdf"])
-    smoothness_samples = np.asarray(samples["smoothness_sigma"])
+    hyper_samples = np.asarray(samples[hyper_name])
 
-    if not np.all(np.isfinite(pdf_samples)) or not np.all(
-        np.isfinite(smoothness_samples)
-    ):
+    if not np.all(np.isfinite(pdf_samples)) or not np.all(np.isfinite(hyper_samples)):
         return None
 
     # --- ESS check + thinning, exactly mirroring test_calibration.py ---
@@ -223,7 +238,7 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260803):
     ess = float(
         np.asarray(
             numpyro.diagnostics.effective_sample_size(
-                np.asarray(samples_by_chain["smoothness_sigma"])
+                np.asarray(samples_by_chain[hyper_name])
             )
         )
     )
@@ -237,7 +252,7 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260803):
     l_draws = len(idx)
 
     pdf_thin = pdf_samples[idx]
-    smoothness_thin = smoothness_samples[idx]
+    hyper_thin = hyper_samples[idx]
 
     mean_x, mean_y, sigma_x, sigma_y, rho = _moments_from_pdf_samples_2d(
         pdf_thin, CENTERS_2D
@@ -264,8 +279,8 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260803):
         "sigma_x": (_rank(true_sigma_x, sigma_x), l_draws),
         "sigma_y": (_rank(true_sigma_y, sigma_y), l_draws),
         "rho": (_rank(true_rho, rho), l_draws),
-        "smoothness_sigma": (
-            _rank(true_smoothness_sigma, smoothness_thin),
+        hyper_name: (
+            _rank(true_hyper, hyper_thin),
             l_draws,
         ),
     }
@@ -273,7 +288,8 @@ def _run_one_sbc_iteration(sim_idx, base_seed=20260803):
 
 
 @pytest.mark.slow
-def test_sbc_calibration_2d():
+@pytest.mark.parametrize("prior", ["gmrf", "gaussian_core"])
+def test_sbc_calibration_2d(prior):
     """
     Simulation-Based Calibration of the veldist 2D NUTS model.
 
@@ -287,15 +303,31 @@ def test_sbc_calibration_2d():
     unconstrained parameterisation is non-essential harness complexity given
     the other six quantities are ranked.
     """
-    rank_records = {q: [] for q in QUANTITY_NAMES}
+    if prior == "gaussian_core":
+        model_fn = model_gaussian_core_2d
+        extra_kwargs = {"centers_2d": CENTERS_2D_JAX}
+        hyper_name = "sigma3"
+        quantity_names = [*QUANTITY_NAMES, hyper_name]
+    else:
+        model_fn = model_2d
+        extra_kwargs = {}
+        hyper_name = "smoothness_sigma"
+        quantity_names = [*QUANTITY_NAMES, hyper_name]
+
+    rank_records = {q: [] for q in quantity_names}
     n_failed = 0
 
     for sim_idx in range(N_SIMS):
-        result = _run_one_sbc_iteration(sim_idx)
+        result = _run_one_sbc_iteration(
+            sim_idx,
+            model_fn=model_fn,
+            extra_kwargs=extra_kwargs,
+            hyper_name=hyper_name,
+        )
         if result is None:
             n_failed += 1
             continue
-        for q in QUANTITY_NAMES:
+        for q in quantity_names:
             rank, l_draws = result[q]
             rank_records[q].append((rank, l_draws))
 
@@ -312,11 +344,11 @@ def test_sbc_calibration_2d():
     n_ok = N_SIMS - n_failed
     assert n_ok >= 10, f"Too few successful simulations ({n_ok}) to test calibration."
 
-    alpha = 0.005 / len(QUANTITY_NAMES)
+    alpha = 0.005 / len(quantity_names)
 
     results = {}
     failures = []
-    for q in QUANTITY_NAMES:
+    for q in quantity_names:
         records = rank_records[q]
         normalized = np.array([r / n_draws for r, n_draws in records])
         ks_stat, p_value = stats.kstest(normalized, "uniform")
@@ -325,10 +357,10 @@ def test_sbc_calibration_2d():
             failures.append(q)
 
     report_lines = [
-        f"2D SBC results (K={K}, n_cells={N_CELLS}, n_sims={N_SIMS}, "
+        f"2D SBC results (prior={prior}, K={K}, n_cells={N_CELLS}, n_sims={N_SIMS}, "
         f"n_ok={n_ok}, n_failed={n_failed}, alpha={alpha:.5f}):"
     ]
-    for q in QUANTITY_NAMES:
+    for q in quantity_names:
         ks_stat, p_value, n = results[q]
         flag = "FAIL" if q in failures else "pass"
         report_lines.append(
