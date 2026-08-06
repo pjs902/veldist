@@ -7,10 +7,16 @@ from a discrete set of stellar velocities, each measured with its own
 uncertainty.  The approach is non-parametric: rather than assuming the LOSVD
 follows a Gaussian or Gauss-Hermite expansion, we solve for the probability
 mass in each bin of a fixed velocity histogram.  Regularisation is provided
-by a Gaussian random walk prior, whose smoothing scale is treated as a free
-hyperparameter and marginalised over during inference.  Measurement errors
-enter the likelihood exactly, with no assumptions about their distribution
-across stars.
+by a smoothness prior whose scale is treated as a free hyperparameter and
+marginalised over during inference.  Measurement errors enter the likelihood
+exactly, with no assumptions about their distribution across stars.
+
+`KinematicSolver.run()` supports two smoothness priors, selected with
+`prior="gaussian_core"` (the default) or `prior="rw1"`. They differ in what
+shape the prior settles on when the data are uninformative (see
+"Smoothing prior" below), but share everything else described in this page:
+the histogram representation, the design-matrix likelihood, and the NUTS
+sampler.
 
 The method is closest in spirit to the penalised-likelihood approach of
 Merritt (1997) and Saha & Williams (1994), but replaces the manual smoothing
@@ -33,45 +39,149 @@ resolve individual bins.
 ### Smoothing prior
 
 A flat histogram is not a useful prior for stellar kinematics: real LOSVDs
-are smooth.  We impose this via an intrinsic first-order random-walk (RW1)
-Gaussian Markov Random Field on a latent curve $\mathbf{u} \in \mathbb{R}^K$,
-penalising the differences between adjacent bins:
+are smooth. What "smooth" should mean when the data can't pin down a
+feature is where the two priors below disagree, and it matters: whichever
+shape the prior settles on when the likelihood is weak is exactly the shape
+that dominates in low-$N$ bins and in the wings of every bin.
+
+#### `gaussian_core` (default)
+
+`generate_gaussian_core_curve` (`src/veldist/veldist.py`) splits the latent
+log-density curve into a free Gaussian core plus a penalised deviation:
+
+$$
+u(v) = \underbrace{-\tfrac{1}{2}\left(\frac{v - v_0}{s_0}\right)^2}_{\text{core, unpenalised}}
+   \;+\; \underbrace{\left[w(v) - Q Q^\top w(v)\right]}_{\text{deviation, penalised}},
+\qquad w = \mathrm{cumsum}^3(\sigma_3\, d_3)
+$$
+
+$v_0$ and $s_0$ (a location and a width) are free, inferred with no
+smoothness penalty at all.
+
+**Building $w$.** $d_3$ is a vector of independent standard-normal draws,
+one per bin: white noise. Cumulatively summing it once turns white noise
+into a random walk. Summing that random walk again integrates it into a
+smoother, more slowly varying curve, and a third cumulative sum
+($\mathrm{cumsum}^3$) integrates it once more. Three integrations of noise
+produce a curve that looks locally like a wandering cubic (panel (a)
+below).
+
+**Why that curve has to be detrended.** A curve built this way is not
+"pure wiggle." Integrating noise three times also generates broad,
+low-frequency swings that look like an up-to-quadratic trend, a curve of
+the form $a + bv + cv^2$, riding on top of the fine structure: panel (b)
+below shows one draw's own best-fit quadratic sitting almost on top of it.
+That is a problem, because the Gaussian core $-\tfrac12((v-v_0)/s_0)^2$
+is *also* a quadratic in $v$. If $w$ were added to the core as drawn, its
+quadratic component and the core's $v_0$/$s_0$ would both be trying to
+explain the same broad shape, two parameters describing one feature.
+Neither would be identifiable from the data alone, and NUTS would diverge
+hunting for a posterior mode that does not exist.
+
+**The fix: subtract $w$'s own quadratic trend.** Start with the three
+functions $1$, $v$, $v^2$, evaluated at the bin centres: three vectors in
+$\mathbb{R}^{N_\mathrm{bins}}$ that span every possible quadratic curve on
+the grid. Gram-Schmidt (computed here via QR decomposition) turns them
+into three vectors $q_1, q_2, q_3$ that span the same space but are
+mutually perpendicular and unit length; stack them as the columns of $Q$.
+This basis is built once per grid and cached, since it depends only on the
+bin centres, never on a sampled value.
+
+That orthonormality is what makes the projection simple. To find how much
+of $w$ points along a single direction $q_i$, take the dot product $q_i
+\cdot w$: the standard way to read off a component along a unit vector,
+the same operation used to decompose a force into $x$- and
+$y$-components in introductory mechanics. Doing that for all three
+directions at once is exactly what the matrix-vector product $Q^\top w$
+computes: a length-3 vector of coordinates, $w$'s address in the quadratic
+subspace. A curve is rebuilt from those coordinates by weighting each
+$q_i$ by its coordinate and summing, $c_1 q_1 + c_2 q_2 + c_3 q_3$, which
+is exactly what $Qc$ computes. Chaining the two steps, $QQ^\top w =
+Q(Q^\top w)$, means: read off $w$'s quadratic coordinates, then rebuild a
+curve using only those coordinates, i.e. $w$ with everything except its
+quadratic part discarded. Because the $q_i$ are orthonormal, that
+reconstruction is also provably the *closest* quadratic curve to $w$ in
+the least-squares sense: the same curve `numpy.polyfit(..., deg=2)` would
+return. $QQ^\top$ therefore fits and projects in a single matrix multiply.
+
+So $QQ^\top w(v)$ is $w$'s own best-fit quadratic, and
+
+$$
+\text{deviation} = w - QQ^\top w
+$$
+
+is what remains once that quadratic part is subtracted off (panel (c)
+below). This is the same move as detrending a light curve or a spectrum:
+fit and subtract a low-order polynomial, then keep the residual. Whatever
+survives that subtraction has, by construction, zero component along $1$,
+$v$, and $v^2$, so it genuinely cannot be produced by adjusting
+$v_0$/$s_0$. The two terms stay identifiable, and the deviation is free to
+add real, higher-order structure on top of the Gaussian core.
+
+![Detrending w: raw curve, its quadratic fit, and the residual actually used as the deviation term](images/fig_projection.png)
+
+*One draw of $w$ (a), its own least-squares quadratic fit $QQ^\top w$ (b,
+red, exactly what $v_0$/$s_0$ could otherwise be pulled into mimicking),
+and the residual $w - QQ^\top w$ (c): what actually gets added to the
+core once the quadratic component is removed.*
+
+The deviation term is standardised (Sørbye & Rue 2014) so that $\sigma_3$
+is directly interpretable as a typical log-density departure from a
+Gaussian, independent of how finely the grid is binned. $\sigma_3$ has an
+$\mathrm{Exponential}$ prior centred on $\sigma_3 = 0$: a
+penalised-complexity prior (Simpson et al. 2017) that shrinks toward the
+base model (an exact Gaussian LOSVD) while leaving strongly non-Gaussian
+shapes reachable when the likelihood demands them.
+
+This is the discrete, generative analogue of the roughness penalty
+$\int \left[\mathrm{d}^3/\mathrm{d}v^3 \log N(v)\right]^2\,\mathrm{d}v$ used
+by Merritt (1997, AJ, 114, 228): a Gaussian's log-density is exactly
+quadratic, so its third derivative, and the penalty, vanish identically.
+**The infinite-smoothing limit is therefore a Gaussian with the data's own
+mean and dispersion**, not a flat histogram. That matters in the wings of
+every bin and in any low-$N$ bin: where the likelihood is uninformative,
+`gaussian_core` relaxes toward a physically motivated LOSVD shape rather
+than toward spreading mass out to the grid edges.
+
+![Samples from the gaussian_core prior at three deviation scales](images/fig_prior_gaussian_core.png)
+
+*Prior realisations at $\sigma_3 = 0$ (exact Gaussian, left), $\sigma_3 = 1$
+(the default `Exponential` prior's scale, centre), and $\sigma_3 = 4$
+(strongly non-Gaussian, right). As $\sigma_3 \to 0$ every draw collapses to
+a Gaussian; as $\sigma_3$ grows the deviation term adds structure on top of
+that core.*
+
+#### `rw1` (legacy, `prior="rw1"`)
+
+The original prior, kept for comparison. It imposes smoothness via an
+intrinsic first-order random-walk (RW1) Gaussian Markov Random Field on a
+latent curve $\mathbf{u} \in \mathbb{R}^K$, penalising the differences
+between adjacent bins:
 
 $$
 \log p(\mathbf{u} \mid \sigma_\mathrm{smooth}) = -\frac{1}{2\sigma_\mathrm{step}^2}
 \sum_{i=1}^{K-1} (u_i - u_{i-1})^2 - (K-1)\log\sigma_\mathrm{step} + \mathrm{const.}
 $$
 
-This is deliberately *not* implemented as a directed walk with $u_0$ pinned
-at a fixed value: pinning one endpoint makes the prior asymmetric in bin
-index (bins near the pinned edge are regularised more tightly than bins far
-from it), which would bias the inferred LOSVD's *shape* toward one edge of
-the velocity grid. The RW1 form above treats every bin identically: it
-depends only on the differences between neighbours, so no bin is special.
-Because this penalty alone leaves the overall level of $\mathbf{u}$
-completely unconstrained (any constant shift leaves all differences
-unchanged), a wide but proper $\mathcal{N}(0, 10)$ base prior is placed on
-$\mathbf{u}$ purely to keep the sampler well-posed in that direction; it has
-no effect on the result because the weight vector $\mathbf{w}$, obtained by
-applying the softmax transformation to $\mathbf{u}$, is itself invariant to
-constant shifts.
+rescaled by $\sqrt{\Delta v}$ ($\sigma_\mathrm{step} = \sigma_\mathrm{smooth}\sqrt{\Delta v}$)
+so its meaning is independent of grid resolution. This form treats every bin
+identically (no fixed endpoint, so no bin is regularised more tightly than
+another), but its **infinite-smoothing limit is a uniform LOSVD over the
+whole grid**, not a Gaussian. Because kurtosis weights deviations by the
+fourth power, even a small amount of prior-driven mass pushed out toward the
+grid edges produces a measurable positive kurtosis bias and a
+velocity-dispersion bias that grows with the number of bins. This is why
+`gaussian_core` is the default; see `docs/validation.md` for the measured
+comparison.
 
-The smoothing scale $\sigma_\mathrm{smooth}$ controls the typical step size
-between adjacent bins, rescaled by $\sqrt{\Delta v}$ (i.e.
-$\sigma_\mathrm{step} = \sigma_\mathrm{smooth}\sqrt{\Delta v}$) so that its
-meaning does not depend on how finely the velocity grid is subdivided. A
-grid refined to twice as many, half-as-wide bins should not, by itself,
-change how smooth the inferred LOSVD is.  A small value forces the inferred
-LOSVD to vary slowly; a large value allows sharp features.
-$\sigma_\mathrm{smooth}$ is not fixed by the user. It is a free
-hyperparameter with a weakly informative prior, and its posterior is
-marginalised during sampling.  The sampler therefore adapts the smoothness
-to the signal-to-noise of the data automatically: a bin with many stars will
-support more structure than one with few.
+![Samples from the RW1 random walk prior at three smoothing scales](images/fig_prior.png)
 
-![Samples from the Gaussian random walk prior at three smoothing scales](images/fig_prior.png)
+*Prior realisations at $\sigma_\mathrm{smooth} = 0.02$ (left), $0.1$ (centre), and $0.5$ (right).  Lighter values of $\sigma_\mathrm{smooth}$ enforce smoother LOSVDs; larger values allow the prior to explore more structured shapes. Note the flat, uniform-over-the-grid character these settle toward: the behaviour `gaussian_core` was introduced to replace.*
 
-*Prior realisations at $\sigma_\mathrm{smooth} = 0.02$ (left), $0.1$ (centre), and $0.5$ (right).  Lighter values of $\sigma_\mathrm{smooth}$ enforce smoother LOSVDs; larger values allow the prior to explore more structured shapes.  In practice the sampler marginalises over this parameter.*
+Both priors share the same free hyperparameter mechanism: the smoothness
+scale ($\sigma_3$ or $\sigma_\mathrm{smooth}$) is not fixed by the user, but
+sampled and marginalised jointly with the LOSVD itself, so the effective
+smoothness adapts automatically to the signal-to-noise of each bin.
 
 ---
 
@@ -148,18 +258,23 @@ gradient-based Hamiltonian Monte Carlo variant that adapts its step size and
 trajectory length automatically, making it well suited to the high-dimensional
 posteriors that arise for fine velocity grids.
 
-The sampler simultaneously infers $\mathbf{u}$ (the latent random walk,
-from which $\mathbf{w}$ is derived) and $\sigma_\mathrm{smooth}$.  The
-posterior over $\mathbf{w}$ therefore marginalises over the smoothing scale,
-propagating its uncertainty into all derived quantities.  Users can run on
-GPU by passing `gpu=True` to `KinematicSolver.run()`, which can reduce wall
-time by an order of magnitude for large batches.
+The sampler simultaneously infers the latent curve (`gaussian_core`'s
+$v_0$, $s_0$, $\sigma_3$, $d_3$, or `rw1`'s $\mathbf{u}$ and
+$\sigma_\mathrm{smooth}$, depending on `prior`) and derives $\mathbf{w}$
+from it via `softmax`. The posterior over $\mathbf{w}$ therefore
+marginalises over the smoothing scale, propagating its uncertainty into
+all derived quantities. Users can run on GPU by passing `gpu=True` to
+`KinematicSolver.run()`, which can reduce wall time by an order of
+magnitude for large batches.
 
-The default chain settings (500 warmup, 1000 samples) are sufficient for
-typical globular-cluster or dwarf galaxy bins with $\gtrsim 30$ stars.
-For bins with $N_\star \lesssim 20$ or for grids finer than $\Delta v \sim
-\varepsilon_\mathrm{typ}$, the posterior will be prior-dominated; this is
-expected behaviour and the uncertainty intervals will reflect it.
+The default chain settings (500 warmup, 3000 samples, 4 chains, dense mass
+matrix, `target_accept_prob=0.95`) are sufficient for typical
+globular-cluster or dwarf galaxy bins with $\gtrsim 30$ stars; see
+`KinematicSolver.run`'s docstring for the measurements behind each of
+those defaults. For bins with $N_\star \lesssim 20$ or for grids finer
+than $\Delta v \sim \varepsilon_\mathrm{typ}$, the posterior will be
+prior-dominated; this is expected behaviour and the uncertainty intervals
+will reflect it.
 
 ---
 

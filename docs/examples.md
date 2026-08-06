@@ -13,6 +13,14 @@ intrinsic LOSVD with those error kernels, which is all that is directly
 measured. (c) The posterior LOSVD recovered by `veldist`, compared against
 the true intrinsic distribution from panel (a).*
 
+**Naive comparison.** Panel (b) overlays the naive approach: a single
+Gaussian fit to the raw observed velocities. Its $\sigma=27$ km/s is close
+to the true $\sigma=28$ km/s (the second moment is only mildly sensitive to
+this much error), but a single Gaussian has no way to represent two
+components at all; it just fits *through* the gap between them. `veldist`'s
+histogram representation has no such shape restriction, which is why panel
+(c) recovers both peaks rather than a single blurred one.
+
 ```python
 import numpy as np
 from veldist import KinematicSolver
@@ -31,7 +39,7 @@ v_obs = v_int + rng.normal(0.0, errors)
 solver = KinematicSolver()
 solver.setup_grid(center=0.0, width=200.0, n_bins=50)
 solver.add_data(vel=v_obs, err=errors)
-solver.run(num_warmup=500, num_samples=1000, gpu=False)
+solver.run(num_warmup=500, num_samples=3000, gpu=False)
 
 solver.plot_result()
 ```
@@ -71,7 +79,7 @@ v_obs = v_int + rng.normal(0.0, errors)
 solver = KinematicSolver()
 solver.setup_grid(center=10.0, width=250.0, n_bins=60)
 solver.add_data(vel=v_obs, err=errors)
-solver.run(num_warmup=500, num_samples=1000, gpu=False)
+solver.run(num_warmup=500, num_samples=3000, gpu=False)
 
 solver.plot_result()
 ```
@@ -88,6 +96,12 @@ two-component example above.  The dashed line is the true intrinsic
 distribution.  Bins where the uncertainty interval is wide are those
 poorly constrained by the data; the prior keeps them smooth rather than
 noisy.*
+
+> **Note:** this figure is a schematic: the posterior band is a Dirichlet
+> draw around the true PMF (`docs/fig_bimodal.py`), not a real
+> `KinematicSolver` run, so it illustrates the expected *shape* of a
+> two-component recovery without the runtime of live inference. See
+> `fig_deconvolution.py` above for a figure generated from an actual run.
 
 ---
 
@@ -119,7 +133,7 @@ from veldist import fit_all_bins, write_dynamite_kinematics
 solvers = fit_all_bins(
     bin_data_list,
     grid_kwargs={"center": 0.0, "width": 600.0, "n_bins": 60},
-    run_kwargs={"num_warmup": 500, "num_samples": 1000, "gpu": False, "seed": 5567},
+    run_kwargs={"num_warmup": 500, "num_samples": 3000, "gpu": False, "seed": 5567},
     min_stars=10,
 )
 ```
@@ -210,6 +224,116 @@ solver.truncate_losvd(n_sigma=3.0)
 
 ---
 
+## Example 2b: 2D (proper-motion) inference
+
+For proper-motion data, two correlated velocity components per star, each
+with its own measurement covariance, use `KinematicSolver2D` from
+`veldist.veldist2d`. **It is not re-exported from the top-level `veldist`
+package**, unlike `KinematicSolver`, so import it from the submodule
+directly:
+
+![2D proper-motion deconvolution: observed scatter vs. recovered posterior density](images/fig_2d_recovery.png)
+
+*(a) Observed proper motions for a correlated, anisotropic true
+distribution (`HST_FAINT`'s calibrated errors and star count), with the
+true density contoured. (b) The posterior median recovered by
+`KinematicSolver2D` (colour), with the true density overlaid as dashed
+contours: the recovery correctly picks up both the tilt (the
+$v_{\mathrm{pm},1}$/$v_{\mathrm{pm},2}$ correlation) and the anisotropy
+(different widths along each axis). The annotated box compares the
+recovered posterior mean/covariance (with its own posterior uncertainty)
+against a naive estimate: the sample mean/covariance of the observed data
+with no deconvolution, which is also what a plain 2D KDE's first and
+second moments would give you.*
+
+**Does this beat the naive estimate?** On this single draw: the mean is a
+wash (naive is unbiased here too, since measurement error is zero-mean),
+`veldist` recovers $\sigma_y$ noticeably better (bias ~10 km/s vs ~27 for
+naive), but on $\sigma_x$ the naive estimate happened to do slightly
+better on this particular realization, well within `veldist`'s own
+posterior uncertainty on that entry. A single draw at $N=400$ is not
+strong evidence either way; the rigorous comparison is
+`test_per_cell_losvd_coverage_2d` in `validation.md`, which checks
+whether the *credible intervals* contain the truth at their nominal rate
+over many realizations, not just whether one point estimate happens to be
+closer. That is also the naive estimator's real weakness: it has no
+uncertainty at all to be calibrated, so there's no way to know from a
+naive fit alone whether a given bin's estimate is trustworthy. Using
+`HST_BRIGHT` here instead (its real calibrated err/sigma ~0.014, per
+`calibration2d.py`) would make both approaches agree almost exactly,
+because there is very little measurement error left to deconvolve; an
+earlier version of this figure used an invented, uncalibrated error scale
+that was ~30x too large, which produced a misleadingly bad-looking
+recovery unrelated to any real regime.
+
+```python
+import numpy as np
+import veldist
+from veldist.veldist2d import KinematicSolver2D
+from veldist.calibration2d import HST_BRIGHT  # or HST_FAINT, GAIA_OUTER
+
+veldist.set_host_devices(4)
+
+profile = HST_BRIGHT  # calibrated grid width/n_bins for this observing regime
+
+# pm1, pm2: observed proper-motion components (km/s or mas/yr, consistent
+# with cov). cov: per-star (2, 2) measurement covariance, NOT a correlation
+# coefficient; see KinematicSolver2D.add_data for the rho -> cov conversion.
+solver = KinematicSolver2D()
+solver.setup_grid(
+    center=(0.0, 0.0),
+    width=(profile.grid_width, profile.grid_width),
+    n_bins=profile.n_bins,
+)
+solver.add_data(pm1=pm1, pm2=pm2, cov=cov)
+solver.run(num_warmup=500, num_samples=3000, gpu=False)
+```
+
+`calibration2d.py` provides three calibrated `ObservingProfile2D` instances
+(`HST_BRIGHT`, `HST_FAINT`, `GAIA_OUTER`) that derive the grid width and cell
+count from the proper-motion measurement regime, the same role
+`calibration.py`'s `OMEGACAT` plays for 1D; see `validation.md` for how
+`cell_per_sigma` was chosen. `run()` defaults to `num_samples=3000` (not
+1000): measured on real HST data, ESS on the six scalar sites roughly
+tripled from 1000 to 3000 samples at effectively the same wall time, since
+per-bin runtime is dominated by JIT compilation, not sampling.
+
+The batch/export path mirrors 1D: `fit_all_bins_2d` (from
+`veldist.veldist2d`) runs `KinematicSolver2D` across a list of Voronoi bins,
+and `write_dynamite_kinematics_2d` (from `veldist.dynamite2d`) writes
+Dynamite's `ProperMotions`/`Histogram2D` input, a `.npz` archive
+(`PM_2dhist`, `PM_2dhist_sigma`, plus bin metadata) alongside the usual
+`aperture.dat`/`bins.dat` pair. Bins are independent, so `fit_all_bins_2d`
+accepts `n_jobs` to fit several concurrently via `ProcessPoolExecutor`
+(default `n_jobs=1`, sequential):
+
+```python
+from veldist.veldist2d import fit_all_bins_2d
+from veldist.dynamite2d import write_dynamite_kinematics_2d
+
+solvers = fit_all_bins_2d(
+    bin_data_list,  # [{'pm1': ..., 'pm2': ..., 'cov': ...}, ...]
+    grid_kwargs={"center": (0.0, 0.0), "width": (profile.grid_width,) * 2, "n_bins": profile.n_bins},
+    run_kwargs={"num_warmup": 500, "num_samples": 3000, "gpu": False},
+    min_stars=10,
+    n_jobs=4,  # fit bins concurrently via ProcessPoolExecutor; default is 1 (sequential)
+)
+
+write_dynamite_kinematics_2d(
+    solvers=solvers,
+    output_dir="dynamite_input_2d",
+    voronoi_bin_metadata=voronoi_bin_metadata,
+)
+```
+
+`n_bins` must be odd: DYNAMITE's `ProperMotions` reader raises on even
+counts, which is why `ObservingProfile2D.n_bins` always rounds up to the
+nearest odd value. See `TASKS.md` for what's still open on the 2D path
+(PM-axis marginalisation, 3D) and `validation.md` for the 2D SBC/coverage
+numbers.
+
+---
+
 ## Example 3: Kinematic summary maps
 
 Once the batch pipeline has run, `compute_summary_maps` extracts
@@ -291,9 +415,14 @@ skewed LOSVD (a rotation-like analogue). Compare the sign and magnitude of
 `skewness`/`kurtosis` against the shapes shown here when interpreting a new
 fit.*
 
-![Kinematic maps from veldist](images/fig_kin_maps.png)
+![Kinematic maps: recovered rotation, and naive vs. veldist sigma bias against known ground truth](images/fig_kin_maps.png)
 
-*Example kinematic maps ($V$, $\sigma$, $\gamma_1$, $\kappa$) from a
-synthetic globular cluster with a rotating core.  The $V$ and $\sigma$ maps
-recover the known input rotation and dispersion profile; the $\gamma_1$ map
-shows the expected antisymmetric pattern associated with rotation.*
+*(a) Recovered rotation $V$ across a synthetic 5x5-bin cluster with a
+solid-body rotating core, correctly showing the antisymmetric pattern.
+(b, c) Since this is synthetic data with a known true $\sigma(r)$, the
+naive (no-deconvolution) sample $\sigma$ bias and `veldist`'s deconvolved
+$\sigma$ bias are plotted on the same colour scale. `veldist` reduces mean
+|bias| from 2.7 to 2.2 km/s here; skewness/kurtosis maps are not shown,
+since they are not part of the method's documented acceptance criterion
+(`v_mean`/`sigma` well-calibrated; `h3`/`h4` not required) and a map of
+unreliable values would not be a fair demonstration.*

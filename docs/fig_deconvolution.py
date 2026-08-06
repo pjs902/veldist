@@ -24,6 +24,9 @@ import numpy as np
 import matplotlib
 
 matplotlib.use("Agg")
+# Ignore any user matplotlibrc (e.g. a personal MNRAS print style) so this
+# figure renders identically regardless of whose machine builds the docs.
+matplotlib.rcdefaults()
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 
@@ -41,15 +44,25 @@ rng = np.random.default_rng(2024)
 # --------------------------------------------------------------------------
 v_grid = np.linspace(-120, 120, 300)
 
-core = np.exp(-0.5 * ((v_grid - 5.0) / 24.0) ** 2)
-shoulder = 0.30 * np.exp(-0.5 * ((v_grid + 35.0) / 15.0) ** 2)
+# The core and shoulder must be separated by more than either width, or the
+# "shoulder" is just a skew on a single mode (as it was here previously:
+# offset=40 vs core width=24 blended into one bump even in the true PDF).
+core = np.exp(-0.5 * ((v_grid - 10.0) / 14.0) ** 2)
+shoulder = 0.45 * np.exp(-0.5 * ((v_grid + 45.0) / 12.0) ** 2)
 true_pdf = core + shoulder
 true_pdf /= np.trapezoid(true_pdf, v_grid)
 
 # --------------------------------------------------------------------------
 # Synthetic dataset: N stars
 # --------------------------------------------------------------------------
-N = 400
+# N and the error floor are chosen so the shoulder feature (30% amplitude,
+# offset from the Gaussian core) is well-constrained by the likelihood: the
+# default `gaussian_core` prior actively shrinks non-Gaussian structure
+# toward the Gaussian null space (see theory.md), so a smaller/noisier
+# dataset here would let the prior wash the shoulder out even though
+# nothing is wrong with the inference — that was the original bug in this
+# figure (N=400, errors~8-16 km/s left the shoulder prior-dominated).
+N = 1500
 
 # Sample intrinsic velocities from the true PDF (rejection sampling)
 v_range = v_grid[-1] - v_grid[0]
@@ -63,7 +76,7 @@ while len(v_int) < N:
 v_int = np.array(v_int[:N])
 
 # Heteroscedastic errors: larger near the wings
-errors = 8.0 + 4.0 * np.abs(v_int) / 50.0 + rng.uniform(0, 4, N)
+errors = 4.0 + 2.0 * np.abs(v_int) / 50.0 + rng.uniform(0, 2, N)
 v_obs = v_int + rng.normal(0.0, errors)
 
 # --------------------------------------------------------------------------
@@ -157,7 +170,7 @@ if not args.no_inference:
         solver = KinematicSolver()
         solver.setup_grid(center=0.0, width=240.0, n_bins=55)
         solver.add_data(vel=v_obs, err=errors)
-        solver.run(num_warmup=600, num_samples=1200, gpu=False)
+        solver.run(num_warmup=800, num_samples=1500, gpu=False)
 
         pdf_mass = solver.samples["intrinsic_pdf"]
         # Convert to density for plotting

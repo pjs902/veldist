@@ -40,7 +40,7 @@ from veldist.analysis import tail_weight as _tail_weight
 N_BINS = 15
 N_STARS = 200
 NUM_WARMUP = 500
-NUM_SAMPLES = 1200
+NUM_SAMPLES = 3000  # must match KinematicSolver.run's default (2026-08-06)
 N_SIMS = 30
 GRID_WIDTH = 300.0  # arbitrary physical velocity span for the mock grid
 GRID_CENTER = 0.0

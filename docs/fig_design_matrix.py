@@ -16,6 +16,9 @@ Run from the docs/ directory:
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
+# Ignore any user matplotlibrc (e.g. a personal MNRAS print style) so this
+# figure renders identically regardless of whose machine builds the docs.
+matplotlib.rcdefaults()
 import matplotlib.pyplot as plt
 from scipy.stats import norm
 

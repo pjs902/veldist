@@ -15,6 +15,9 @@ import numpy as np
 import matplotlib
 
 matplotlib.use("Agg")
+# Ignore any user matplotlibrc (e.g. a personal MNRAS print style) so this
+# figure renders identically regardless of whose machine builds the docs.
+matplotlib.rcdefaults()
 import matplotlib.pyplot as plt
 
 rng = np.random.default_rng(404)

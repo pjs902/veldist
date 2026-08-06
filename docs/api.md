@@ -18,6 +18,15 @@
    :show-inheritance:
 ```
 
+## 1D Calibration Module
+
+```{eval-rst}
+.. automodule:: veldist.calibration
+   :members:
+   :undoc-members:
+   :show-inheritance:
+```
+
 ## 2D (Proper-Motion) Module
 
 ```{eval-rst}

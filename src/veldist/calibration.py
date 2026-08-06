@@ -265,8 +265,8 @@ def make_truths():
     """The mock LOSVD shapes, dimensionless. Scale with ``Truth.scaled(sigma)``.
 
     Chosen to span the non-Gaussianity expected in a rotating,
-    anisotropic globular cluster, at realistic h3/h4 amplitude (|h3| <~ 0.15,
-    |h4| <~ 0.05-0.1). Physical motivation for each is in its ``note``.
+    anisotropic globular cluster, at realistic h3/h4 amplitude (``|h3|`` <~ 0.15,
+    ``|h4|`` <~ 0.05-0.1). Physical motivation for each is in its ``note``.
     """
     t = []
     t.append(

@@ -172,6 +172,14 @@ invisible in the moments and plain in the per-bin numbers:
 | 5.0 | 0.716 / 0.609 / 0.646 | 0.393 |
 | 10.0 | — | 0.312 |
 
+![Per-bin and h3+h4 coverage vs. SIGMA3_RATE](images/fig_sigma3_rate.png)
+
+*The same table plotted: per-bin coverage across the three truths stays
+near or above the nominal 0.68 target across the whole rate range (the
+"invisible in the moments" part), while h3+h4 mean coverage drops
+monotonically as the rate tightens. SIGMA3_RATE=0.35 is the loosest rate
+measured and the adopted default.*
+
 Every moment metric (coverage, efficiency and bias on v_mean and sigma) is
 flat across that whole range, which is why the cost went unnoticed until
 per-bin coverage was measured directly. Fixing the sampler instead costs about

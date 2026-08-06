@@ -10,9 +10,10 @@ the grid an "arbitrary physical span", and its star count was copied from the
 spectroscopy, so both the star counts and the errors are quite different.
 
 Calibration source: the oMEGaCat proper-motion uncertainty-vs-magnitude
-figures. The unit conversion is fixed by the paper's own statement that a
-median 1D proper-motion error of 0.007 mas/yr corresponds to 0.15 km/s at the
-cluster distance, giving 1 mas/yr = 21.4 km/s. The quality cut is 0.3 mas/yr.
+figures. The unit conversion uses the standard 1 mas/yr = 4.740470 *
+distance[kpc] km/s relation at the adopted cluster distance of 5494 pc
+(Peter, 2026-08-06), giving 1 mas/yr = 26.04 km/s. The quality cut is
+0.3 mas/yr.
 """
 
 from dataclasses import dataclass
@@ -25,12 +26,16 @@ __all__ = [
     "HST_FAINT",
     "GAIA_OUTER",
     "PROFILES_2D",
+    "CLUSTER_DISTANCE_PC",
     "KMS_PER_MASYR",
     "PM_QUALITY_CUT_KMS",
 ]
 
-#: Fixed by oMEGaCat's own 0.007 mas/yr = 0.15 km/s.
-KMS_PER_MASYR = 21.4
+#: Adopted cluster distance (Peter, 2026-08-06).
+CLUSTER_DISTANCE_PC = 5494.0
+
+#: 1 mas/yr = 4.740470 * distance[kpc] km/s (standard proper-motion relation).
+KMS_PER_MASYR = 4.740470 * CLUSTER_DISTANCE_PC / 1000.0
 
 #: The 0.3 mas/yr proper-motion quality cut, in km/s.
 PM_QUALITY_CUT_KMS = 0.30 * KMS_PER_MASYR

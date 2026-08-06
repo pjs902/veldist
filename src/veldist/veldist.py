@@ -673,7 +673,7 @@ class KinematicSolver:
     def run(
         self,
         num_warmup=500,
-        num_samples=1000,
+        num_samples=3000,
         gpu=None,
         seed=5567,
         prior="gaussian_core",
@@ -691,7 +691,20 @@ class KinematicSolver:
         num_warmup : int
             Number of warmup (burn-in) steps.
         num_samples : int
-            Number of MCMC samples to draw.
+            Number of MCMC samples to draw. **Default 3000, raised from
+            1000 (2026-08-06)** on the same "more ESS for ~free wall time"
+            finding measured on the 2D solver (:meth:`veldist.veldist2d.
+            KinematicSolver2D.run`'s docstring): tripling ``num_samples`` at
+            fixed ``dense_mass``/``target_accept_prob`` roughly tripled ESS
+            for near-identical per-bin cost once JIT compile is accounted
+            for. Unlike that 2D change, this default sits inside an
+            already-SBC/coverage-validated regime (``docs/validation.md``,
+            ``SIGMA3_RATE=0.35``/``target_accept_prob=0.95``/
+            ``dense_mass=True``/``num_chains=4`` at ``num_samples=1000``) --
+            ``test_sbc_calibration``/``test_per_bin_losvd_coverage`` were
+            re-run at 3000 to confirm the change doesn't regress that
+            calibration before this was adopted as the new default (see
+            TASKS.md).
         gpu : bool or None
             If True, request GPU acceleration via
             ``numpyro.set_platform("gpu")`` (raises if none is available).

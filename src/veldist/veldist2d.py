@@ -24,8 +24,11 @@ oversight.
 
 import contextlib
 import io
+import json
+import traceback
 import warnings
 from functools import cache
+from pathlib import Path
 
 import numpy as np
 import jax
@@ -737,14 +740,25 @@ class KinematicSolver2D:
         )
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
-    def run(self, num_warmup=500, num_samples=1000, gpu=None, seed=5567,
-            prior="gaussian_core"):
+    def run(self, num_warmup=500, num_samples=3000, gpu=None, seed=5567,
+            prior="gaussian_core", target_accept_prob=0.95, dense_mass=False,
+            max_tree_depth=10):
         """
         Run the NUTS sampler.
 
         Parameters
         ----------
-        num_warmup, num_samples : int
+        num_warmup : int
+        num_samples : int
+            **Defaults to 3000, not NumPyro's typical ~1000**, on measured
+            grounds (2026-08-06, real HST data, ``dense_mass=False``,
+            ``target_accept_prob=0.95``): min ESS across the six scalar
+            sites (``v0x``/``v0y``/``s0x``/``s0y``/``rho0``/``sigma3``) rose
+            from ~260-470 at 1000 samples to ~830-1290 at 3000, for
+            essentially the *same* per-bin wall time (~1-3s, dominated by
+            JIT compile, not sampling -- see ``dense_mass`` below). Drawing
+            more samples here is nearly free; there is no reason to leave
+            ESS on the table.
         gpu : bool or None
             See :meth:`veldist.KinematicSolver.run`.
         seed : int
@@ -756,6 +770,43 @@ class KinematicSolver2D:
             field, retained for comparison; its smoothing limit is a *uniform*
             distribution over the velocity grid, measured to bias sigma_x high
             by +0.5 (N=500) to +2.3 (N=100) km/s on a sigma=17 truth.
+        target_accept_prob : float
+            NUTS target acceptance rate. Defaults to 0.95 (NumPyro's own
+            default is 0.8), matching 1D's ``KinematicSolver.run`` -- see
+            that method's docstring for the funnel-geometry rationale
+            (``docs/validation.md``). **Not yet re-validated for the 2D
+            model with a full SBC campaign** the way 1D was, but *is*
+            measured directly on real HST data (2026-08-06, ``dense_mass=
+            False``): at ``num_samples=3000``, 0/5 test bins had any
+            divergences and min ESS was ~830-1290, vs. 3 total divergences
+            (out of 5 bins) at ``target_accept_prob=0.8`` with the same
+            sample count -- ``0.95`` is the better-supported choice, not
+            just a 1D holdover.
+        dense_mass : bool
+            Use a dense (full-covariance) mass matrix instead of NumPyro's
+            default diagonal one. **Defaults to False** -- measured to be
+            actively counterproductive on real HST data (2026-08-06).
+            With ``dense_mass=True``, NUTS hits ``max_tree_depth``
+            (1023 steps/sample) on essentially every sample regardless of
+            ``target_accept_prob``, and a controlled comparison (same
+            bins, JIT-cache warm so compile cost was hidden) still gave
+            *lower* min ESS (~200-290) than ``dense_mass=False`` at the same
+            1000-sample budget (~260-470) -- all those extra leapfrog steps
+            buy nothing. With a cold cache (the realistic case: ~1400 bins,
+            ~1400 distinct star counts, so nearly every bin needs a fresh
+            XLA compile), the dense-mass kernel's compile cost alone was
+            ~100s/bin (~20x ``dense_mass=False``), which is where the
+            "~43 hours for a full run" estimate came from. Unlike 1D --
+            where ``dense_mass=True`` *reduced* cost and improved r_hat/ESS
+            -- this is the opposite result for the 2D model; do not port
+            the 1D dense-mass finding here without re-measuring. Left
+            overridable for anyone who wants to re-investigate, but do not
+            flip the default without new evidence.
+        max_tree_depth : int
+            NUTS's cap on trajectory doubling; NumPyro's own default is 10
+            (max 1023 leapfrog steps/sample). Exposed here (1D's
+            ``KinematicSolver.run`` does not expose it) since it was needed
+            to diagnose the ``dense_mass`` tree-depth blowup above.
 
         Returns
         -------
@@ -790,7 +841,12 @@ class KinematicSolver2D:
         else:
             model_fn = model_2d
 
-        nuts_kernel = NUTS(model_fn)
+        nuts_kernel = NUTS(
+            model_fn,
+            target_accept_prob=target_accept_prob,
+            dense_mass=dense_mass,
+            max_tree_depth=max_tree_depth,
+        )
         mcmc = MCMC(nuts_kernel, num_warmup=num_warmup, num_samples=num_samples)
         mcmc.run(jax.random.PRNGKey(int(seed)), **model_kwargs)
 
@@ -900,7 +956,106 @@ class KinematicSolver2D:
 # ==============================================================================
 
 
-def fit_all_bins_2d(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, show_progress=True):
+def _array_stats(x):
+    """Small numeric summary of an array, for failure diagnostics -- plain
+    floats/ints only, so this is always JSON-serialisable regardless of
+    the input dtype (numpy scalars are not JSON-serialisable directly)."""
+    x = np.asarray(x)
+    if x.size == 0:
+        return {"n": 0}
+    return {
+        "n": int(x.size),
+        "min": float(np.min(x)),
+        "max": float(np.max(x)),
+        "mean": float(np.mean(x)),
+        "std": float(np.std(x)),
+        "n_nan": int(np.sum(~np.isfinite(x))),
+    }
+
+
+def _log_bin_failure(failure_log_path, failure):
+    """Append one failure record as a JSON line. Safe under concurrent
+    writers (``n_jobs`` > 1): each call opens, writes once, and closes: a
+    single ``write()`` to a file opened with ``'a'`` is atomic on POSIX for
+    writes below the platform pipe-buffer size (a few KB), which a single
+    failure record is.
+    """
+    if failure_log_path is None:
+        return
+    with Path(failure_log_path).open("a") as f:
+        f.write(json.dumps(failure) + "\n")
+
+
+def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, failure_log_path=None):
+    """Fit a single bin. Module-level (not a closure) so it's picklable for
+    ``ProcessPoolExecutor`` -- see :func:`fit_all_bins_2d`'s ``n_jobs``.
+
+    A bin whose MCMC fit raises (e.g. NumPyro's "Cannot find valid initial
+    parameters", seen in practice on real HST data -- 2026-08-06) is caught
+    here, logged with enough context to investigate later, and skipped
+    (returned as ``None``) rather than propagating and killing every other
+    bin in a multi-hour ``fit_all_bins_2d`` run. ``min_stars`` skips are a
+    normal, expected outcome and are not treated as failures.
+
+    Returns
+    -------
+    (int, KinematicSolver2D or None)
+        Bin index and the solved solver, or ``None`` if skipped (either
+        ``len(pm1) < min_stars``, or the fit raised an exception).
+    """
+    if len(pm1) < min_stars:
+        warnings.warn(
+            f"Bin {i} has only {len(pm1)} star(s) (minimum is {min_stars}). "
+            "Skipping. This bin will appear as None in the output list and "
+            "should be masked in the Dynamite input files.",
+            stacklevel=2,
+        )
+        return i, None
+
+    solver = KinematicSolver2D()
+    try:
+        solver.setup_grid(**grid_kwargs)
+        with contextlib.redirect_stdout(io.StringIO()):
+            solver.add_data(pm1=pm1, pm2=pm2, cov=cov)
+            solver.run(seed=seed, **run_kwargs)
+        solver.clip_uncertainties()
+    except Exception as exc:  # noqa: BLE001 -- intentionally broad: any failure here must not kill the whole run
+        failure = {
+            "bin": i,
+            "seed": seed,
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "traceback": traceback.format_exc(),
+            "pm1_stats": _array_stats(pm1),
+            "pm2_stats": _array_stats(pm2),
+            "cov00_stats": _array_stats(cov[:, 0, 0]),
+            "cov11_stats": _array_stats(cov[:, 1, 1]),
+            "cov01_stats": _array_stats(cov[:, 0, 1]),
+            "grid_kwargs": {k: (list(v) if isinstance(v, tuple) else v) for k, v in grid_kwargs.items()},
+        }
+        _log_bin_failure(failure_log_path, failure)
+        warnings.warn(
+            f"Bin {i} ({len(pm1)} stars) failed during the MCMC fit: "
+            f"{type(exc).__name__}: {exc}. Skipping -- this bin will appear "
+            "as None in the output list and should be masked in the "
+            "Dynamite input files. Full diagnostics "
+            + (f"logged to {failure_log_path}." if failure_log_path else "were NOT logged to disk (failure_log_path=None)."),
+            stacklevel=2,
+        )
+        return i, None
+
+    return i, solver
+
+
+def fit_all_bins_2d(
+    bin_data_list,
+    grid_kwargs,
+    run_kwargs=None,
+    min_stars=10,
+    show_progress=True,
+    n_jobs=1,
+    failure_log_path="fit_all_bins_2d_failures.jsonl",
+):
     """
     Run the full inference pipeline for a list of spatial (Voronoi) bins.
 
@@ -952,14 +1107,52 @@ def fit_all_bins_2d(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, s
         ``KinematicSolver2D.run`` currently has no ``progress_bar``
         parameter to suppress NumPyro's own per-chain bars, so this only
         controls the single outer bar over bins; it is not forwarded to
-        ``run()``.
+        ``run()`` in the ``n_jobs=1`` path. NumPyro's per-chain bars are
+        always redirected/suppressed inside ``_fit_one_bin_2d`` regardless
+        of ``n_jobs``.
+    n_jobs : int
+        Number of bins to fit concurrently via ``ProcessPoolExecutor``.
+        Default 1 (sequential, same as before this parameter existed).
+        Bins are independent (own data, own posterior), so this
+        parallelises over bins, **not** over chains within a bin --
+        ``KinematicSolver2D.run`` has no ``num_chains`` and this does not
+        add one. Each worker is a fresh process (spawned, not forked --
+        JAX/XLA is not fork-safe once its backend has initialised), so
+        each pays its own JIT compile cost per star-count shape it
+        encounters; with ``n_jobs`` workers all potentially compiling the
+        same shape independently, total compile work can exceed the
+        sequential case, but wall time still drops because it happens in
+        parallel. Uses ``multiprocessing.get_context("spawn")`` explicitly
+        for the same fork-safety reason. Reserving JAX host devices via
+        ``numpyro.set_host_device_count`` in the parent process (for
+        chain-level parallelism) is unrelated to this and unaffected by
+        it, since spawned workers get a fresh JAX backend, not the
+        parent's.
+    failure_log_path : str or path-like or None
+        Where to append per-bin failure diagnostics (JSON lines: bin index,
+        seed, exception type/message/traceback, summary stats on
+        ``pm1``/``pm2``/the covariance diagonal/off-diagonal, and
+        ``grid_kwargs``) when a bin's MCMC fit raises. A bin failing here
+        is caught (see :func:`_fit_one_bin_2d`) and skipped, **not** left
+        to propagate and kill the rest of a run that may be hours long --
+        seen in practice on real HST data (2026-08-06): NumPyro's "Cannot
+        find valid initial parameters" on one pathological bin took down
+        an otherwise-healthy ~1400-bin run. Default
+        ``'fit_all_bins_2d_failures.jsonl'`` (relative to the current
+        working directory); pass ``None`` to disable the log file (a
+        ``warnings.warn`` is still emitted either way). Safe to point
+        multiple ``n_jobs`` workers at the same path: each failure is one
+        atomic ``open`` + single ``write`` + ``close``, not a held-open
+        file handle.
 
     Returns
     -------
     solvers : list
         One entry per input bin. Entries are either a fully solved
         :class:`KinematicSolver2D` (with ``samples`` and
-        ``clipped_samples`` populated) or ``None`` for skipped bins.
+        ``clipped_samples`` populated) or ``None`` for a skipped bin
+        (either below ``min_stars``, or a failed fit -- see
+        ``failure_log_path`` to tell the two apart after the fact).
     """
     if run_kwargs is None:
         run_kwargs = {}
@@ -968,49 +1161,74 @@ def fit_all_bins_2d(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, s
     run_kwargs = dict(run_kwargs)
     base_seed = run_kwargs.pop("seed", 5567)
 
+    # Fresh log per call -- stale failures from a previous, now-superseded
+    # run of this function (e.g. before a crash) would otherwise mix in
+    # and misattribute which run a given bin's failure came from.
+    if failure_log_path is not None:
+        Path(failure_log_path).write_text("")
+
     n_total = len(bin_data_list)
-    solvers = []
+    solvers = [None] * n_total
 
-    bin_iter = enumerate(bin_data_list)
-    if show_progress:
-        from tqdm.auto import tqdm
+    if n_jobs == 1:
+        bin_iter = enumerate(bin_data_list)
+        if show_progress:
+            from tqdm.auto import tqdm
 
-        bin_iter = tqdm(bin_iter, total=n_total, desc="Fitting bins", unit="bin")
+            bin_iter = tqdm(bin_iter, total=n_total, desc="Fitting bins", unit="bin")
 
-    for i, bin_data in bin_iter:
-        if not show_progress:
-            print(f"Fitting bin {i + 1}/{n_total}...")
+        for i, bin_data in bin_iter:
+            if not show_progress:
+                print(f"Fitting bin {i + 1}/{n_total}...")
 
-        pm1 = np.asarray(bin_data["pm1"])
-        pm2 = np.asarray(bin_data["pm2"])
-        cov = np.asarray(bin_data["cov"])
+            pm1 = np.asarray(bin_data["pm1"])
+            pm2 = np.asarray(bin_data["pm2"])
+            cov = np.asarray(bin_data["cov"])
 
-        if len(pm1) < min_stars:
-            warnings.warn(
-                f"Bin {i} has only {len(pm1)} star(s) (minimum is {min_stars}). "
-                "Skipping. This bin will appear as None in the output list and "
-                "should be masked in the Dynamite input files.",
-                stacklevel=2,
+            _, solver = _fit_one_bin_2d(
+                i, pm1, pm2, cov, grid_kwargs, run_kwargs, base_seed + i, min_stars, failure_log_path
             )
-            solvers.append(None)
-            continue
+            solvers[i] = solver
+    else:
+        import multiprocessing as mp
+        from concurrent.futures import ProcessPoolExecutor, as_completed
 
-        solver = KinematicSolver2D()
-        solver.setup_grid(**grid_kwargs)
+        ctx = mp.get_context("spawn")
+        with ProcessPoolExecutor(max_workers=n_jobs, mp_context=ctx) as executor:
+            futures = {
+                executor.submit(
+                    _fit_one_bin_2d,
+                    i,
+                    np.asarray(bin_data["pm1"]),
+                    np.asarray(bin_data["pm2"]),
+                    np.asarray(bin_data["cov"]),
+                    grid_kwargs,
+                    run_kwargs,
+                    base_seed + i,
+                    min_stars,
+                    failure_log_path,
+                ): i
+                for i, bin_data in enumerate(bin_data_list)
+            }
+            completed = as_completed(futures)
+            if show_progress:
+                from tqdm.auto import tqdm
 
-        # add_data/run print progress lines of their own; redirect those to
-        # keep the single outer tqdm bar clean instead of interleaving with
-        # printed lines per bin.
-        with contextlib.redirect_stdout(io.StringIO()) if show_progress else contextlib.nullcontext():
-            solver.add_data(pm1=pm1, pm2=pm2, cov=cov)
-            solver.run(seed=base_seed + i, **run_kwargs)
-
-        solver.clip_uncertainties()
-
-        solvers.append(solver)
+                completed = tqdm(completed, total=n_total, desc="Fitting bins", unit="bin")
+            for future in completed:
+                i, solver = future.result()
+                solvers[i] = solver
 
     n_solved = sum(s is not None for s in solvers)
-    n_skipped = n_total - n_solved
-    print(f"Done. {n_solved}/{n_total} bins solved" + (f", {n_skipped} skipped." if n_skipped else "."))
+    n_below_min_stars = sum(1 for bin_data in bin_data_list if len(bin_data["pm1"]) < min_stars)
+    n_failed = n_total - n_solved - n_below_min_stars
+    summary = f"Done. {n_solved}/{n_total} bins solved"
+    if n_below_min_stars:
+        summary += f", {n_below_min_stars} below min_stars"
+    if n_failed:
+        summary += f", {n_failed} failed during fitting"
+        if failure_log_path is not None:
+            summary += f" (see {failure_log_path})"
+    print(summary + ".")
 
     return solvers
