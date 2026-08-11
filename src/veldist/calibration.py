@@ -55,7 +55,14 @@ EXKURT_PER_H4 = 8.0 * np.sqrt(6.0)
 #: proxy and GH coefficient have opposite sign and which both mappings flag
 #: as an ``outliers`` entry. Regenerate with ``measure_proxy_to_gh`` if the
 #: truth library or the grid changes. Do not apply this conversion outside
-#: the envelope it was measured over.
+#: the envelope it was measured over. The two mappings are not equally
+#: trustworthy: ``kurtosis_pct_to_h4`` rests on 5 ratio-eligible truths and
+#: its flagged outlier, ``cold_disk_component``, has an unambiguous sign
+#: flip. ``skew_pct_to_h3`` rests on only 3 ratio-eligible truths, one of
+#: which is that same flagged outlier, and a MAD outlier test on 3 points
+#: has very little power, so the h3 ``median_ratio`` and its ``outliers``
+#: entry should be read with substantially less confidence than the h4
+#: ones.
 PROXY_TO_GH = {
     "skew_pct_to_h3": {
         "slope": 1.1913269380278009,
@@ -805,6 +812,15 @@ def recovery_curve(
     defaults with 6 ivar values and 3 truths that is 900 runs, several hours.
     Reduce *n_real* for a smoke test; do not reduce it for a result.
 
+    ``cr_bound`` is exact for ``v_mean`` only, since *target_ivar* IS its
+    Fisher information. For ``sigma``, ``skewness`` and ``kurtosis`` it is an
+    equal-error Gaussian approximation via ``n_eff = target_ivar * sigma**2``.
+    With heteroscedastic errors that ``n_eff`` is a centroid-weighted
+    effective sample size and is not the correct effective N for a second or
+    fourth moment, which weight the per-star variances differently, so it is
+    optimistic for those three and the reported CI over CR ratio
+    UNDERSTATES their inefficiency. See the ``RecoveryCurve`` Notes.
+
     Parameters
     ----------
     profile : ObservingProfile
@@ -962,7 +978,13 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0
             (see ``outliers`` below).
         ``n_truths``
             Number of truths whose ratio entered the ``median_ratio`` and
-            ``ratio_std`` statistics.
+            ``ratio_std`` statistics. The two mappings are not equally
+            trustworthy on this count: ``kurtosis_pct_to_h4`` rests on 5
+            ratio-eligible truths, while ``skew_pct_to_h3`` rests on only 3,
+            one of which is the flagged ``cold_disk_component`` outlier. A
+            MAD outlier test on 3 points has very little power, so the h3
+            ``median_ratio`` and its ``outliers`` entry should be read with
+            substantially less confidence than the h4 ones.
         ``outliers``
             Names of included truths whose ratio is more than 3 scaled
             median-absolute-deviations (MAD * 1.4826) from ``median_ratio``.

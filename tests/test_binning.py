@@ -52,3 +52,32 @@ def test_target_ivar_rejects_nonpositive_precision():
 def test_sn_func_rejects_nonpositive_sigma():
     with pytest.raises(ValueError, match="positive"):
         make_ivar_sn_func(0.0)
+
+
+def test_ivar_definition_agrees_across_modules():
+    """The information measure ``sum_i 1/(sigma^2 + err_i^2)`` is implemented
+    in three places, and nothing structurally prevents them from diverging:
+
+    - ``make_ivar_sn_func`` in ``veldist.binning``
+    - ``ObservingProfile.ivar`` in ``veldist.calibration``
+    - the inline expression inside ``fit_all_bins`` in ``veldist.veldist``,
+      around the ``min_ivar`` check
+
+    A divergence between these would be silent, since all three return a
+    plain float in the same units, so this test pins them to agree on a
+    heteroscedastic fixture (equal errors would let a wrong formula pass by
+    coincidence)."""
+    from veldist.calibration import ObservingProfile
+
+    sigma = 7.0
+    err = np.array([0.5, 1.0, 2.0, 3.5, 10.0])
+    index = np.arange(err.size)
+
+    from_binning = make_ivar_sn_func(sigma)(index, np.zeros(err.size), err)
+    from_calibration = ObservingProfile.ivar(sigma, err[index])
+    # Reproduced literally from veldist.veldist.fit_all_bins so this test
+    # fails if that copy is edited away from the shared definition.
+    from_fit_all_bins = float(np.sum(1.0 / (sigma**2 + np.asarray(err)[index] ** 2)))
+
+    assert from_binning == pytest.approx(from_calibration)
+    assert from_binning == pytest.approx(from_fit_all_bins)

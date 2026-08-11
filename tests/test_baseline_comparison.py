@@ -98,6 +98,15 @@ def _tv_distance(inferred, true):
     return 0.5 * np.sum(np.abs(inferred - true))
 
 
+# Note an asymmetry so a future reader does not "fix" it in the wrong
+# direction: veldist's intrinsic_pdf is bin MASS, while true_dist and
+# mle_dist below are density evaluated at bin centres and then
+# renormalised to sum to 1. On a uniform grid these differ at second
+# order in the bin width through curvature, and that mismatch penalises
+# veldist, never the MLE. So the measured advantage below is conservative;
+# it runs against veldist, not for it.
+
+
 @pytest.mark.slow
 def test_veldist_beats_mle_on_non_gaussian_truth():
     """veldist recovers the shape of a bimodal LOSVD better than a Gaussian
