@@ -15,7 +15,9 @@ Typical use::
     print(result.summary())
 """
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, fields
+from pathlib import Path
 from collections.abc import Callable
 
 import numpy as np
@@ -157,6 +159,88 @@ class ObservingProfile:
             f"    h3 {p['h3']:.3f}          h4 {p['h4']:.3f}",
         ]
         return "\n".join(lines)
+
+    @classmethod
+    def from_data(cls, vel, err, bin_ids, name="measured", min_stars=10):
+        """Measure a profile from a real catalogue.
+
+        Every parameter of this class was originally hand-typed (see
+        ``OMEGACAT``), which meant the mock suite validated the method against
+        a guess about the data rather than the data. This measures them
+        instead. Only scalars come out, so the result is safe to commit as a
+        test fixture even when the catalogue itself is not redistributable.
+
+        Per-bin dispersions come from ``gaussian_mle`` rather than
+        ``numpy.std``: the latter returns ``sqrt(sigma^2 + err^2)``, which
+        would inflate ``sigma_min`` most in exactly the low-dispersion bins
+        that set the hardest deconvolution regime.
+
+        Parameters
+        ----------
+        vel, err : array-like, shape (n_stars,)
+            Velocities and per-star uncertainties for the whole field, km/s.
+        bin_ids : array-like, shape (n_stars,)
+            Spatial bin index for each star. Values need not be contiguous.
+        name : str
+            Label carried into the returned profile.
+        min_stars : int
+            Bins with fewer stars are excluded from the dispersion and
+            rotation estimates.
+
+        Returns
+        -------
+        ObservingProfile
+
+        Raises
+        ------
+        ValueError
+            If fewer than 2 bins survive the *min_stars* cut.
+        """
+        from veldist.baseline import gaussian_mle
+
+        vel = np.asarray(vel, dtype=float)
+        err = np.asarray(err, dtype=float)
+        bin_ids = np.asarray(bin_ids)
+
+        sigmas, means, counts = [], [], []
+        for b in np.unique(bin_ids):
+            sel = bin_ids == b
+            if int(np.sum(sel)) < min_stars:
+                continue
+            fit = gaussian_mle(vel[sel], err[sel])
+            sigmas.append(fit["sigma"])
+            means.append(fit["v_mean"])
+            counts.append(int(np.sum(sel)))
+
+        if len(sigmas) < 2:
+            msg = f"at least 2 bins with >= {min_stars} stars are required, got {len(sigmas)}"
+            raise ValueError(msg)
+
+        sigmas = np.asarray(sigmas)
+        means = np.asarray(means)
+
+        log_err = np.log(err)
+        # Percentile-based sigma_min/max rather than the extremes: one badly
+        # fit bin should not set the grid width for the entire campaign.
+        return cls(
+            name=name,
+            n_stars=int(round(float(np.median(counts)))),
+            err_median=float(np.median(err)),
+            err_log_sigma=float(np.std(log_err)),
+            sigma_max=float(np.percentile(sigmas, 95)),
+            sigma_min=float(np.percentile(sigmas, 5)),
+            rotation_span=float(np.ptp(means)),
+        )
+
+    def to_json(self, path):
+        """Write this profile to an indented JSON file."""
+        payload = {f.name: getattr(self, f.name) for f in fields(self)}
+        Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+    @classmethod
+    def from_json(cls, path):
+        """Read a profile written by :meth:`to_json`."""
+        return cls(**json.loads(Path(path).read_text()))
 
 
 #: The oMEGACat dataset: HST+MUSE within omega Cen's half-light radius.
