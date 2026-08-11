@@ -615,3 +615,226 @@ def calibrate(
         medians[t.name] = {m: list(meds[m]) for m in METRICS}
 
     return CalibrationResult(profile, sigma, coverage, medians, tvals)
+
+
+#: Metrics tracked by the recovery curve. ``v_mean`` and ``sigma`` are the
+#: gating pair per ``TASKS.md``; the shape metrics are reported for interest
+#: and are expected to need far more information before they calibrate.
+RECOVERY_METRICS = ["v_mean", "sigma", "skewness", "kurtosis"]
+
+
+@dataclass
+class RecoveryCurve:
+    """How well each statistic is recovered as a function of information content.
+
+    The question this answers is the one behind both ``min_stars=10`` and any
+    spatial binning target: how much information does a bin need before the
+    posterior can be believed? Answering it empirically, in units of Fisher
+    information rather than star count, gives a threshold that transfers to
+    datasets with different measurement errors.
+    """
+
+    profile: object
+    sigma: float
+    rows: list
+
+    def threshold(self, metric, min_coverage=0.60, max_ci_ratio=1.5):
+        """Smallest ``ivar`` at which *metric* is trustworthy, or ``None``.
+
+        Trustworthy means two things at once, because either alone is
+        gameable: coverage at least *min_coverage* (an interval that contains
+        the truth often enough) **and** a credible interval no wider than
+        *max_ci_ratio* times the Cramer-Rao bound (an interval that is not
+        merely wide enough to contain everything).
+
+        A point qualifies only if every higher-``ivar`` point also qualifies,
+        so a single lucky low-information point cannot set the threshold.
+
+        Parameters
+        ----------
+        metric : str
+            One of :data:`RECOVERY_METRICS`.
+        min_coverage : float
+            Required empirical coverage of the nominal 68% interval. The
+            default of 0.60 is a deliberately loose lower edge for the
+            realisation counts a sweep can afford; tighten it if ``n_real``
+            is large.
+        max_ci_ratio : float
+            Required efficiency, as a multiple of the Cramer-Rao bound.
+
+        Returns
+        -------
+        float or None
+            ``None`` if no swept ``ivar`` value qualifies, which means the
+            sweep did not reach high enough information content.
+
+        Raises
+        ------
+        ValueError
+            If *metric* appears in no row.
+        """
+        sel = [r for r in self.rows if r["metric"] == metric]
+        if not sel:
+            msg = f"no rows for metric {metric!r}"
+            raise ValueError(msg)
+
+        by_ivar = {}
+        for r in sel:
+            by_ivar.setdefault(r["ivar"], []).append(r)
+
+        def ok(rows):
+            return all(
+                r["coverage"] >= min_coverage and r["ci_width"] <= max_ci_ratio * r["cr_bound"] for r in rows
+            )
+
+        ivars = sorted(by_ivar)
+        passing = [iv for iv in ivars if ok(by_ivar[iv])]
+        if not passing:
+            return None
+        # Walk down from the top while the run of passes stays unbroken.
+        best = ivars[-1]
+        for iv in reversed(ivars):
+            if not ok(by_ivar[iv]):
+                break
+            best = iv
+        return best
+
+    def report(self):
+        """Human-readable table, one block per metric."""
+        lines = [
+            f"RecoveryCurve: {self.profile.name} @ sigma={self.sigma:.0f} km/s",
+            f"  {len({r['truth'] for r in self.rows})} truth shape(s), "
+            f"{len({r['ivar'] for r in self.rows})} ivar value(s)",
+        ]
+        for metric in [m for m in RECOVERY_METRICS if any(r["metric"] == m for r in self.rows)]:
+            t = self.threshold(metric)
+            lines.append(f"  {metric}: threshold ivar = " + ("not reached" if t is None else f"{t:.3g}"))
+            lines.append("    ivar    truth              cover  CI/CR  CI/base  bias")
+            for r in sorted([x for x in self.rows if x["metric"] == metric], key=lambda x: (x["ivar"], x["truth"])):
+                ratio = r["ci_width"] / r["cr_bound"] if r["cr_bound"] > 0 else float("nan")
+                base = r["ci_width"] / r["baseline_ci_width"] if r["baseline_ci_width"] > 0 else float("nan")
+                lines.append(
+                    f"    {r['ivar']:<7.3g} {r['truth']:<18s} {r['coverage']:5.2f}  "
+                    f"{ratio:5.2f}  {base:7.2f}  {r['bias']:+.3f}"
+                )
+        return "\n".join(lines)
+
+
+def recovery_curve(
+    profile,
+    truths,
+    ivar_values,
+    sigma=None,
+    *,
+    n_real=50,
+    seed=20260811,
+    num_warmup=300,
+    num_samples=600,
+    prior="gaussian_core",
+):
+    """Sweep information content and measure bias, coverage, and efficiency.
+
+    For each ``ivar`` in *ivar_values* and each truth, draws *n_real* mock
+    realisations sized to hit that information content, fits each with
+    ``KinematicSolver`` and with the ``gaussian_mle`` baseline, and records
+    per metric: the median bias, the empirical coverage of the nominal 68%
+    interval, the mean credible-interval width, the Cramer-Rao bound, and the
+    baseline's interval width.
+
+    The Cramer-Rao column is what makes the result actionable. Coverage alone
+    can be bought by inflating uncertainties; the ratio of interval width to
+    the bound says whether the method is actually extracting the information
+    present.
+
+    ``sigma`` defaults to ``profile.sigma_max``. **Run it at
+    ``profile.sigma_min`` too** for the same reason ``calibrate`` says so:
+    across omega Cen's range ``err/sigma`` spans 0.11 to 0.36 and a
+    regularisation calibrated at one end need not hold at the other.
+
+    Cost is ``len(ivar_values) * len(truths) * n_real`` NUTS runs. At the
+    defaults with 6 ivar values and 3 truths that is 900 runs, several hours.
+    Reduce *n_real* for a smoke test; do not reduce it for a result.
+
+    Parameters
+    ----------
+    profile : ObservingProfile
+    truths : list of Truth
+    ivar_values : sequence of float
+        Information contents to sweep, as returned by ``ObservingProfile.ivar``.
+    sigma : float, optional
+        LOSVD dispersion for the mocks. Defaults to ``profile.sigma_max``.
+    n_real : int
+        Mock realisations per (ivar, truth) cell.
+    seed : int
+    num_warmup, num_samples, prior
+        Passed through to ``KinematicSolver.run``.
+
+    Returns
+    -------
+    RecoveryCurve
+    """
+    from veldist.analysis import compute_summary
+    from veldist.baseline import gaussian_mle
+    from veldist.veldist import KinematicSolver
+
+    sigma = profile.sigma_max if sigma is None else sigma
+    rows = []
+
+    for target_ivar in ivar_values:
+        for t in truths:
+            pdf, rvs = t.scaled(sigma)
+            tv = true_moments(pdf)
+            hits = {m: 0 for m in RECOVERY_METRICS}
+            meds = {m: [] for m in RECOVERY_METRICS}
+            widths = {m: [] for m in RECOVERY_METRICS}
+            base_widths = {"v_mean": [], "sigma": []}
+            rng = np.random.default_rng(seed)
+
+            for i in range(n_real):
+                err = profile.draw_sample(target_ivar, sigma, rng)
+                n = len(err)
+                obs = rvs(n, rng) + rng.normal(0.0, err)
+
+                solver = KinematicSolver()
+                solver.setup_grid(center=0.0, width=profile.grid_width, n_bins=profile.n_bins)
+                solver.add_data(obs, err)
+                solver.run(num_warmup=num_warmup, num_samples=num_samples, seed=seed + i, prior=prior)
+                summ = compute_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
+
+                for m in RECOVERY_METRICS:
+                    med, h68 = summ[m]
+                    meds[m].append(med)
+                    widths[m].append(h68)
+                    if abs(med - tv[m]) <= h68:
+                        hits[m] += 1
+
+                base = gaussian_mle(obs, err)
+                base_widths["v_mean"].append(base["v_mean_err"])
+                base_widths["sigma"].append(base["sigma_err"])
+
+            # Cramer-Rao bounds at this information content. v_mean is exact
+            # by construction (ivar IS its Fisher information); the others use
+            # the equal-error Gaussian approximation with an effective N.
+            n_eff = target_ivar * sigma**2
+            cr = {
+                "v_mean": 1.0 / np.sqrt(target_ivar),
+                "sigma": sigma / np.sqrt(2 * n_eff),
+                "skewness": np.sqrt(6.0 / n_eff),
+                "kurtosis": np.sqrt(24.0 / n_eff),
+            }
+
+            for m in RECOVERY_METRICS:
+                rows.append(
+                    {
+                        "ivar": float(target_ivar),
+                        "truth": t.name,
+                        "metric": m,
+                        "bias": float(np.median(meds[m]) - tv[m]),
+                        "coverage": hits[m] / n_real,
+                        "ci_width": float(np.mean(widths[m])),
+                        "cr_bound": float(cr[m]),
+                        "baseline_ci_width": float(np.mean(base_widths[m])) if m in base_widths else float("nan"),
+                    }
+                )
+
+    return RecoveryCurve(profile=profile, sigma=sigma, rows=rows)
