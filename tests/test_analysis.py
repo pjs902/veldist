@@ -18,6 +18,7 @@ from veldist.analysis import (
     compute_percentile_summary,
     compute_summary,
     compute_summary_maps,
+    gauss_hermite_fit,
     half_68ci,
     truncate_pdf_samples,
 )
@@ -533,3 +534,68 @@ def test_gh_conversion_consistency():
     assert abs(h4_fit) < 0.3
     assert h3_fit == pytest.approx(h3_predicted, abs=0.01)
     assert h4_fit == pytest.approx(h4_predicted, abs=0.01)
+
+
+def _gh_pmf(centers, v, sigma, h3, h4):
+    """Build a Gauss-Hermite probability *mass* function on a grid.
+
+    Duplicated deliberately from the implementation's basis so the test would
+    catch a sign or normalisation error in one but not the other.
+    """
+    y = (centers - v) / sigma
+    hermite3 = (2.0 * np.sqrt(2.0) * y**3 - 3.0 * np.sqrt(2.0) * y) / np.sqrt(6.0)
+    hermite4 = (4.0 * y**4 - 12.0 * y**2 + 3.0) / np.sqrt(24.0)
+    dens = np.exp(-0.5 * y**2) * (1.0 + h3 * hermite3 + h4 * hermite4)
+    dens = np.clip(dens, 0.0, None)
+    return dens / dens.sum()
+
+
+def test_gauss_hermite_fit_recovers_planted_h3_h4():
+    centers = np.linspace(-100.0, 100.0, 201)
+    pmf = _gh_pmf(centers, v=5.0, sigma=20.0, h3=0.10, h4=0.05)
+    pdf_samples = np.tile(pmf, (20, 1))
+
+    fit = gauss_hermite_fit(pdf_samples, centers, n_draws=20)
+
+    assert fit["v_gh"][0] == pytest.approx(5.0, abs=0.5)
+    assert fit["sigma_gh"][0] == pytest.approx(20.0, abs=0.5)
+    assert fit["h3"][0] == pytest.approx(0.10, abs=0.01)
+    assert fit["h4"][0] == pytest.approx(0.05, abs=0.01)
+
+
+def test_gauss_hermite_fit_gaussian_gives_zero_h3_h4():
+    centers = np.linspace(-100.0, 100.0, 201)
+    pmf = _gh_pmf(centers, v=0.0, sigma=25.0, h3=0.0, h4=0.0)
+    pdf_samples = np.tile(pmf, (10, 1))
+
+    fit = gauss_hermite_fit(pdf_samples, centers, n_draws=10)
+
+    assert fit["h3"][0] == pytest.approx(0.0, abs=5e-3)
+    assert fit["h4"][0] == pytest.approx(0.0, abs=5e-3)
+
+
+def test_gauss_hermite_fit_propagates_posterior_spread():
+    """Draws with genuinely different h3 must give a non-zero half-68CI."""
+    centers = np.linspace(-100.0, 100.0, 201)
+    rng = np.random.default_rng(0)
+    h3_values = rng.normal(0.08, 0.03, size=40)
+    pdf_samples = np.array([_gh_pmf(centers, 0.0, 20.0, h3, 0.0) for h3 in h3_values])
+
+    fit = gauss_hermite_fit(pdf_samples, centers, n_draws=40)
+
+    assert fit["h3"][0] == pytest.approx(0.08, abs=0.02)
+    assert fit["h3"][1] > 0.01
+
+
+def test_gauss_hermite_fit_thins_deterministically():
+    """Same seed, same answer; different seed, still close."""
+    centers = np.linspace(-100.0, 100.0, 201)
+    rng = np.random.default_rng(1)
+    pdf_samples = np.array([_gh_pmf(centers, 0.0, 20.0, h3, 0.0) for h3 in rng.normal(0.05, 0.02, size=100)])
+
+    a = gauss_hermite_fit(pdf_samples, centers, n_draws=25, seed=5)
+    b = gauss_hermite_fit(pdf_samples, centers, n_draws=25, seed=5)
+    c = gauss_hermite_fit(pdf_samples, centers, n_draws=25, seed=6)
+
+    assert a["h3"][0] == b["h3"][0]
+    assert c["h3"][0] == pytest.approx(a["h3"][0], abs=0.02)

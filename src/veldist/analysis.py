@@ -3,6 +3,7 @@ Statistical analysis utilities for inferred velocity distributions.
 """
 
 import numpy as np
+from scipy import optimize
 
 __all__ = [
     "compute_moments",
@@ -15,6 +16,7 @@ __all__ = [
     "compute_summary_maps",
     "compute_percentile_summary",
     "compute_percentile_summary_maps",
+    "gauss_hermite_fit",
 ]
 
 # ---------------------------------------------------------------------------
@@ -765,3 +767,118 @@ def compute_percentile_summary_maps(solvers):
         raise ValueError(msg)
 
     return maps
+
+
+def _gh_basis(y):
+    """Normalised Hermite polynomials H_3 and H_4, van der Marel & Franx (1993).
+
+    Normalised so that the Gauss-Hermite series is orthonormal against the
+    Gaussian weight, which is what makes h3 and h4 directly comparable to
+    published values rather than merely proportional to them.
+    """
+    hermite3 = (2.0 * np.sqrt(2.0) * y**3 - 3.0 * np.sqrt(2.0) * y) / np.sqrt(6.0)
+    hermite4 = (4.0 * y**4 - 12.0 * y**2 + 3.0) / np.sqrt(24.0)
+    return hermite3, hermite4
+
+
+def _gh_model(params, centers):
+    """Gauss-Hermite probability mass on *centers* for ``(v, log_sigma, h3, h4)``."""
+    v, log_sigma, h3, h4 = params
+    sigma = np.exp(log_sigma)
+    y = (centers - v) / sigma
+    hermite3, hermite4 = _gh_basis(y)
+    dens = np.exp(-0.5 * y**2) * (1.0 + h3 * hermite3 + h4 * hermite4)
+    dens = np.clip(dens, 0.0, None)
+    total = dens.sum()
+    return dens / total if total > 0 else dens
+
+
+def gauss_hermite_fit(pdf_samples, grid_centers, n_draws=500, seed=0):
+    """Fit a Gauss-Hermite series to each posterior draw of the LOSVD.
+
+    ``compute_percentile_summary`` gives robust shape statistics, but they are
+    not on the Gauss-Hermite scale that the dynamical-modelling literature
+    reports. This function produces literature-comparable ``h3`` and ``h4``,
+    with a posterior, by fitting the four-parameter series
+    ``exp(-y^2/2) [1 + h3 H3(y) + h4 H4(y)]``, ``y = (v - V)/sigma``, to each
+    draw by least squares and summarising the resulting parameter samples.
+
+    Fitting is per draw rather than to the posterior mean because the mean of
+    a set of LOSVDs is smoother than any of them, which would bias ``h4``
+    low and understate the uncertainty on both coefficients.
+
+    Parameters
+    ----------
+    pdf_samples : array-like, shape (n_samples, n_bins)
+        MCMC samples of the probability mass function, each row summing to 1.
+    grid_centers : array-like, shape (n_bins,)
+        Bin-centre velocities in ascending order.
+    n_draws : int
+        Number of posterior draws to fit. Each fit is an independent
+        non-linear least squares solve, so cost is linear in this. Draws are
+        thinned by random selection when ``n_samples`` exceeds it. The default
+        of 500 gives a half-68CI stable to a few percent; raise it only if
+        that is the dominant uncertainty in a result.
+    seed : int
+        Seed for the thinning selection, so results are reproducible.
+
+    Returns
+    -------
+    dict
+        ``'v_gh'``, ``'sigma_gh'``, ``'h3'``, ``'h4'``, each
+        ``(posterior_median, half_68ci)``.
+
+        ``v_gh`` and ``sigma_gh`` are the *Gauss-Hermite* location and width,
+        which differ from ``compute_summary``'s ``v_mean`` and ``sigma``
+        (ordinary moments) whenever ``h4`` is non-zero. Report them as a pair
+        with ``h3``/``h4`` or not at all; mixing GH coefficients with moment
+        widths is a known source of confusion in the literature.
+
+    Notes
+    -----
+    Draws whose fit fails to converge are dropped. If more than half fail,
+    the LOSVD is probably not well described by a low-order GH series at all,
+    which ``bimodality_score`` is the right diagnostic for.
+    """
+    pdf_samples = np.asarray(pdf_samples, dtype=float)
+    grid_centers = np.asarray(grid_centers, dtype=float)
+
+    n_samples = pdf_samples.shape[0]
+    if n_draws < n_samples:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(n_samples, size=n_draws, replace=False)
+    else:
+        idx = np.arange(n_samples)
+
+    fits = []
+    for i in idx:
+        target = pdf_samples[i]
+        # Moment starting point. A bad start makes the solver find a
+        # reflected solution with the sign of h3 flipped.
+        mean0 = float(np.sum(target * grid_centers))
+        var0 = float(np.sum(target * (grid_centers - mean0) ** 2))
+        if not np.isfinite(var0) or var0 <= 0:
+            continue
+        x0 = np.array([mean0, 0.5 * np.log(var0), 0.0, 0.0])
+
+        try:
+            res = optimize.least_squares(
+                lambda p, t=target: _gh_model(p, grid_centers) - t,
+                x0=x0,
+                method="lm",
+                max_nfev=2000,
+            )
+        except (ValueError, np.linalg.LinAlgError):
+            continue
+        if not res.success:
+            continue
+        v, log_sigma, h3, h4 = res.x
+        fits.append((v, np.exp(log_sigma), h3, h4))
+
+    if len(fits) < 2:
+        nan_pair = (float("nan"), float("nan"))
+        return {"v_gh": nan_pair, "sigma_gh": nan_pair, "h3": nan_pair, "h4": nan_pair}
+
+    fits = np.asarray(fits)
+    names = ["v_gh", "sigma_gh", "h3", "h4"]
+    return {name: (float(np.median(fits[:, j])), half_68ci(fits[:, j])) for j, name in enumerate(names)}
