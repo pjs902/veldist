@@ -632,6 +632,17 @@ class RecoveryCurve:
     posterior can be believed? Answering it empirically, in units of Fisher
     information rather than star count, gives a threshold that transfers to
     datasets with different measurement errors.
+
+    Notes
+    -----
+    The ``cr_bound`` column is exact for ``v_mean`` by construction (the
+    swept ``ivar`` IS the Fisher information of the mean). For ``sigma``,
+    ``skewness`` and ``kurtosis`` it uses an equal-error Gaussian
+    approximation built from the same effective sample size, which is exact
+    only for homogeneous per-star errors. With the heterogeneous errors this
+    package actually fits, that approximation is indicative rather than
+    exact, so treat the CI/CR ratio for those three metrics as a rough
+    efficiency check, not a precise one.
     """
 
     profile: object
@@ -688,11 +699,11 @@ class RecoveryCurve:
             )
 
         ivars = sorted(by_ivar)
-        passing = [iv for iv in ivars if ok(by_ivar[iv])]
-        if not passing:
-            return None
-        # Walk down from the top while the run of passes stays unbroken.
-        best = ivars[-1]
+        # Walk down from the top while the run of passes stays unbroken. The
+        # answer is None unless that walk actually advances past the top
+        # point, so a failing top ivar with a lower, non-adjacent pass never
+        # gets returned.
+        best = None
         for iv in reversed(ivars):
             if not ok(by_ivar[iv]):
                 break
@@ -708,7 +719,16 @@ class RecoveryCurve:
         ]
         for metric in [m for m in RECOVERY_METRICS if any(r["metric"] == m for r in self.rows)]:
             t = self.threshold(metric)
-            lines.append(f"  {metric}: threshold ivar = " + ("not reached" if t is None else f"{t:.3g}"))
+            metric_ivars = sorted({r["ivar"] for r in self.rows if r["metric"] == metric})
+            note = ""
+            if t is not None and metric_ivars:
+                if t == metric_ivars[0]:
+                    note = " (at the bottom of the swept range, true threshold may be lower)"
+                elif t == metric_ivars[-1]:
+                    note = " (at the top of the swept range, may not be bracketed)"
+            lines.append(
+                f"  {metric}: threshold ivar = " + ("not reached" if t is None else f"{t:.3g}{note}")
+            )
             lines.append("    ivar    truth              cover  CI/CR  CI/base  bias")
             for r in sorted([x for x in self.rows if x["metric"] == metric], key=lambda x: (x["ivar"], x["truth"])):
                 ratio = r["ci_width"] / r["cr_bound"] if r["cr_bound"] > 0 else float("nan")

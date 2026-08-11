@@ -45,6 +45,17 @@ def test_threshold_rejects_inefficient_points():
     assert curve.threshold("sigma", max_ci_ratio=1.5) is None
 
 
+def test_threshold_is_none_when_top_ivar_fails():
+    """A non-contiguous passing set where the top ivar fails is not a threshold.
+
+    ivars [0.1, 1.0, 4.0] with ok = [False, True, False]: 1.0 passes on its
+    own, but the top point (4.0) fails, so the run of passes from the top is
+    broken immediately and the correct answer is None, not the passing 1.0.
+    """
+    curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(0.1, 0.20), (1.0, 0.70), (4.0, 0.20)]))
+    assert curve.threshold("sigma") is None
+
+
 def test_threshold_unknown_metric_raises():
     curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(1.0, 0.7)]))
     with pytest.raises(ValueError, match="no rows for metric"):
@@ -60,6 +71,15 @@ def test_report_mentions_every_metric():
     text = curve.report()
     assert "v_mean" in text
     assert "sigma" in text
+
+
+def test_report_annotates_edge_pinned_threshold():
+    """An edge-pinned threshold (at the bottom or top of the swept range) is
+    flagged in the report, since it means the sweep did not bracket the true
+    value."""
+    curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(0.1, 0.70), (1.0, 0.70)]))
+    text = curve.report()
+    assert "at the bottom of the swept range" in text
 
 
 @pytest.mark.slow
