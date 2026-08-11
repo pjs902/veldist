@@ -51,13 +51,17 @@ ax.axhline(0, color="gray", linewidth=0.6)
 ax = axes[1]
 ax.plot(centers, w, color="#1f77b4", linewidth=1.2, alpha=0.5, label="$w$")
 ax.plot(centers, quad_fit, color="#d62728", linewidth=1.8, label=r"$QQ^\top w$ (best-fit quadratic)")
-ax.set_title("(b) $w$'s own quadratic\ntrend", fontsize=9)
+ax.set_title("(b) the parabola hidden\ninside the wiggles", fontsize=9)
 ax.legend(fontsize=7, loc="best")
 
 ax = axes[2]
 ax.plot(centers, residual, color="#2ca02c", linewidth=1.6)
 ax.axhline(0, color="gray", linewidth=0.6)
-ax.set_title(r"(c) Residual $w - QQ^\top w$" + "\n(what's actually added to the core)", fontsize=9)
+ax.set_title(
+    r"(c) what is left once it is removed"
+    + "\n(all the deviation is allowed to be)",
+    fontsize=9,
+)
 
 for ax in axes:
     ax.set_xlabel("bin index (centred)", fontsize=8)

@@ -27,6 +27,14 @@ optimisation.
 
 ## The Model
 
+The model has two jobs: represent an LOSVD of unknown shape without assuming
+a functional form for it, and stop that freedom from overfitting noise in a
+handful of stars. The first is handled by a histogram of bin weights, free
+to take any shape the data support. The second is handled by a smoothing
+prior, which states what the LOSVD should look like where the data are
+silent, so that low-count bins and the wings of the distribution do not
+default to spraying probability mass around arbitrarily.
+
 ### Histogram representation
 
 We represent the intrinsic LOSVD as a vector of probability masses
@@ -77,6 +85,23 @@ quadratic component and the core's $v_0$/$s_0$ would both be trying to
 explain the same broad shape, two parameters describing one feature.
 Neither would be identifiable from the data alone, and NUTS would diverge
 hunting for a posterior mode that does not exist.
+
+The deviation term needs one restriction, and it is worth stating plainly
+before the algebra. The deviation is a random wiggly curve added to the core.
+A Gaussian's log-density *is* a parabola. So if the wiggles happen to come out
+parabolic, they are indistinguishable from the core itself: the core width and
+the deviation are then two names for one degree of freedom, the posterior
+develops a funnel, and NUTS diverges. The fix is to forbid the deviation from
+containing any parabola at all. In one line: **strip the parabola out of the
+wiggles, so that only the core is allowed to be parabolic.**
+
+Mechanically, `Q` is an orthonormal basis for the space of constant, linear,
+and quadratic functions of velocity. For any curve `w`, the product `QQ'w` is
+`w`'s own least-squares parabola. Subtracting it leaves a curve guaranteed to
+have no constant, linear, or quadratic component, which is exactly the
+restriction above. Everything below is the derivation of that statement.
+
+#### Why this is a projection
 
 **The fix: subtract $w$'s own quadratic trend.** Start with the three
 functions $1$, $v$, $v^2$, evaluated at the bin centres: three vectors in
