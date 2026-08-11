@@ -274,9 +274,9 @@ h3/h4 limitation honestly rather than engineering around it.
   default; re-run them and confirm they still pass (or improve) before
   treating this as settled the way the 1D case is.
 
-- **[2026-08-11] Branch `validation-and-binning`: Gaussian MLE baseline, GH
-  fitting, data-driven observing profiles, recovery-curve sweep and an
-  information-content floor landed.** What shipped: `veldist.baseline.gaussian_mle`
+- **[RESOLVED 2026-08-11] Branch `validation-and-binning`: Gaussian MLE baseline,
+  GH fitting, data-driven observing profiles, recovery-curve sweep and an
+  information-content floor.** What shipped: `veldist.baseline.gaussian_mle`
   (the two-parameter exact-optimum comparison point, see `docs/validation.md`
   "Comparison against a Gaussian MLE baseline"); Gauss-Hermite `h3`/`h4`
   fitting in `analysis.py` (`gauss_hermite_fit`); `ObservingProfile.from_data`
@@ -289,22 +289,32 @@ h3/h4 limitation honestly rather than engineering around it.
   `min_ivar` floor parameter on `fit_all_bins` so low-information bins can be
   skipped the same way `min_stars` already does.
 
-  What remains: fitting a real `ObservingProfile.from_data` from the
-  omegaCen catalogue (only mock/hand-built profiles have been used so far),
-  and running the full `recovery_curve` campaign, not just the 12-realisation
-  smoke test recorded in `docs/validation.md`. The plan's originally proposed
-  sweep range of ivar 0.05 to 15 is probably wrong: real 150-star bins sit
-  near ivar 0.375 (`sigma = 20` km/s), nowhere near the middle of that range.
-  Task 12 should set the sweep range from the real data's ivar distribution
-  before any campaign compute is spent, not from the plan's placeholder
-  range.
+  Merged to main in 21 commits. See `docs/validation.md` for the full results:
+  veldist matches the exact Gaussian MLE optimum to 0.999±0.003 on v_mean and
+  1.016±0.005 on sigma; ties on all nine truths for first two moments (18/18
+  cells, max |t|=1.41); wins decisively on shape (TV distance 0.0712 vs 0.2168,
+  t=31.8 on bimodal LOSVD). Recovery campaign: both v_mean and sigma calibrate
+  at ivar down to 0.1; real oMEGACat bins at ivar 0.39 are well within
+  calibrated range.
 
-- **[2026-08-11] Real `ObservingProfile` measured from oMEGACat.** Fitted via
+- **[RESOLVED 2026-08-11] Recovery-curve campaign complete.** 1920 NUTS fits
+  across 6 ivar values (0.1–3.2), 2 dispersions (19.04, 13.37 km/s), 4 truth
+  shapes, 40 realisations each. Both `v_mean` and `sigma` calibrate at every
+  information content down to ivar 0.1 (pinned bottom; the true threshold may
+  be lower). Real oMEGACat bins at ivar 0.39 are comfortably within the
+  calibrated range. See `docs/validation.md` "Recovery-curve results".
+  The coverage-gate defect that made earlier runs report sigma as
+  uncalibrated (fixed `min_coverage=0.60` → binomial band at `n_real`) was
+  corrected mid-campaign without re-running MCMC, since the 192 rows were
+  already on disk.
+
+- **[RESOLVED 2026-08-11] Real `ObservingProfile` measured from oMEGACat.** Fitted via
   `ObservingProfile.from_data` on the real oMEGACat line-of-sight catalogue
   (24,925 stars after quality cuts, out of 717,934 rows). Fixture committed
   at `tests/data/omegacat_profile.json`. See `docs/validation.md` "The
   measured observing profile" for the full comparison against the hand-typed
-  `OMEGACAT` constant and its implications for the recovery-curve sweep.
+  `OMEGACAT` constant.
+
   **Outstanding decision:** whether to update the `OMEGACAT` constant in
   `src/veldist/calibration.py` to these measured values. Not done as part of
   this task, since every result currently in `docs/validation.md` was

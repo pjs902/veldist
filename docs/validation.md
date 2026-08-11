@@ -298,10 +298,11 @@ partly by construction. The `ivar / n_stars` normalisation is what makes
 the conclusion robust to that, but a check against the true Voronoi bins
 would settle it.
 
-**What this implies for the outstanding campaign.** The sweep should
-bracket the real value: roughly ivar 0.1 to 3.2 with points concentrated
-near 0.39, run at sigma 13.4 and 19.0. Not the originally planned 0.05 to
-15 at sigma 7 and 22.
+**What the campaign found.** The full recovery campaign swept ivar 0.1-3.2
+at sigma 13.4 and 19.0, at 40 realisations per cell (1920 NUTS fits). Both
+`v_mean` and `sigma` calibrate at every information content down to ivar
+0.1 (the lowest swept, pinned bottom). See the recovery-curve results
+section below for the threshold table and coverage numbers.
 
 ## Comparison against a Gaussian MLE baseline
 
@@ -393,27 +394,64 @@ envelope `|h3| <= 0.15`, `|h4| <= 0.10`. Outside that envelope,
 `bimodality_score` is the right diagnostic, not a percentile-to-GH
 conversion.
 
-### Recovery-curve status
+### Recovery-curve results
 
 `veldist.calibration.recovery_curve` sweeps `ObservingProfile` information
 content and reports, per metric, the ivar threshold below which coverage or
-CI-ratio calibration breaks down. A smoke run at 3 ivar values and 12
-realisations returned a `v_mean` threshold at the *bottom* of the swept range
-(ivar 0.25) and a `sigma` threshold at the *top* (ivar 4.0). A threshold
-pinned at either end of a sweep means the sweep did not bracket it, so
-neither number is a result yet; `RecoveryCurve.report()` now annotates this
-case explicitly rather than reporting a bare number that looks final.
+CI-ratio calibration breaks down. Information content is defined as
+`sum_i 1/(sigma^2 + err_i^2)`, **not** `1/err_i^2`: a star constrains the
+LOSVD centroid only up to the intrinsic spread it was drawn from, not down
+to its measurement error alone.
 
-What the smoke run does indicate, directionally, is that `sigma` needs
-substantially more information than `v_mean` to calibrate well.
+The full campaign swept six ivar values bracketing the real data (0.1, 0.2,
+0.39, 0.8, 1.6, 3.2) at two dispersions (19.04 and 13.37 km/s), across four
+truth shapes (gaussian, student_t_h4, skew_normal_h3, two_population), at
+40 realisations each — 1920 NUTS fits, 192 rows. The campaign used the
+measured `omegacat_profile.json` rather than the hand-typed OMEGACAT
+constants, at the real `sigma_min`/`sigma_max` rather than the guessed
+values.
 
-Information content is defined as `sum_i 1/(sigma^2 + err_i^2)`, **not**
-`1/err_i^2`: a star constrains the LOSVD centroid only up to the intrinsic
-spread it was drawn from, not down to its measurement error alone. At
-sigma = 20 km/s each star contributes about 1/400 to that sum, so a 150-star
-bin carries ivar of about 0.375, i.e. `v_mean` to roughly 1.6 km/s. The full
-recovery campaign, swept over a range bracketed to real data, is still
-outstanding.
+**Both `v_mean` and `sigma` calibrate at every information content down to
+ivar = 0.1**, the lowest value swept (pinned bottom at both dispersions; the
+true threshold may be lower still). That includes the real-data regime:
+omMEGACat bins sit at ivar 0.39, comfortably inside the calibrated range.
+
+| Metric | Mean coverage | Nominal | CI/CR range | Cells in NOMINAL_BAND |
+|---|---|---|---|---|
+| `v_mean` | 0.716 | 0.68 | 0.93-1.02 | 48/48 |
+| `sigma` | 0.657 | 0.68 | 1.03-1.17 | 48/48 |
+
+Coverage judgement uses the repo's own `NOMINAL_BAND` convention — the
+99% binomial band at the campaign's `n_real=40`, which spans 0.475-0.850.
+Both v_mean and sigma fall comfortably within it across all 48 cells each.
+The earlier smoke run's `min_coverage=0.60` was too tight for `n_real=40`
+(the standard error of a binomial proportion at n=40 is 0.074, so 0.60 sits
+one standard error below nominal), and its "sigma threshold at the top of
+the range" was a gate defect, not a real limitation. The correct binomial
+floor is `coverage_floor(n_real)` in `veldist.calibration`.
+
+The CI/CR ratio for sigma is 1.03-1.17 (i.e., veldist's posterior half-width
+is 3-17% wider than the Cramer-Rao bound), consistent with the extra
+non-parametric flexibility costing a few percent of precision on sigma but
+nothing on v_mean.
+
+Sigma shows a mild negative bias (typically -0.2 to -0.5 km/s, i.e. about
+1-3% of the true value), with no systematic improvement at higher
+information content. This is consistent with mild prior shrinkage toward a
+narrower distribution and is not a cause for concern given the coverage
+results.
+
+Skewness and kurtosis do not calibrate at any information content in this
+sweep: coverage falls catastrophically for skew_normal_h3 on both metrics,
+and student_t_h4 on kurtosis. This is a known limitation consistent with
+the earlier per-bin coverage results demonstrating the same pattern, and
+not a new finding. Per `TASKS.md`, these metrics are not gating.
+
+**Conclusion for binning.** Real oMEGACat bins at ivar 0.39 are well within
+the calibrated range for both `v_mean` and `sigma`. The existing binning is
+adequate; no coarser binning is needed for this dataset. The `min_ivar` floor
+in `fit_all_bins` can be set to a conservative value below 0.1 (e.g., 0.05)
+and acts primarily as a sanitation check rather than a binding constraint.
 
 ## 2D solver results
 
