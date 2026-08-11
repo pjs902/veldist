@@ -49,7 +49,12 @@ The gates that matter most there are `test_sbc_calibration` (both priors) and `t
 
 **Source layout:** `src/veldist/`
 - `veldist.py` — all inference logic: `precompute_design_matrix`, `model` (NumPyro probabilistic model), `KinematicSolver` class, `fit_all_bins` (batch pipeline), `write_dynamite_kinematics` (Dynamite ECSV/aperture/bins output)
-- `analysis.py` — post-inference statistics: `compute_summary` (primary API, returns 10 scalar metrics per bin), `compute_summary_maps` (batch version over all bins), plus helpers `cdf_percentile`, `tail_weight`, `bimodality_score`, `half_68ci`; also `compute_moments` (legacy, kept for backward compat)
+- `analysis.py` — post-inference statistics. Three families, deliberately not
+  interchangeable: `compute_summary` (ordinary moments, primary API, 10 scalars
+  per bin), `compute_percentile_summary` (robust Bowley/Moors analogues), and
+  `gauss_hermite_fit` (literature-comparable h3/h4). Each has a `_maps` batch
+  variant. Helpers: `cdf_percentile`, `tail_weight`, `bimodality_score`,
+  `half_68ci`. `compute_moments` is legacy.
 
 **Key data flow:**
 1. `KinematicSolver.setup_grid(center, width, n_bins)` — defines the velocity histogram grid
