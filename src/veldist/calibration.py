@@ -82,6 +82,68 @@ class ObservingProfile:
         determination."""
         return np.exp(rng.normal(np.log(self.err_median), self.err_log_sigma, size=n))
 
+    @staticmethod
+    def ivar(sigma, err):
+        """Total Fisher information on the mean velocity, for these stars.
+
+        Deliberately ``1/(sigma^2 + err_i^2)`` and not ``1/err_i^2``: a star's
+        velocity is informative about the LOSVD centroid only up to the
+        intrinsic spread it is drawn from, so the relevant variance is that of
+        the *observed* velocity. Using ``1/err_i^2`` would claim unbounded
+        information from perfectly measured stars, which is wrong, and would
+        make the resulting bins far too small.
+
+        The reciprocal square root of this quantity is the Cramer-Rao bound on
+        ``v_mean``, which is what makes it the natural target for spatial
+        binning: ``ivar = 1`` means ``v_mean`` good to 1 km/s.
+        """
+        err = np.asarray(err, dtype=float)
+        return float(np.sum(1.0 / (sigma**2 + err**2)))
+
+    def draw_sample(self, target_ivar, sigma, rng):
+        """Draw per-star errors until the bin reaches *target_ivar*.
+
+        The recovery curve varies information content while holding the error
+        distribution fixed, so the star count is an output here, not an input.
+        That inversion is the point: it is what lets the sweep report a
+        threshold in units that transfer between datasets with different
+        error properties.
+
+        Parameters
+        ----------
+        target_ivar : float
+            Required total ``ivar``. Must be positive.
+        sigma : float
+            LOSVD dispersion, km/s.
+        rng : numpy.random.Generator
+
+        Returns
+        -------
+        ndarray
+            Per-star measurement errors, km/s. The smallest number of stars
+            whose total ``ivar`` reaches the target, so the total slightly
+            overshoots by at most one star's contribution.
+
+        Raises
+        ------
+        ValueError
+            If *target_ivar* is not positive.
+        """
+        if target_ivar <= 0:
+            msg = "target_ivar must be positive"
+            raise ValueError(msg)
+
+        # Each star contributes at most 1/sigma^2 (in the zero-error limit),
+        # so this many stars is a guaranteed lower bound on what is needed.
+        chunk = max(16, int(np.ceil(target_ivar * sigma**2)))
+        err = np.empty(0)
+        while True:
+            err = np.concatenate([err, self.draw_errors(chunk, rng)])
+            contrib = 1.0 / (sigma**2 + err**2)
+            reached = np.searchsorted(np.cumsum(contrib), target_ivar)
+            if reached < len(err):
+                return err[: reached + 1]
+
     @property
     def sigma_ref(self) -> float:
         """Reference dispersion for scaling mock truths."""

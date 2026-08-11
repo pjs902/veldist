@@ -78,3 +78,41 @@ def test_json_is_human_readable(tmp_path):
     assert payload["name"] == "oMEGACat"
     assert payload["n_stars"] == 150
     assert "\n" in path.read_text()  # indented, not one line
+
+
+def test_ivar_matches_definition():
+    """Information content is 1/(sigma^2 + err^2) summed, NOT 1/err^2. The
+    relevant variance is that of the *observed* velocity."""
+    err = np.array([2.0, 4.0])
+    expected = 1.0 / (10.0**2 + 4.0) + 1.0 / (10.0**2 + 16.0)
+    assert OMEGACAT.ivar(10.0, err) == pytest.approx(expected)
+
+
+def test_draw_sample_hits_the_target_ivar():
+    rng = np.random.default_rng(0)
+    target = 2.0
+    err = OMEGACAT.draw_sample(target, sigma=20.0, rng=rng)
+    total = OMEGACAT.ivar(20.0, err)
+
+    assert total >= target
+    # Overshoot is at most one star's contribution.
+    assert total - target <= 1.0 / 20.0**2
+
+
+def test_draw_sample_needs_more_stars_when_errors_dominate():
+    """The whole motivation for ivar binning: at fixed target, noisier stars
+    means more of them. If this does not hold, ivar binning is pointless."""
+    rng = np.random.default_rng(1)
+    quiet = ObservingProfile("quiet", 150, 1.0, 0.01, 22.0, 7.0, 10.0)
+    noisy = ObservingProfile("noisy", 150, 30.0, 0.01, 22.0, 7.0, 10.0)
+
+    n_quiet = len(quiet.draw_sample(1.0, sigma=10.0, rng=rng))
+    n_noisy = len(noisy.draw_sample(1.0, sigma=10.0, rng=rng))
+
+    assert n_noisy > 2 * n_quiet
+
+
+def test_draw_sample_rejects_nonpositive_target():
+    rng = np.random.default_rng(2)
+    with pytest.raises(ValueError, match="positive"):
+        OMEGACAT.draw_sample(0.0, sigma=20.0, rng=rng)
