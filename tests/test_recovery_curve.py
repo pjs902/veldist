@@ -1,6 +1,13 @@
 import pytest
 
-from veldist.calibration import OMEGACAT, RecoveryCurve, make_truths, recovery_curve
+from veldist.calibration import (
+    NOMINAL_BAND,
+    OMEGACAT,
+    RecoveryCurve,
+    coverage_floor,
+    make_truths,
+    recovery_curve,
+)
 
 
 def _rows(ivar_cov_pairs, metric="sigma", truth="gaussian"):
@@ -20,7 +27,9 @@ def _rows(ivar_cov_pairs, metric="sigma", truth="gaussian"):
 
 
 def test_threshold_returns_first_sufficient_ivar():
-    curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(0.1, 0.20), (0.5, 0.45), (1.0, 0.70), (2.0, 0.72)]))
+    curve = RecoveryCurve(
+        profile=OMEGACAT, sigma=20.0, rows=_rows([(0.1, 0.20), (0.5, 0.45), (1.0, 0.70), (2.0, 0.72)])
+    )
     assert curve.threshold("sigma") == pytest.approx(1.0)
 
 
@@ -80,6 +89,49 @@ def test_report_annotates_edge_pinned_threshold():
     curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(0.1, 0.70), (1.0, 0.70)]))
     text = curve.report()
     assert "at the bottom of the swept range" in text
+
+
+def test_coverage_floor_matches_nominal_band_at_n25():
+    """coverage_floor(25) must reproduce the repo's own documented
+    NOMINAL_BAND[0] = 0.440, since that constant is the established
+    convention this helper generalises."""
+    assert coverage_floor(25) == pytest.approx(NOMINAL_BAND[0], abs=1e-9)
+
+
+def test_coverage_floor_at_n40():
+    assert coverage_floor(40) == pytest.approx(0.475, abs=1e-3)
+
+
+def test_threshold_explicit_min_coverage_overrides_n_real():
+    curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(1.0, 0.55), (2.0, 0.55)]), n_real=40)
+    # 0.55 is below the n_real=40 binomial floor (~0.475 is below it, so this
+    # would pass) -- use a value that fails only the explicit floor.
+    assert curve.threshold("sigma", min_coverage=0.60) is None
+    assert curve.threshold("sigma") == pytest.approx(1.0)
+
+
+def test_threshold_falls_back_to_060_when_n_real_is_none():
+    curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(1.0, 0.55)]))
+    assert curve.threshold("sigma") is None
+    curve2 = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(1.0, 0.62)]))
+    assert curve2.threshold("sigma") == pytest.approx(1.0)
+
+
+def test_cell_below_060_but_inside_band_passes_with_n_real_set():
+    """The regression this whole fix exists for: a coverage value below the
+    old fixed 0.60 floor, but inside the proper binomial band for n_real=40,
+    must now PASS when n_real is set, and must still FAIL under the old
+    fixed min_coverage=0.60."""
+    coverage = 0.55  # below 0.60, above coverage_floor(40) ~= 0.475
+    curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(1.0, coverage)]), n_real=40)
+    assert curve.threshold("sigma") == pytest.approx(1.0)
+    assert curve.threshold("sigma", min_coverage=0.60) is None
+
+
+def test_report_mentions_coverage_floor():
+    curve = RecoveryCurve(profile=OMEGACAT, sigma=20.0, rows=_rows([(1.0, 0.7)]), n_real=40)
+    text = curve.report()
+    assert "coverage floor" in text
 
 
 @pytest.mark.slow

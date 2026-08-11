@@ -22,6 +22,7 @@ from collections.abc import Callable
 
 import numpy as np
 from scipy import stats
+from scipy.stats import binom
 
 from veldist.analysis import half_68ci
 
@@ -36,6 +37,9 @@ __all__ = [
     "calibrate",
     "PROXY_TO_GH",
     "measure_proxy_to_gh",
+    "RecoveryCurve",
+    "recovery_curve",
+    "coverage_floor",
 ]
 
 # Gauss-Hermite conversions, lowest order (van der Marel & Franx 1993).
@@ -515,6 +519,36 @@ NOMINAL_BAND = (0.440, 0.920)  # binom(25, 0.68) 99% band
 CATASTROPHIC = 0.30
 
 
+def coverage_floor(n_real, band=0.99, nominal=0.68):
+    """Lower edge of a binomial coverage band, as a fraction of ``n_real``.
+
+    Empirical coverage from ``n_real`` mock realisations is a binomial
+    proportion, not a free-floating number: its acceptable range depends on
+    ``n_real``. This is the same convention as :data:`NOMINAL_BAND` (the
+    ``binom(25, 0.68)`` 99% band), generalised to any ``n_real`` instead of
+    being hardcoded for 25. ``coverage_floor(25)`` reproduces
+    ``NOMINAL_BAND[0]`` exactly.
+
+    Parameters
+    ----------
+    n_real : int
+        Number of mock realisations the coverage fraction was estimated
+        from.
+    band : float
+        Confidence level of the two-sided binomial interval, e.g. 0.99 for
+        a 99% band.
+    nominal : float
+        Nominal coverage of the credible interval being checked, e.g. 0.68
+        for a 68% interval.
+
+    Returns
+    -------
+    float
+        The lower edge of the band, as a fraction of ``n_real``.
+    """
+    return float(binom.ppf((1 - band) / 2, n_real, nominal)) / n_real
+
+
 def true_moments(pdf, lo=-500.0, hi=500.0, n_grid=400001):
     """Moments of a truth, on a dense grid.
 
@@ -685,12 +719,13 @@ class RecoveryCurve:
     profile: object
     sigma: float
     rows: list
+    n_real: int = None
 
-    def threshold(self, metric, min_coverage=0.60, max_ci_ratio=1.5):
+    def threshold(self, metric, min_coverage=None, max_ci_ratio=1.5, band=0.99):
         """Smallest ``ivar`` at which *metric* is trustworthy, or ``None``.
 
         Trustworthy means two things at once, because either alone is
-        gameable: coverage at least *min_coverage* (an interval that contains
+        gameable: coverage at least the floor (an interval that contains
         the truth often enough) **and** a credible interval no wider than
         *max_ci_ratio* times the Cramer-Rao bound (an interval that is not
         merely wide enough to contain everything).
@@ -702,13 +737,30 @@ class RecoveryCurve:
         ----------
         metric : str
             One of :data:`RECOVERY_METRICS`.
-        min_coverage : float
-            Required empirical coverage of the nominal 68% interval. The
-            default of 0.60 is a deliberately loose lower edge for the
-            realisation counts a sweep can afford; tighten it if ``n_real``
-            is large.
+        min_coverage : float, optional
+            Required empirical coverage of the nominal 68% interval. Coverage
+            is a binomial proportion estimated from ``n_real`` mock draws, so
+            a fixed floor is only correct at the ``n_real`` it was tuned for:
+            at ``n_real=40`` the standard error is ``sqrt(0.68*0.32/40) =
+            0.074``, and a fixed 0.60 sits one standard error below nominal,
+            rejecting perfectly calibrated methods roughly one sweep cell in
+            ten. This module already treats coverage this way in
+            :data:`NOMINAL_BAND`, the ``binom(25, 0.68)`` 99% band used by
+            :meth:`CalibrationResult.score`; this parameter generalises that
+            convention to whatever ``n_real`` the curve was actually built
+            with instead of hardcoding it for 25.
+
+            Resolution order: if given explicitly, used as-is (this keeps
+            every existing caller and test working unchanged). Otherwise, if
+            ``self.n_real`` is set, the floor is
+            :func:`coverage_floor` ``(self.n_real, band)``. Otherwise it falls
+            back to the historical constant 0.60.
         max_ci_ratio : float
             Required efficiency, as a multiple of the Cramer-Rao bound.
+        band : float
+            Confidence level of the binomial coverage band used to derive
+            the floor when ``min_coverage`` is not given and ``self.n_real``
+            is set. Ignored otherwise.
 
         Returns
         -------
@@ -726,14 +778,14 @@ class RecoveryCurve:
             msg = f"no rows for metric {metric!r}"
             raise ValueError(msg)
 
+        floor, _floor_desc = self._resolve_coverage_floor(min_coverage, band)
+
         by_ivar = {}
         for r in sel:
             by_ivar.setdefault(r["ivar"], []).append(r)
 
         def ok(rows):
-            return all(
-                r["coverage"] >= min_coverage and r["ci_width"] <= max_ci_ratio * r["cr_bound"] for r in rows
-            )
+            return all(r["coverage"] >= floor and r["ci_width"] <= max_ci_ratio * r["cr_bound"] for r in rows)
 
         ivars = sorted(by_ivar)
         # Walk down from the top while the run of passes stays unbroken. The
@@ -747,15 +799,33 @@ class RecoveryCurve:
             best = iv
         return best
 
-    def report(self):
-        """Human-readable table, one block per metric."""
+    def _resolve_coverage_floor(self, min_coverage, band):
+        """Return ``(floor, description)`` per the resolution order in ``threshold``."""
+        if min_coverage is not None:
+            return min_coverage, "explicit"
+        if self.n_real is not None:
+            floor = coverage_floor(self.n_real, band=band)
+            return floor, f"{band:.0%} binomial band at n_real={self.n_real}"
+        return 0.60, "historical default, n_real unknown"
+
+    def report(self, min_coverage=None, max_ci_ratio=1.5, band=0.99):
+        """Human-readable table, one block per metric.
+
+        Parameters
+        ----------
+        min_coverage, max_ci_ratio, band
+            Passed straight through to :meth:`threshold`, so the printed
+            table can never disagree with a threshold computed directly.
+        """
+        floor, floor_desc = self._resolve_coverage_floor(min_coverage, band)
         lines = [
             f"RecoveryCurve: {self.profile.name} @ sigma={self.sigma:.0f} km/s",
             f"  {len({r['truth'] for r in self.rows})} truth shape(s), "
             f"{len({r['ivar'] for r in self.rows})} ivar value(s)",
+            f"  coverage floor {floor:.3f} ({floor_desc})",
         ]
         for metric in [m for m in RECOVERY_METRICS if any(r["metric"] == m for r in self.rows)]:
-            t = self.threshold(metric)
+            t = self.threshold(metric, min_coverage=min_coverage, max_ci_ratio=max_ci_ratio, band=band)
             metric_ivars = sorted({r["ivar"] for r in self.rows if r["metric"] == metric})
             note = ""
             if t is not None and metric_ivars:
@@ -763,9 +833,7 @@ class RecoveryCurve:
                     note = " (at the bottom of the swept range, true threshold may be lower)"
                 elif t == metric_ivars[-1]:
                     note = " (at the top of the swept range, may not be bracketed)"
-            lines.append(
-                f"  {metric}: threshold ivar = " + ("not reached" if t is None else f"{t:.3g}{note}")
-            )
+            lines.append(f"  {metric}: threshold ivar = " + ("not reached" if t is None else f"{t:.3g}{note}"))
             lines.append("    ivar    truth              cover  CI/CR  CI/base  bias")
             for r in sorted([x for x in self.rows if x["metric"] == metric], key=lambda x: (x["ivar"], x["truth"])):
                 ratio = r["ci_width"] / r["cr_bound"] if r["cr_bound"] > 0 else float("nan")
@@ -903,7 +971,7 @@ def recovery_curve(
                     }
                 )
 
-    return RecoveryCurve(profile=profile, sigma=sigma, rows=rows)
+    return RecoveryCurve(profile=profile, sigma=sigma, rows=rows, n_real=n_real)
 
 
 def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0.10):
