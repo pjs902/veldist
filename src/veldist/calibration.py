@@ -46,14 +46,17 @@ SKEW_PER_H3 = 4.0 * np.sqrt(3.0)
 EXKURT_PER_H4 = 8.0 * np.sqrt(6.0)
 
 #: Measured mapping from the robust proxies in ``compute_percentile_summary``
-#: to Gauss-Hermite coefficients, over ``make_truths()`` at OMEGACAT's grid.
-#: Each entry is (slope, RMS scatter). Regenerate with ``measure_proxy_to_gh``
-#: if the truth library or the grid changes. Unlike SKEW_PER_H3 above, these
-#: are measured rather than derived, and the scatter is the honest statement
-#: of how shape-dependent the conversion is.
+#: to Gauss-Hermite coefficients, over ``make_truths()`` at OMEGACAT's grid,
+#: restricted to the amplitude envelope ``measure_proxy_to_gh``'s defaults
+#: describe (|h3| <= 0.15, |h4| <= 0.10). Each entry is (slope, scatter),
+#: where scatter is the standard deviation of per-truth GH/proxy ratios, not
+#: an RMS residual, so it reports shape dependence honestly rather than
+#: hiding it behind a fit dominated by a few extreme truths. Regenerate with
+#: ``measure_proxy_to_gh`` if the truth library or the grid changes. Do not
+#: apply this conversion outside the envelope it was measured over.
 PROXY_TO_GH = {
-    "skew_pct_to_h3": (1.6936106448127801, 0.01298993847881679),
-    "kurtosis_pct_to_h4": (1.5116752712084975, 0.023126076366835325),
+    "skew_pct_to_h3": (1.1913269380278009, 0.20728990309116752),
+    "kurtosis_pct_to_h4": (0.625306989336929, 1.488386043862474),
 }
 
 
@@ -873,7 +876,7 @@ def recovery_curve(
     return RecoveryCurve(profile=profile, sigma=sigma, rows=rows)
 
 
-def measure_proxy_to_gh(truths, sigma, n_bins, grid_width):
+def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0.10):
     """Measure the mapping from robust shape proxies to Gauss-Hermite h3/h4.
 
     ``SKEW_PER_H3`` and ``EXKURT_PER_H4`` at the top of this module are
@@ -887,6 +890,21 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width):
     No sampling and no MCMC: truths are evaluated exactly, so the result is
     a property of the statistics and the grid, not of any dataset.
 
+    The conversion is calibrated only within the amplitude envelope given by
+    ``max_h3``/``max_h4``, which defaults to the range ``make_truths()``'s own
+    docstring claims to span (``|h3| <~ 0.15``, ``|h4| <~ 0.05-0.1``). Truths
+    outside that envelope, such as ``bimodal_counter_rotation`` and
+    ``flat_top_tangential``, are strongly non-Gaussian, a low-order
+    Gauss-Hermite series is a poor description of them in the first place,
+    and their large amplitude would otherwise dominate an origin-fit slope
+    through ``sum(x * x)`` weighting. They are excluded from the fit, not
+    just down-weighted. Do not apply this conversion to curves with larger
+    non-Gaussianity than the envelope; ``bimodality_score`` is the right
+    diagnostic for those instead. Even within the envelope, at least one
+    truth in the library (``cold_disk_component``) has a proxy and a GH
+    coefficient of opposite sign, so the conversion is not reliable for
+    individual low-amplitude curves. It is a population-level guide only.
+
     Parameters
     ----------
     truths : list of Truth
@@ -897,17 +915,32 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width):
         Number of velocity bins.
     grid_width : float
         Full grid width, km/s.
+    max_h3 : float
+        Truths with ``abs(h3) > max_h3`` are excluded from the ``h3`` fit.
+        Filtering is per mapping: a truth can be in-range for ``h3`` and out
+        of range for ``h4``, or vice versa.
+    max_h4 : float
+        Truths with ``abs(h4) > max_h4`` are excluded from the ``h4`` fit.
 
     Returns
     -------
     dict
         ``'skew_pct_to_h3'`` and ``'kurtosis_pct_to_h4'``, each
-        ``(slope, scatter)``: the least-squares slope of GH coefficient
-        against proxy through the origin, and the RMS residual about it.
+        ``(slope, scatter)``.
 
-        The scatter matters as much as the slope. A large scatter means the
-        mapping is shape-dependent and the proxy should be reported on its own
-        terms rather than converted.
+        ``slope`` is the least-squares slope of GH coefficient against proxy
+        through the origin, fit only over truths that survive the amplitude
+        envelope for that mapping.
+
+        ``scatter`` is the standard deviation of the per-truth ratios
+        ``y / x`` (GH coefficient over proxy), computed only over surviving
+        truths with ``abs(x) > 1e-3`` (below that the ratio is numerically
+        meaningless, since several truths have a proxy of exactly 0 by
+        symmetry). This directly reports how shape-dependent the conversion
+        is, unlike an RMS residual about the fit, which can look small even
+        when the fit is dominated by a few extreme points. If fewer than 2
+        truths clear the ``1e-3`` threshold, ``scatter`` is ``float("nan")``
+        rather than a fabricated number.
 
     Raises
     ------
@@ -923,7 +956,8 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width):
     edges = np.linspace(-grid_width / 2.0, grid_width / 2.0, n_bins + 1)
     centers = 0.5 * (edges[:-1] + edges[1:])
 
-    proxies_skew, proxies_kurt, gh3, gh4 = [], [], [], []
+    proxies_skew, gh3 = [], []
+    proxies_kurt, gh4 = [], []
     for t in truths:
         pdf, _ = t.scaled(sigma)
         mass = np.asarray(pdf(centers), dtype=float)
@@ -937,12 +971,15 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width):
 
         pct = compute_percentile_summary(row, centers)
         gh = gauss_hermite_fit(row, centers, n_draws=2)
-        if not np.isfinite(gh["h3"][0]):
+        h3, h4 = gh["h3"][0], gh["h4"][0]
+        if not np.isfinite(h3):
             continue
-        proxies_skew.append(pct["skew_pct"][0])
-        proxies_kurt.append(pct["kurtosis_pct"][0])
-        gh3.append(gh["h3"][0])
-        gh4.append(gh["h4"][0])
+        if abs(h3) <= max_h3:
+            proxies_skew.append(pct["skew_pct"][0])
+            gh3.append(h3)
+        if abs(h4) <= max_h4:
+            proxies_kurt.append(pct["kurtosis_pct"][0])
+            gh4.append(h4)
 
     def _slope(x, y):
         x, y = np.asarray(x), np.asarray(y)
@@ -950,7 +987,14 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width):
         if denom == 0:
             return (float("nan"), float("nan"))
         slope = float(np.sum(x * y) / denom)
-        return (slope, float(np.sqrt(np.mean((y - slope * x) ** 2))))
+
+        big = np.abs(x) > 1e-3
+        if np.sum(big) < 2:
+            scatter = float("nan")
+        else:
+            ratios = y[big] / x[big]
+            scatter = float(np.std(ratios))
+        return (slope, scatter)
 
     return {
         "skew_pct_to_h3": _slope(proxies_skew, gh3),
