@@ -48,15 +48,29 @@ EXKURT_PER_H4 = 8.0 * np.sqrt(6.0)
 #: Measured mapping from the robust proxies in ``compute_percentile_summary``
 #: to Gauss-Hermite coefficients, over ``make_truths()`` at OMEGACAT's grid,
 #: restricted to the amplitude envelope ``measure_proxy_to_gh``'s defaults
-#: describe (|h3| <= 0.15, |h4| <= 0.10). Each entry is (slope, scatter),
-#: where scatter is the standard deviation of per-truth GH/proxy ratios, not
-#: an RMS residual, so it reports shape dependence honestly rather than
-#: hiding it behind a fit dominated by a few extreme truths. Regenerate with
-#: ``measure_proxy_to_gh`` if the truth library or the grid changes. Do not
-#: apply this conversion outside the envelope it was measured over.
+#: describe (|h3| <= 0.15, |h4| <= 0.10). Each entry is the dict
+#: ``measure_proxy_to_gh`` returns: ``slope``, ``median_ratio``,
+#: ``ratio_std``, ``n_truths``, ``outliers``. ``median_ratio`` is the number
+#: to apply in practice: it is robust to ``cold_disk_component``, whose
+#: proxy and GH coefficient have opposite sign and which both mappings flag
+#: as an ``outliers`` entry. Regenerate with ``measure_proxy_to_gh`` if the
+#: truth library or the grid changes. Do not apply this conversion outside
+#: the envelope it was measured over.
 PROXY_TO_GH = {
-    "skew_pct_to_h3": (1.1913269380278009, 0.20728990309116752),
-    "kurtosis_pct_to_h4": (0.625306989336929, 1.488386043862474),
+    "skew_pct_to_h3": {
+        "slope": 1.1913269380278009,
+        "median_ratio": 1.17612262772906,
+        "ratio_std": 0.20728990309116752,
+        "n_truths": 3,
+        "outliers": ["cold_disk_component"],
+    },
+    "kurtosis_pct_to_h4": {
+        "slope": 0.625306989336929,
+        "median_ratio": 0.6330000772983341,
+        "ratio_std": 1.628837233074273,
+        "n_truths": 5,
+        "outliers": ["cold_disk_component"],
+    },
 }
 
 
@@ -925,22 +939,46 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0
     Returns
     -------
     dict
-        ``'skew_pct_to_h3'`` and ``'kurtosis_pct_to_h4'``, each
-        ``(slope, scatter)``.
+        ``'skew_pct_to_h3'`` and ``'kurtosis_pct_to_h4'``, each a dict with:
 
-        ``slope`` is the least-squares slope of GH coefficient against proxy
-        through the origin, fit only over truths that survive the amplitude
-        envelope for that mapping.
+        ``slope``
+            Least-squares slope of GH coefficient against proxy through the
+            origin, fit only over truths that survive the amplitude envelope
+            for that mapping.
+        ``median_ratio``
+            Median of the per-truth ratios ``y / x`` (GH coefficient over
+            proxy), over included truths with ``abs(x) > 3e-3`` (below that
+            the ratio is numerically meaningless: several truths have a
+            proxy of exactly 0 by symmetry, and the ``3e-3`` cut also
+            excludes ``gaussian``'s grid-discretisation residual while
+            keeping ``cold_disk_component`` in). This is the number to apply
+            in practice, because unlike ``slope`` it is robust to a single
+            sign-flipped truth.
+        ``ratio_std``
+            Standard deviation of those same ratios. Kept alongside
+            ``median_ratio`` so no information is lost, but do not read it
+            as "the mapping is uncertain by this much": a single outlier
+            truth can dominate it while the rest of the population is tight
+            (see ``outliers`` below).
+        ``n_truths``
+            Number of truths whose ratio entered the ``median_ratio`` and
+            ``ratio_std`` statistics.
+        ``outliers``
+            Names of included truths whose ratio is more than 3 scaled
+            median-absolute-deviations (MAD * 1.4826) from ``median_ratio``.
+            Computed, not hardcoded, so it stays correct if the truth
+            library changes. Empty if the MAD is zero (all ratios equal) or
+            if there are too few truths to define an outlier.
 
-        ``scatter`` is the standard deviation of the per-truth ratios
-        ``y / x`` (GH coefficient over proxy), computed only over surviving
-        truths with ``abs(x) > 1e-3`` (below that the ratio is numerically
-        meaningless, since several truths have a proxy of exactly 0 by
-        symmetry). This directly reports how shape-dependent the conversion
-        is, unlike an RMS residual about the fit, which can look small even
-        when the fit is dominated by a few extreme points. If fewer than 2
-        truths clear the ``1e-3`` threshold, ``scatter`` is ``float("nan")``
-        rather than a fabricated number.
+        A large ``ratio_std`` relative to ``median_ratio`` (as for
+        ``kurtosis_pct_to_h4``, where ``cold_disk_component`` disagrees in
+        sign with the rest) means the mapping is genuinely shape-dependent
+        for that one truth, not that it is universally loose. This directly
+        reports how shape-dependent the conversion is, unlike an RMS
+        residual about the fit, which can look small even when the fit is
+        dominated by a few extreme points. If fewer than 2 truths clear the
+        ``3e-3`` threshold, ``median_ratio`` and ``ratio_std`` are
+        ``float("nan")`` rather than fabricated numbers.
 
     Raises
     ------
@@ -956,8 +994,8 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0
     edges = np.linspace(-grid_width / 2.0, grid_width / 2.0, n_bins + 1)
     centers = 0.5 * (edges[:-1] + edges[1:])
 
-    proxies_skew, gh3 = [], []
-    proxies_kurt, gh4 = [], []
+    names_skew, proxies_skew, gh3 = [], [], []
+    names_kurt, proxies_kurt, gh4 = [], [], []
     for t in truths:
         pdf, _ = t.scaled(sigma)
         mass = np.asarray(pdf(centers), dtype=float)
@@ -975,28 +1013,54 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0
         if not np.isfinite(h3):
             continue
         if abs(h3) <= max_h3:
+            names_skew.append(t.name)
             proxies_skew.append(pct["skew_pct"][0])
             gh3.append(h3)
         if abs(h4) <= max_h4:
+            names_kurt.append(t.name)
             proxies_kurt.append(pct["kurtosis_pct"][0])
             gh4.append(h4)
 
-    def _slope(x, y):
+    def _mapping(names, x, y):
+        names = np.asarray(names)
         x, y = np.asarray(x), np.asarray(y)
-        denom = float(np.sum(x * x))
-        if denom == 0:
-            return (float("nan"), float("nan"))
-        slope = float(np.sum(x * y) / denom)
 
-        big = np.abs(x) > 1e-3
-        if np.sum(big) < 2:
-            scatter = float("nan")
+        denom = float(np.sum(x * x))
+        slope = float(np.sum(x * y) / denom) if denom != 0 else float("nan")
+
+        big = np.abs(x) > 3e-3
+        ratios = y[big] / x[big]
+        ratio_names = names[big]
+        n_truths = int(ratios.size)
+
+        if n_truths < 2:
+            return {
+                "slope": slope,
+                "median_ratio": float("nan"),
+                "ratio_std": float("nan"),
+                "n_truths": n_truths,
+                "outliers": [],
+            }
+
+        median_ratio = float(np.median(ratios))
+        ratio_std = float(np.std(ratios))
+        mad = float(np.median(np.abs(ratios - median_ratio)))
+        scaled_mad = 1.4826 * mad
+        if scaled_mad == 0:
+            outliers = []
         else:
-            ratios = y[big] / x[big]
-            scatter = float(np.std(ratios))
-        return (slope, scatter)
+            outlier_mask = np.abs(ratios - median_ratio) > 3 * scaled_mad
+            outliers = sorted(ratio_names[outlier_mask].tolist())
+
+        return {
+            "slope": slope,
+            "median_ratio": median_ratio,
+            "ratio_std": ratio_std,
+            "n_truths": n_truths,
+            "outliers": outliers,
+        }
 
     return {
-        "skew_pct_to_h3": _slope(proxies_skew, gh3),
-        "kurtosis_pct_to_h4": _slope(proxies_kurt, gh4),
+        "skew_pct_to_h3": _mapping(names_skew, proxies_skew, gh3),
+        "kurtosis_pct_to_h4": _mapping(names_kurt, proxies_kurt, gh4),
     }

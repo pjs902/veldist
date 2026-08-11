@@ -15,13 +15,13 @@ def test_proxy_to_gh_slopes_are_positive_and_finite():
         grid_width=OMEGACAT.grid_width,
     )
 
-    skew_slope, skew_scatter = result["skew_pct_to_h3"]
-    kurt_slope, kurt_scatter = result["kurtosis_pct_to_h4"]
+    skew = result["skew_pct_to_h3"]
+    kurt = result["kurtosis_pct_to_h4"]
 
-    assert skew_slope > 0
-    assert kurt_slope > 0
-    assert np.isfinite(skew_scatter)
-    assert np.isfinite(kurt_scatter)
+    assert skew["slope"] > 0
+    assert kurt["slope"] > 0
+    assert np.isfinite(skew["ratio_std"])
+    assert np.isfinite(kurt["ratio_std"])
 
 
 def test_proxy_to_gh_is_deterministic():
@@ -31,7 +31,7 @@ def test_proxy_to_gh_is_deterministic():
     a = measure_proxy_to_gh(make_truths(), **kwargs)
     b = measure_proxy_to_gh(make_truths(), **kwargs)
 
-    assert a["skew_pct_to_h3"][0] == b["skew_pct_to_h3"][0]
+    assert a["skew_pct_to_h3"]["slope"] == b["skew_pct_to_h3"]["slope"]
 
 
 def test_proxy_to_gh_needs_at_least_two_truths():
@@ -67,13 +67,13 @@ def test_kurtosis_slope_matches_realistic_amplitude_ratio():
         pct = compute_percentile_summary(row, centers)
         gh = gauss_hermite_fit(row, centers, n_draws=2)
         h4, x = gh["h4"][0], pct["kurtosis_pct"][0]
-        if np.isfinite(h4) and abs(h4) <= max_h4 and abs(x) > 1e-3:
+        if np.isfinite(h4) and abs(h4) <= max_h4 and abs(x) > 3e-3:
             ratios.append(h4 / x)
 
     median_ratio = float(np.median(ratios))
 
     result = measure_proxy_to_gh(truths, sigma=sigma, n_bins=n_bins, grid_width=grid_width, max_h4=max_h4)
-    slope, _ = result["kurtosis_pct_to_h4"]
+    slope = result["kurtosis_pct_to_h4"]["slope"]
 
     assert 0.5 < slope / median_ratio < 1.5
 
@@ -89,4 +89,19 @@ def test_out_of_envelope_truth_is_excluded():
     with_it = measure_proxy_to_gh(truths, **kwargs)
     without_it = measure_proxy_to_gh(without_bimodal, **kwargs)
 
-    assert with_it["kurtosis_pct_to_h4"][0] == without_it["kurtosis_pct_to_h4"][0]
+    assert with_it["kurtosis_pct_to_h4"]["slope"] == without_it["kurtosis_pct_to_h4"]["slope"]
+
+
+def test_cold_disk_component_flagged_as_kurtosis_outlier():
+    """cold_disk_component's proxy and h4 have opposite sign, a genuine
+    physical exception among otherwise tightly clustered ratios. It must be
+    named in 'outliers' so the exception is machine-readable, not just
+    prose in the docstring."""
+    result = measure_proxy_to_gh(
+        make_truths(),
+        sigma=OMEGACAT.sigma_max,
+        n_bins=OMEGACAT.n_bins,
+        grid_width=OMEGACAT.grid_width,
+    )
+
+    assert "cold_disk_component" in result["kurtosis_pct_to_h4"]["outliers"]
