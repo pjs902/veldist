@@ -249,6 +249,60 @@ Empty bins are excluded and reported separately. They are dominated by the
 relative uncertainty floor and over-cover trivially at ~0.88, so averaging them
 in would manufacture a passing number.
 
+## The measured observing profile
+
+`veldist.calibration.OMEGACAT` was originally a hand-typed guess at the
+observing regime of the project's target dataset. It has now been measured
+directly from real data via `ObservingProfile.from_data`, using the
+oMEGACat line-of-sight catalogue. After the standard quality cuts
+(`selection_hq_los` and `selection_hq_astrometry_and_membership`), 24,925
+stars remain out of 717,934 rows. The fitted profile is committed at
+`tests/data/omegacat_profile.json`.
+
+| Parameter | Measured | Hand-typed (`OMEGACAT`) |
+|---|---|---|
+| `err_median` | 4.00 km/s | 2.5 km/s |
+| `err_log_sigma` | 0.62 | 0.4 |
+| `sigma_max` | 19.04 km/s | 22.0 km/s |
+| `sigma_min` | 13.37 km/s | 7.0 km/s |
+| `rotation_span` | 6.99 km/s | 10.0 km/s |
+
+**The most important consequence, stated plainly.** The hand-typed
+`sigma_min = 7` km/s treated a narrow-dispersion regime as the campaign's
+hardest case, and that regime does not exist in this dataset: the real
+minimum is 13.37 km/s. Meanwhile the easiest case is harder than assumed.
+Measured `err/sigma` spans 0.21 to 0.30, against the assumed 0.11 to 0.36.
+So the validation swept a wider difficulty range than reality and centred
+it in the wrong place. Nothing already measured is invalidated by this,
+but any argument of the form "it passes even in the hardest bin" was made
+against a bin that does not occur.
+
+**Information content of real bins.** Using `sigma_ref = 19.04`, per-bin
+ivar spans 0.389 to 0.410 with a median of 0.393. `ivar / n_stars` varies
+by only 1.1 percent across the field, because `err` of about 4 km/s
+against `sigma` of about 19 km/s means `err^2` is much smaller than
+`sigma^2` everywhere, so ivar reduces to `N / sigma^2`. The outer third of
+bins is tighter still, not looser.
+
+**Therefore, for this dataset, information-content binning and
+star-count binning are equivalent**, and the measured threshold can be
+applied as a star count. `veldist.binning` remains useful for datasets
+where measurement errors do approach the intrinsic dispersion, and
+`min_ivar` in `fit_all_bins` is the honest way to express the cut
+regardless of dataset.
+
+**One caveat.** The measurement used radial annuli of about 150 stars as
+a stand-in for the real Voronoi tessellation, because the catalogue
+carries no stored bin assignment. Bin-to-bin ivar constancy is therefore
+partly by construction. The `ivar / n_stars` normalisation is what makes
+the conclusion robust to that, but a check against the true Voronoi bins
+would settle it.
+
+**What this implies for the outstanding campaign.** The sweep should
+bracket the real value: roughly ivar 0.1 to 3.2 with points concentrated
+near 0.39, run at sigma 13.4 and 19.0. Not the originally planned 0.05 to
+15 at sigma 7 and 22.
+
 ## Comparison against a Gaussian MLE baseline
 
 `veldist.baseline.gaussian_mle` maximises

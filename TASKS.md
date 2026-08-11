@@ -299,6 +299,19 @@ h3/h4 limitation honestly rather than engineering around it.
   before any campaign compute is spent, not from the plan's placeholder
   range.
 
+- **[2026-08-11] Real `ObservingProfile` measured from oMEGACat.** Fitted via
+  `ObservingProfile.from_data` on the real oMEGACat line-of-sight catalogue
+  (24,925 stars after quality cuts, out of 717,934 rows). Fixture committed
+  at `tests/data/omegacat_profile.json`. See `docs/validation.md` "The
+  measured observing profile" for the full comparison against the hand-typed
+  `OMEGACAT` constant and its implications for the recovery-curve sweep.
+  **Outstanding decision:** whether to update the `OMEGACAT` constant in
+  `src/veldist/calibration.py` to these measured values. Not done as part of
+  this task, since every result currently in `docs/validation.md` was
+  computed under the hand-typed values and changing the constant would
+  silently invalidate them and alter the velocity grid used by the existing
+  calibration tests. Left for the project owner to decide.
+
 ## Ruled out by measurement — do not re-raise
 
 - **Mode-order split scale — measured, does not work.** (2026-08-04, prior
