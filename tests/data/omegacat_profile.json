@@ -1,0 +1,11 @@
+{
+  "bins_per_error": 2.0,
+  "err_log_sigma": 0.6205365287022409,
+  "err_median": 3.95,
+  "n_sigma_grid": 4.0,
+  "n_stars": 150,
+  "name": "oMEGACat",
+  "rotation_span": 6.993052256895851,
+  "sigma_max": 19.041621204109745,
+  "sigma_min": 13.365819479642264
+}

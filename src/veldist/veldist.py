@@ -1153,7 +1153,16 @@ def _snap_grid(center, width, output_edges):
     }
 
 
-def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, match_grid=None, show_progress=True):
+def fit_all_bins(
+    bin_data_list,
+    grid_kwargs,
+    run_kwargs=None,
+    min_stars=10,
+    min_ivar=None,
+    sigma_ref=None,
+    match_grid=None,
+    show_progress=True,
+):
     """
     Run the full inference pipeline for a list of Voronoi bins.
 
@@ -1194,6 +1203,17 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, matc
     min_stars : int
         Minimum number of stars required to attempt inference.  Bins with
         fewer stars are skipped with a warning.  Default 10.
+    min_ivar : float, optional
+        Minimum information content ``sum_i 1/(sigma_ref^2 + err_i^2)`` for a
+        bin to be fitted. Applied *in addition* to ``min_stars``. Unlike a
+        star count, this accounts for heterogeneous measurement errors: a bin
+        of many noisy stars can clear ``min_stars`` and still constrain
+        nothing. Measure an appropriate value with
+        ``veldist.calibration.recovery_curve(...).threshold('sigma')`` rather
+        than guessing. Requires ``sigma_ref``.
+    sigma_ref : float, optional
+        Representative LOSVD dispersion, km/s, used only to evaluate
+        ``min_ivar``. Required when ``min_ivar`` is given.
     match_grid : ObservingProfile, optional
         If given, each bin is *fitted* on a narrower grid matched to its own
         dispersion (via :meth:`~veldist.calibration.ObservingProfile.matched_grid`,
@@ -1228,6 +1248,10 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, matc
     >>> # Pass to the output writer (Task 2):
     >>> solver.write_dynamite_kinematics(output_dir, voronoi_bin_metadata)
     """
+    if min_ivar is not None and sigma_ref is None:
+        msg = "sigma_ref is required when min_ivar is given"
+        raise ValueError(msg)
+
     if run_kwargs is None:
         run_kwargs = {}
 
@@ -1269,6 +1293,17 @@ def fit_all_bins(bin_data_list, grid_kwargs, run_kwargs=None, min_stars=10, matc
             )
             solvers.append(None)
             continue
+
+        if min_ivar is not None:
+            bin_ivar = float(np.sum(1.0 / (sigma_ref**2 + np.asarray(err, dtype=float) ** 2)))
+            if bin_ivar < min_ivar:
+                warnings.warn(
+                    f"Bin {i} has information content {bin_ivar:.3g} "
+                    f"(minimum is {min_ivar:.3g}). Skipping.",
+                    stacklevel=2,
+                )
+                solvers.append(None)
+                continue
 
         solver = KinematicSolver()
         if match_grid is None:

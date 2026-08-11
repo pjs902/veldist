@@ -17,6 +17,7 @@ import numpy as np
 import pytest
 from astropy.table import Table
 
+import veldist
 from veldist.analysis import compute_summary
 from veldist.calibration import OMEGACAT
 from veldist.veldist import (
@@ -533,3 +534,50 @@ class TestWriteDynamiteKinematics:
         table = Table.read(str(kin_path), format="ascii.ecsv")
         assert len(table) == 1
         assert "losvd_0" in table.colnames
+
+
+def test_fit_all_bins_min_ivar_skips_uninformative_bins(monkeypatch):
+    """A bin can clear min_stars and still carry too little information."""
+    import veldist.veldist as vd
+
+    calls = []
+
+    class FakeSolver:
+        def setup_grid(self, **kw):
+            pass
+
+        def add_data(self, vel, err):
+            calls.append(len(vel))
+
+        def run(self, **kw):
+            pass
+
+        def clip_uncertainties(self):
+            pass
+
+    monkeypatch.setattr(vd, "KinematicSolver", FakeSolver)
+
+    rng = np.random.default_rng(0)
+    informative = {"vel": rng.normal(0, 10, 200), "err": np.full(200, 1.0)}
+    uninformative = {"vel": rng.normal(0, 10, 20), "err": np.full(20, 40.0)}
+
+    solvers = vd.fit_all_bins(
+        [informative, uninformative],
+        grid_kwargs={"center": 0.0, "width": 200.0, "n_bins": 50},
+        min_ivar=1.0,
+        sigma_ref=10.0,
+        show_progress=False,
+    )
+
+    assert solvers[0] is not None
+    assert solvers[1] is None
+
+
+def test_fit_all_bins_min_ivar_requires_sigma_ref():
+    with pytest.raises(ValueError, match="sigma_ref"):
+        veldist.fit_all_bins(
+            [{"vel": np.zeros(50), "err": np.ones(50)}],
+            grid_kwargs={"center": 0.0, "width": 200.0, "n_bins": 50},
+            min_ivar=1.0,
+            show_progress=False,
+        )

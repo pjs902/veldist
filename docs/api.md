@@ -18,6 +18,23 @@
    :show-inheritance:
 ```
 
+### Shape statistics
+
+`compute_summary`, `compute_percentile_summary`, and `gauss_hermite_fit` are
+three separate, non-interchangeable families of shape statistics; see
+{doc}`examples` for how to choose between them.
+
+```{eval-rst}
+.. autofunction:: veldist.analysis.compute_summary
+   :no-index:
+.. autofunction:: veldist.analysis.compute_percentile_summary
+   :no-index:
+.. autofunction:: veldist.analysis.compute_percentile_summary_maps
+   :no-index:
+.. autofunction:: veldist.analysis.gauss_hermite_fit
+   :no-index:
+```
+
 ## 1D Calibration Module
 
 ```{eval-rst}

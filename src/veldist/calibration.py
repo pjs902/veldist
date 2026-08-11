@@ -15,7 +15,9 @@ Typical use::
     print(result.summary())
 """
 
-from dataclasses import dataclass, field
+import json
+from dataclasses import dataclass, field, fields
+from pathlib import Path
 from collections.abc import Callable
 
 import numpy as np
@@ -32,6 +34,8 @@ __all__ = [
     "METRICS",
     "CalibrationResult",
     "calibrate",
+    "PROXY_TO_GH",
+    "measure_proxy_to_gh",
 ]
 
 # Gauss-Hermite conversions, lowest order (van der Marel & Franx 1993).
@@ -40,6 +44,41 @@ __all__ = [
 # amplitude conversions, not as a route to DYNAMITE inputs.
 SKEW_PER_H3 = 4.0 * np.sqrt(3.0)
 EXKURT_PER_H4 = 8.0 * np.sqrt(6.0)
+
+#: Measured mapping from the robust proxies in ``compute_percentile_summary``
+#: to Gauss-Hermite coefficients, over ``make_truths()`` at OMEGACAT's grid,
+#: restricted to the amplitude envelope ``measure_proxy_to_gh``'s defaults
+#: describe (|h3| <= 0.15, |h4| <= 0.10). Each entry is the dict
+#: ``measure_proxy_to_gh`` returns: ``slope``, ``median_ratio``,
+#: ``ratio_std``, ``n_truths``, ``outliers``. ``median_ratio`` is the number
+#: to apply in practice: it is robust to ``cold_disk_component``, whose
+#: proxy and GH coefficient have opposite sign and which both mappings flag
+#: as an ``outliers`` entry. Regenerate with ``measure_proxy_to_gh`` if the
+#: truth library or the grid changes. Do not apply this conversion outside
+#: the envelope it was measured over. The two mappings are not equally
+#: trustworthy: ``kurtosis_pct_to_h4`` rests on 5 ratio-eligible truths and
+#: its flagged outlier, ``cold_disk_component``, has an unambiguous sign
+#: flip. ``skew_pct_to_h3`` rests on only 3 ratio-eligible truths, one of
+#: which is that same flagged outlier, and a MAD outlier test on 3 points
+#: has very little power, so the h3 ``median_ratio`` and its ``outliers``
+#: entry should be read with substantially less confidence than the h4
+#: ones.
+PROXY_TO_GH = {
+    "skew_pct_to_h3": {
+        "slope": 1.1913269380278009,
+        "median_ratio": 1.17612262772906,
+        "ratio_std": 0.20728990309116752,
+        "n_truths": 3,
+        "outliers": ["cold_disk_component"],
+    },
+    "kurtosis_pct_to_h4": {
+        "slope": 0.625306989336929,
+        "median_ratio": 0.6330000772983341,
+        "ratio_std": 1.628837233074273,
+        "n_truths": 5,
+        "outliers": ["cold_disk_component"],
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -79,6 +118,68 @@ class ObservingProfile:
         find the *floor* matters more than the spread for kurtosis sign
         determination."""
         return np.exp(rng.normal(np.log(self.err_median), self.err_log_sigma, size=n))
+
+    @staticmethod
+    def ivar(sigma, err):
+        """Total Fisher information on the mean velocity, for these stars.
+
+        Deliberately ``1/(sigma^2 + err_i^2)`` and not ``1/err_i^2``: a star's
+        velocity is informative about the LOSVD centroid only up to the
+        intrinsic spread it is drawn from, so the relevant variance is that of
+        the *observed* velocity. Using ``1/err_i^2`` would claim unbounded
+        information from perfectly measured stars, which is wrong, and would
+        make the resulting bins far too small.
+
+        The reciprocal square root of this quantity is the Cramer-Rao bound on
+        ``v_mean``, which is what makes it the natural target for spatial
+        binning: ``ivar = 1`` means ``v_mean`` good to 1 km/s.
+        """
+        err = np.asarray(err, dtype=float)
+        return float(np.sum(1.0 / (sigma**2 + err**2)))
+
+    def draw_sample(self, target_ivar, sigma, rng):
+        """Draw per-star errors until the bin reaches *target_ivar*.
+
+        The recovery curve varies information content while holding the error
+        distribution fixed, so the star count is an output here, not an input.
+        That inversion is the point: it is what lets the sweep report a
+        threshold in units that transfer between datasets with different
+        error properties.
+
+        Parameters
+        ----------
+        target_ivar : float
+            Required total ``ivar``. Must be positive.
+        sigma : float
+            LOSVD dispersion, km/s.
+        rng : numpy.random.Generator
+
+        Returns
+        -------
+        ndarray
+            Per-star measurement errors, km/s. The smallest number of stars
+            whose total ``ivar`` reaches the target, so the total slightly
+            overshoots by at most one star's contribution.
+
+        Raises
+        ------
+        ValueError
+            If *target_ivar* is not positive.
+        """
+        if target_ivar <= 0:
+            msg = "target_ivar must be positive"
+            raise ValueError(msg)
+
+        # Each star contributes at most 1/sigma^2 (in the zero-error limit),
+        # so this many stars is a guaranteed lower bound on what is needed.
+        chunk = max(16, int(np.ceil(target_ivar * sigma**2)))
+        err = np.empty(0)
+        while True:
+            err = np.concatenate([err, self.draw_errors(chunk, rng)])
+            contrib = 1.0 / (sigma**2 + err**2)
+            reached = np.searchsorted(np.cumsum(contrib), target_ivar)
+            if reached < len(err):
+                return err[: reached + 1]
 
     @property
     def sigma_ref(self) -> float:
@@ -157,6 +258,88 @@ class ObservingProfile:
             f"    h3 {p['h3']:.3f}          h4 {p['h4']:.3f}",
         ]
         return "\n".join(lines)
+
+    @classmethod
+    def from_data(cls, vel, err, bin_ids, name="measured", min_stars=10):
+        """Measure a profile from a real catalogue.
+
+        Every parameter of this class was originally hand-typed (see
+        ``OMEGACAT``), which meant the mock suite validated the method against
+        a guess about the data rather than the data. This measures them
+        instead. Only scalars come out, so the result is safe to commit as a
+        test fixture even when the catalogue itself is not redistributable.
+
+        Per-bin dispersions come from ``gaussian_mle`` rather than
+        ``numpy.std``: the latter returns ``sqrt(sigma^2 + err^2)``, which
+        would inflate ``sigma_min`` most in exactly the low-dispersion bins
+        that set the hardest deconvolution regime.
+
+        Parameters
+        ----------
+        vel, err : array-like, shape (n_stars,)
+            Velocities and per-star uncertainties for the whole field, km/s.
+        bin_ids : array-like, shape (n_stars,)
+            Spatial bin index for each star. Values need not be contiguous.
+        name : str
+            Label carried into the returned profile.
+        min_stars : int
+            Bins with fewer stars are excluded from the dispersion and
+            rotation estimates.
+
+        Returns
+        -------
+        ObservingProfile
+
+        Raises
+        ------
+        ValueError
+            If fewer than 2 bins survive the *min_stars* cut.
+        """
+        from veldist.baseline import gaussian_mle
+
+        vel = np.asarray(vel, dtype=float)
+        err = np.asarray(err, dtype=float)
+        bin_ids = np.asarray(bin_ids)
+
+        sigmas, means, counts = [], [], []
+        for b in np.unique(bin_ids):
+            sel = bin_ids == b
+            if int(np.sum(sel)) < min_stars:
+                continue
+            fit = gaussian_mle(vel[sel], err[sel])
+            sigmas.append(fit["sigma"])
+            means.append(fit["v_mean"])
+            counts.append(int(np.sum(sel)))
+
+        if len(sigmas) < 2:
+            msg = f"at least 2 bins with >= {min_stars} stars are required, got {len(sigmas)}"
+            raise ValueError(msg)
+
+        sigmas = np.asarray(sigmas)
+        means = np.asarray(means)
+
+        log_err = np.log(err)
+        # Percentile-based sigma_min/max rather than the extremes: one badly
+        # fit bin should not set the grid width for the entire campaign.
+        return cls(
+            name=name,
+            n_stars=int(round(float(np.median(counts)))),
+            err_median=float(np.median(err)),
+            err_log_sigma=float(np.std(log_err)),
+            sigma_max=float(np.percentile(sigmas, 95)),
+            sigma_min=float(np.percentile(sigmas, 5)),
+            rotation_span=float(np.ptp(means)),
+        )
+
+    def to_json(self, path):
+        """Write this profile to an indented JSON file."""
+        payload = {f.name: getattr(self, f.name) for f in fields(self)}
+        Path(path).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+    @classmethod
+    def from_json(cls, path):
+        """Read a profile written by :meth:`to_json`."""
+        return cls(**json.loads(Path(path).read_text()))
 
 
 #: The oMEGACat dataset: HST+MUSE within omega Cen's half-light radius.
@@ -469,3 +652,437 @@ def calibrate(
         medians[t.name] = {m: list(meds[m]) for m in METRICS}
 
     return CalibrationResult(profile, sigma, coverage, medians, tvals)
+
+
+#: Metrics tracked by the recovery curve. ``v_mean`` and ``sigma`` are the
+#: gating pair per ``TASKS.md``; the shape metrics are reported for interest
+#: and are expected to need far more information before they calibrate.
+RECOVERY_METRICS = ["v_mean", "sigma", "skewness", "kurtosis"]
+
+
+@dataclass
+class RecoveryCurve:
+    """How well each statistic is recovered as a function of information content.
+
+    The question this answers is the one behind both ``min_stars=10`` and any
+    spatial binning target: how much information does a bin need before the
+    posterior can be believed? Answering it empirically, in units of Fisher
+    information rather than star count, gives a threshold that transfers to
+    datasets with different measurement errors.
+
+    Notes
+    -----
+    The ``cr_bound`` column is exact for ``v_mean`` by construction (the
+    swept ``ivar`` IS the Fisher information of the mean). For ``sigma``,
+    ``skewness`` and ``kurtosis`` it uses an equal-error Gaussian
+    approximation built from the same effective sample size, which is exact
+    only for homogeneous per-star errors. With the heterogeneous errors this
+    package actually fits, that approximation is indicative rather than
+    exact, so treat the CI/CR ratio for those three metrics as a rough
+    efficiency check, not a precise one.
+    """
+
+    profile: object
+    sigma: float
+    rows: list
+
+    def threshold(self, metric, min_coverage=0.60, max_ci_ratio=1.5):
+        """Smallest ``ivar`` at which *metric* is trustworthy, or ``None``.
+
+        Trustworthy means two things at once, because either alone is
+        gameable: coverage at least *min_coverage* (an interval that contains
+        the truth often enough) **and** a credible interval no wider than
+        *max_ci_ratio* times the Cramer-Rao bound (an interval that is not
+        merely wide enough to contain everything).
+
+        A point qualifies only if every higher-``ivar`` point also qualifies,
+        so a single lucky low-information point cannot set the threshold.
+
+        Parameters
+        ----------
+        metric : str
+            One of :data:`RECOVERY_METRICS`.
+        min_coverage : float
+            Required empirical coverage of the nominal 68% interval. The
+            default of 0.60 is a deliberately loose lower edge for the
+            realisation counts a sweep can afford; tighten it if ``n_real``
+            is large.
+        max_ci_ratio : float
+            Required efficiency, as a multiple of the Cramer-Rao bound.
+
+        Returns
+        -------
+        float or None
+            ``None`` if no swept ``ivar`` value qualifies, which means the
+            sweep did not reach high enough information content.
+
+        Raises
+        ------
+        ValueError
+            If *metric* appears in no row.
+        """
+        sel = [r for r in self.rows if r["metric"] == metric]
+        if not sel:
+            msg = f"no rows for metric {metric!r}"
+            raise ValueError(msg)
+
+        by_ivar = {}
+        for r in sel:
+            by_ivar.setdefault(r["ivar"], []).append(r)
+
+        def ok(rows):
+            return all(
+                r["coverage"] >= min_coverage and r["ci_width"] <= max_ci_ratio * r["cr_bound"] for r in rows
+            )
+
+        ivars = sorted(by_ivar)
+        # Walk down from the top while the run of passes stays unbroken. The
+        # answer is None unless that walk actually advances past the top
+        # point, so a failing top ivar with a lower, non-adjacent pass never
+        # gets returned.
+        best = None
+        for iv in reversed(ivars):
+            if not ok(by_ivar[iv]):
+                break
+            best = iv
+        return best
+
+    def report(self):
+        """Human-readable table, one block per metric."""
+        lines = [
+            f"RecoveryCurve: {self.profile.name} @ sigma={self.sigma:.0f} km/s",
+            f"  {len({r['truth'] for r in self.rows})} truth shape(s), "
+            f"{len({r['ivar'] for r in self.rows})} ivar value(s)",
+        ]
+        for metric in [m for m in RECOVERY_METRICS if any(r["metric"] == m for r in self.rows)]:
+            t = self.threshold(metric)
+            metric_ivars = sorted({r["ivar"] for r in self.rows if r["metric"] == metric})
+            note = ""
+            if t is not None and metric_ivars:
+                if t == metric_ivars[0]:
+                    note = " (at the bottom of the swept range, true threshold may be lower)"
+                elif t == metric_ivars[-1]:
+                    note = " (at the top of the swept range, may not be bracketed)"
+            lines.append(
+                f"  {metric}: threshold ivar = " + ("not reached" if t is None else f"{t:.3g}{note}")
+            )
+            lines.append("    ivar    truth              cover  CI/CR  CI/base  bias")
+            for r in sorted([x for x in self.rows if x["metric"] == metric], key=lambda x: (x["ivar"], x["truth"])):
+                ratio = r["ci_width"] / r["cr_bound"] if r["cr_bound"] > 0 else float("nan")
+                base = r["ci_width"] / r["baseline_ci_width"] if r["baseline_ci_width"] > 0 else float("nan")
+                lines.append(
+                    f"    {r['ivar']:<7.3g} {r['truth']:<18s} {r['coverage']:5.2f}  "
+                    f"{ratio:5.2f}  {base:7.2f}  {r['bias']:+.3f}"
+                )
+        return "\n".join(lines)
+
+
+def recovery_curve(
+    profile,
+    truths,
+    ivar_values,
+    sigma=None,
+    *,
+    n_real=50,
+    seed=20260811,
+    num_warmup=300,
+    num_samples=600,
+    prior="gaussian_core",
+):
+    """Sweep information content and measure bias, coverage, and efficiency.
+
+    For each ``ivar`` in *ivar_values* and each truth, draws *n_real* mock
+    realisations sized to hit that information content, fits each with
+    ``KinematicSolver`` and with the ``gaussian_mle`` baseline, and records
+    per metric: the median bias, the empirical coverage of the nominal 68%
+    interval, the mean credible-interval width, the Cramer-Rao bound, and the
+    baseline's interval width.
+
+    The Cramer-Rao column is what makes the result actionable. Coverage alone
+    can be bought by inflating uncertainties; the ratio of interval width to
+    the bound says whether the method is actually extracting the information
+    present.
+
+    ``sigma`` defaults to ``profile.sigma_max``. **Run it at
+    ``profile.sigma_min`` too** for the same reason ``calibrate`` says so:
+    across omega Cen's range ``err/sigma`` spans 0.11 to 0.36 and a
+    regularisation calibrated at one end need not hold at the other.
+
+    Cost is ``len(ivar_values) * len(truths) * n_real`` NUTS runs. At the
+    defaults with 6 ivar values and 3 truths that is 900 runs, several hours.
+    Reduce *n_real* for a smoke test; do not reduce it for a result.
+
+    ``cr_bound`` is exact for ``v_mean`` only, since *target_ivar* IS its
+    Fisher information. For ``sigma``, ``skewness`` and ``kurtosis`` it is an
+    equal-error Gaussian approximation via ``n_eff = target_ivar * sigma**2``.
+    With heteroscedastic errors that ``n_eff`` is a centroid-weighted
+    effective sample size and is not the correct effective N for a second or
+    fourth moment, which weight the per-star variances differently, so it is
+    optimistic for those three and the reported CI over CR ratio
+    UNDERSTATES their inefficiency. See the ``RecoveryCurve`` Notes.
+
+    Parameters
+    ----------
+    profile : ObservingProfile
+    truths : list of Truth
+    ivar_values : sequence of float
+        Information contents to sweep, as returned by ``ObservingProfile.ivar``.
+    sigma : float, optional
+        LOSVD dispersion for the mocks. Defaults to ``profile.sigma_max``.
+    n_real : int
+        Mock realisations per (ivar, truth) cell.
+    seed : int
+    num_warmup, num_samples, prior
+        Passed through to ``KinematicSolver.run``.
+
+    Returns
+    -------
+    RecoveryCurve
+    """
+    from veldist.analysis import compute_summary
+    from veldist.baseline import gaussian_mle
+    from veldist.veldist import KinematicSolver
+
+    sigma = profile.sigma_max if sigma is None else sigma
+    rows = []
+
+    for target_ivar in ivar_values:
+        for t in truths:
+            pdf, rvs = t.scaled(sigma)
+            tv = true_moments(pdf)
+            hits = {m: 0 for m in RECOVERY_METRICS}
+            meds = {m: [] for m in RECOVERY_METRICS}
+            widths = {m: [] for m in RECOVERY_METRICS}
+            base_widths = {"v_mean": [], "sigma": []}
+            rng = np.random.default_rng(seed)
+
+            for i in range(n_real):
+                err = profile.draw_sample(target_ivar, sigma, rng)
+                n = len(err)
+                obs = rvs(n, rng) + rng.normal(0.0, err)
+
+                solver = KinematicSolver()
+                solver.setup_grid(center=0.0, width=profile.grid_width, n_bins=profile.n_bins)
+                solver.add_data(obs, err)
+                solver.run(num_warmup=num_warmup, num_samples=num_samples, seed=seed + i, prior=prior)
+                summ = compute_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
+
+                for m in RECOVERY_METRICS:
+                    med, h68 = summ[m]
+                    meds[m].append(med)
+                    widths[m].append(h68)
+                    if abs(med - tv[m]) <= h68:
+                        hits[m] += 1
+
+                base = gaussian_mle(obs, err)
+                base_widths["v_mean"].append(base["v_mean_err"])
+                base_widths["sigma"].append(base["sigma_err"])
+
+            # Cramer-Rao bounds at this information content. v_mean is exact
+            # by construction (ivar IS its Fisher information); the others use
+            # the equal-error Gaussian approximation with an effective N.
+            n_eff = target_ivar * sigma**2
+            cr = {
+                "v_mean": 1.0 / np.sqrt(target_ivar),
+                "sigma": sigma / np.sqrt(2 * n_eff),
+                "skewness": np.sqrt(6.0 / n_eff),
+                "kurtosis": np.sqrt(24.0 / n_eff),
+            }
+
+            for m in RECOVERY_METRICS:
+                rows.append(
+                    {
+                        "ivar": float(target_ivar),
+                        "truth": t.name,
+                        "metric": m,
+                        "bias": float(np.median(meds[m]) - tv[m]),
+                        "coverage": hits[m] / n_real,
+                        "ci_width": float(np.mean(widths[m])),
+                        "cr_bound": float(cr[m]),
+                        "baseline_ci_width": float(np.mean(base_widths[m])) if m in base_widths else float("nan"),
+                    }
+                )
+
+    return RecoveryCurve(profile=profile, sigma=sigma, rows=rows)
+
+
+def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0.10):
+    """Measure the mapping from robust shape proxies to Gauss-Hermite h3/h4.
+
+    ``SKEW_PER_H3`` and ``EXKURT_PER_H4`` at the top of this module are
+    *analytic* small-amplitude conversions between ordinary moments and GH
+    coefficients. They say nothing about the percentile-based proxies in
+    ``compute_percentile_summary``, which are the statistics actually worth
+    reporting for noisy discrete data. This measures that relation directly,
+    by evaluating both on the same set of analytic truths discretised onto the
+    working grid.
+
+    No sampling and no MCMC: truths are evaluated exactly, so the result is
+    a property of the statistics and the grid, not of any dataset.
+
+    The conversion is calibrated only within the amplitude envelope given by
+    ``max_h3``/``max_h4``, which defaults to the range ``make_truths()``'s own
+    docstring claims to span (``|h3| <~ 0.15``, ``|h4| <~ 0.05-0.1``). Truths
+    outside that envelope, such as ``bimodal_counter_rotation`` and
+    ``flat_top_tangential``, are strongly non-Gaussian, a low-order
+    Gauss-Hermite series is a poor description of them in the first place,
+    and their large amplitude would otherwise dominate an origin-fit slope
+    through ``sum(x * x)`` weighting. They are excluded from the fit, not
+    just down-weighted. Do not apply this conversion to curves with larger
+    non-Gaussianity than the envelope; ``bimodality_score`` is the right
+    diagnostic for those instead. Even within the envelope, at least one
+    truth in the library (``cold_disk_component``) has a proxy and a GH
+    coefficient of opposite sign, so the conversion is not reliable for
+    individual low-amplitude curves. It is a population-level guide only.
+
+    Parameters
+    ----------
+    truths : list of Truth
+        At least 2. More, and more varied, gives a better-constrained slope.
+    sigma : float
+        Dispersion to scale each truth to, km/s.
+    n_bins : int
+        Number of velocity bins.
+    grid_width : float
+        Full grid width, km/s.
+    max_h3 : float
+        Truths with ``abs(h3) > max_h3`` are excluded from the ``h3`` fit.
+        Filtering is per mapping: a truth can be in-range for ``h3`` and out
+        of range for ``h4``, or vice versa.
+    max_h4 : float
+        Truths with ``abs(h4) > max_h4`` are excluded from the ``h4`` fit.
+
+    Returns
+    -------
+    dict
+        ``'skew_pct_to_h3'`` and ``'kurtosis_pct_to_h4'``, each a dict with:
+
+        ``slope``
+            Least-squares slope of GH coefficient against proxy through the
+            origin, fit only over truths that survive the amplitude envelope
+            for that mapping.
+        ``median_ratio``
+            Median of the per-truth ratios ``y / x`` (GH coefficient over
+            proxy), over included truths with ``abs(x) > 3e-3`` (below that
+            the ratio is numerically meaningless: several truths have a
+            proxy of exactly 0 by symmetry, and the ``3e-3`` cut also
+            excludes ``gaussian``'s grid-discretisation residual while
+            keeping ``cold_disk_component`` in). This is the number to apply
+            in practice, because unlike ``slope`` it is robust to a single
+            sign-flipped truth.
+        ``ratio_std``
+            Standard deviation of those same ratios. Kept alongside
+            ``median_ratio`` so no information is lost, but do not read it
+            as "the mapping is uncertain by this much": a single outlier
+            truth can dominate it while the rest of the population is tight
+            (see ``outliers`` below).
+        ``n_truths``
+            Number of truths whose ratio entered the ``median_ratio`` and
+            ``ratio_std`` statistics. The two mappings are not equally
+            trustworthy on this count: ``kurtosis_pct_to_h4`` rests on 5
+            ratio-eligible truths, while ``skew_pct_to_h3`` rests on only 3,
+            one of which is the flagged ``cold_disk_component`` outlier. A
+            MAD outlier test on 3 points has very little power, so the h3
+            ``median_ratio`` and its ``outliers`` entry should be read with
+            substantially less confidence than the h4 ones.
+        ``outliers``
+            Names of included truths whose ratio is more than 3 scaled
+            median-absolute-deviations (MAD * 1.4826) from ``median_ratio``.
+            Computed, not hardcoded, so it stays correct if the truth
+            library changes. Empty if the MAD is zero (all ratios equal) or
+            if there are too few truths to define an outlier.
+
+        A large ``ratio_std`` relative to ``median_ratio`` (as for
+        ``kurtosis_pct_to_h4``, where ``cold_disk_component`` disagrees in
+        sign with the rest) means the mapping is genuinely shape-dependent
+        for that one truth, not that it is universally loose. This directly
+        reports how shape-dependent the conversion is, unlike an RMS
+        residual about the fit, which can look small even when the fit is
+        dominated by a few extreme points. If fewer than 2 truths clear the
+        ``3e-3`` threshold, ``median_ratio`` and ``ratio_std`` are
+        ``float("nan")`` rather than fabricated numbers.
+
+    Raises
+    ------
+    ValueError
+        If fewer than 2 truths are given.
+    """
+    from veldist.analysis import compute_percentile_summary, gauss_hermite_fit
+
+    if len(truths) < 2:
+        msg = "at least 2 truths are required to fit a slope"
+        raise ValueError(msg)
+
+    edges = np.linspace(-grid_width / 2.0, grid_width / 2.0, n_bins + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+
+    names_skew, proxies_skew, gh3 = [], [], []
+    names_kurt, proxies_kurt, gh4 = [], [], []
+    for t in truths:
+        pdf, _ = t.scaled(sigma)
+        mass = np.asarray(pdf(centers), dtype=float)
+        mass = mass / mass.sum()
+        # gauss_hermite_fit needs at least 2 successful fits to report a
+        # median rather than nan, and it only ever fits n_samples rows
+        # regardless of n_draws. The curve is identical on both rows, so
+        # this stays deterministic (no sampling), it just satisfies that
+        # minimum.
+        row = np.tile(mass[None, :], (2, 1))
+
+        pct = compute_percentile_summary(row, centers)
+        gh = gauss_hermite_fit(row, centers, n_draws=2)
+        h3, h4 = gh["h3"][0], gh["h4"][0]
+        if not np.isfinite(h3):
+            continue
+        if abs(h3) <= max_h3:
+            names_skew.append(t.name)
+            proxies_skew.append(pct["skew_pct"][0])
+            gh3.append(h3)
+        if abs(h4) <= max_h4:
+            names_kurt.append(t.name)
+            proxies_kurt.append(pct["kurtosis_pct"][0])
+            gh4.append(h4)
+
+    def _mapping(names, x, y):
+        names = np.asarray(names)
+        x, y = np.asarray(x), np.asarray(y)
+
+        denom = float(np.sum(x * x))
+        slope = float(np.sum(x * y) / denom) if denom != 0 else float("nan")
+
+        big = np.abs(x) > 3e-3
+        ratios = y[big] / x[big]
+        ratio_names = names[big]
+        n_truths = int(ratios.size)
+
+        if n_truths < 2:
+            return {
+                "slope": slope,
+                "median_ratio": float("nan"),
+                "ratio_std": float("nan"),
+                "n_truths": n_truths,
+                "outliers": [],
+            }
+
+        median_ratio = float(np.median(ratios))
+        ratio_std = float(np.std(ratios))
+        mad = float(np.median(np.abs(ratios - median_ratio)))
+        scaled_mad = 1.4826 * mad
+        if scaled_mad == 0:
+            outliers = []
+        else:
+            outlier_mask = np.abs(ratios - median_ratio) > 3 * scaled_mad
+            outliers = sorted(ratio_names[outlier_mask].tolist())
+
+        return {
+            "slope": slope,
+            "median_ratio": median_ratio,
+            "ratio_std": ratio_std,
+            "n_truths": n_truths,
+            "outliers": outliers,
+        }
+
+    return {
+        "skew_pct_to_h3": _mapping(names_skew, proxies_skew, gh3),
+        "kurtosis_pct_to_h4": _mapping(names_kurt, proxies_kurt, gh4),
+    }

@@ -27,6 +27,14 @@ optimisation.
 
 ## The Model
 
+The model has two jobs: represent an LOSVD of unknown shape without assuming
+a functional form for it, and stop that freedom from overfitting noise in a
+handful of stars. The first is handled by a histogram of bin weights, free
+to take any shape the data support. The second is handled by a smoothing
+prior, which states what the LOSVD should look like where the data are
+silent, so that low-count bins and the wings of the distribution do not
+default to spraying probability mass around arbitrarily.
+
 ### Histogram representation
 
 We represent the intrinsic LOSVD as a vector of probability masses
@@ -77,6 +85,23 @@ quadratic component and the core's $v_0$/$s_0$ would both be trying to
 explain the same broad shape, two parameters describing one feature.
 Neither would be identifiable from the data alone, and NUTS would diverge
 hunting for a posterior mode that does not exist.
+
+The deviation term needs one restriction, and it is worth stating plainly
+before the algebra. The deviation is a random wiggly curve added to the core.
+A Gaussian's log-density *is* a parabola. So if the wiggles happen to come out
+parabolic, they are indistinguishable from the core itself: the core width and
+the deviation are then two names for one degree of freedom, the posterior
+develops a funnel, and NUTS diverges. The fix is to forbid the deviation from
+containing any parabola at all. In one line: **strip the parabola out of the
+wiggles, so that only the core is allowed to be parabolic.**
+
+Mechanically, `Q` is an orthonormal basis for the space of constant, linear,
+and quadratic functions of velocity. For any curve `w`, the product `QQ'w` is
+`w`'s own least-squares parabola. Subtracting it leaves a curve guaranteed to
+have no constant, linear, or quadratic component, which is exactly the
+restriction above. Everything below is the derivation of that statement.
+
+#### Why this is a projection
 
 **The fix: subtract $w$'s own quadratic trend.** Start with the three
 functions $1$, $v$, $v^2$, evaluated at the bin centres: three vectors in
@@ -187,6 +212,17 @@ smoothness adapts automatically to the signal-to-noise of each bin.
 
 ## The Likelihood: Design Matrix
 
+This is the idea that makes the method affordable. Every star's measurement
+error convolves with the velocity grid in a way that does not depend on the
+current guess at the LOSVD, only on that star's own observed velocity and
+uncertainty, so it never changes during sampling. Rather than recompute that
+convolution at every one of the thousands of MCMC steps, it is computed once,
+for every star against every bin, before inference starts, and stored as a
+matrix $\mathbf{M}$. Each NUTS step then only needs a matrix-vector multiply
+against $\mathbf{M}$ instead of thousands of fresh Gaussian integrals, which
+is what keeps inference fast even though it is the exact per-star likelihood
+and not an approximation.
+
 ### The deconvolution problem
 
 The central difficulty is that every star has a different measurement
@@ -252,6 +288,14 @@ requires only linear algebra.
 
 ## Inference
 
+The latent space here has one dimension per velocity bin plus a handful of
+hyperparameters, easily tens of dimensions for a realistic grid, which rules
+out grid-based or rejection sampling: both scale so poorly with dimension
+that they become useless well before this size. The model is differentiable
+throughout, though, so a gradient can point the sampler toward regions of
+high posterior density instead of it wandering there by chance, which is
+exactly the situation gradient-based Hamiltonian Monte Carlo exists for.
+
 Posterior sampling is performed with the No-U-Turn Sampler (NUTS; Hoffman &
 Gelman 2014) as implemented in NumPyro (Phan et al. 2019).  NUTS is a
 gradient-based Hamiltonian Monte Carlo variant that adapts its step size and
@@ -279,6 +323,11 @@ will reflect it.
 ---
 
 ## Relationship to Prior Work
+
+This section places `veldist` among earlier methods for recovering an LOSVD
+from discrete or spectral kinematic data, and says specifically what each one
+does differently: mainly how each handles regularisation and what
+assumptions, if any, it makes about the shape of the LOSVD.
 
 ### Merritt (1997); Saha & Williams (1994)
 

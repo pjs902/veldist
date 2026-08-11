@@ -426,3 +426,27 @@ $\sigma$ bias are plotted on the same colour scale. `veldist` reduces mean
 since they are not part of the method's documented acceptance criterion
 (`v_mean`/`sigma` well-calibrated; `h3`/`h4` not required) and a map of
 unreliable values would not be a fair demonstration.*
+
+---
+
+## Which shape statistic should I use?
+
+Three sets of shape numbers are available, and they answer different questions.
+
+| Function | Gives | Use when |
+| --- | --- | --- |
+| `compute_summary` | `skewness`, `kurtosis` (ordinary standardised moments) | You want the moments themselves. Sensitive to a few stars in the tails. |
+| `compute_percentile_summary` | `skew_pct` (Bowley), `kurtosis_pct` (excess Moors) | You want robustness. A single outlier moves these by at most one bin width. |
+| `gauss_hermite_fit` | `h3`, `h4` | You need numbers comparable to the dynamical-modelling literature. |
+
+They are not interchangeable and will not agree numerically. `skew_pct` and
+`h3` have the same sign convention and are monotonically related, but the
+mapping between them depends on the LOSVD shape; `calibration.PROXY_TO_GH`
+records the measured relation for this project's mocks.
+
+    from veldist import compute_percentile_summary, gauss_hermite_fit
+
+    pct = compute_percentile_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
+    gh = gauss_hermite_fit(solver.samples["intrinsic_pdf"], solver.grid["centers"])
+    print(f"Bowley skew {pct['skew_pct'][0]:+.3f} +/- {pct['skew_pct'][1]:.3f}")
+    print(f"GH h3       {gh['h3'][0]:+.3f} +/- {gh['h3'][1]:.3f}")
