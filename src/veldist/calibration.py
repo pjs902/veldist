@@ -34,6 +34,8 @@ __all__ = [
     "METRICS",
     "CalibrationResult",
     "calibrate",
+    "PROXY_TO_GH",
+    "measure_proxy_to_gh",
 ]
 
 # Gauss-Hermite conversions, lowest order (van der Marel & Franx 1993).
@@ -42,6 +44,17 @@ __all__ = [
 # amplitude conversions, not as a route to DYNAMITE inputs.
 SKEW_PER_H3 = 4.0 * np.sqrt(3.0)
 EXKURT_PER_H4 = 8.0 * np.sqrt(6.0)
+
+#: Measured mapping from the robust proxies in ``compute_percentile_summary``
+#: to Gauss-Hermite coefficients, over ``make_truths()`` at OMEGACAT's grid.
+#: Each entry is (slope, RMS scatter). Regenerate with ``measure_proxy_to_gh``
+#: if the truth library or the grid changes. Unlike SKEW_PER_H3 above, these
+#: are measured rather than derived, and the scatter is the honest statement
+#: of how shape-dependent the conversion is.
+PROXY_TO_GH = {
+    "skew_pct_to_h3": (1.6936106448127801, 0.01298993847881679),
+    "kurtosis_pct_to_h4": (1.5116752712084975, 0.023126076366835325),
+}
 
 
 @dataclass(frozen=True)
@@ -858,3 +871,88 @@ def recovery_curve(
                 )
 
     return RecoveryCurve(profile=profile, sigma=sigma, rows=rows)
+
+
+def measure_proxy_to_gh(truths, sigma, n_bins, grid_width):
+    """Measure the mapping from robust shape proxies to Gauss-Hermite h3/h4.
+
+    ``SKEW_PER_H3`` and ``EXKURT_PER_H4`` at the top of this module are
+    *analytic* small-amplitude conversions between ordinary moments and GH
+    coefficients. They say nothing about the percentile-based proxies in
+    ``compute_percentile_summary``, which are the statistics actually worth
+    reporting for noisy discrete data. This measures that relation directly,
+    by evaluating both on the same set of analytic truths discretised onto the
+    working grid.
+
+    No sampling and no MCMC: truths are evaluated exactly, so the result is
+    a property of the statistics and the grid, not of any dataset.
+
+    Parameters
+    ----------
+    truths : list of Truth
+        At least 2. More, and more varied, gives a better-constrained slope.
+    sigma : float
+        Dispersion to scale each truth to, km/s.
+    n_bins : int
+        Number of velocity bins.
+    grid_width : float
+        Full grid width, km/s.
+
+    Returns
+    -------
+    dict
+        ``'skew_pct_to_h3'`` and ``'kurtosis_pct_to_h4'``, each
+        ``(slope, scatter)``: the least-squares slope of GH coefficient
+        against proxy through the origin, and the RMS residual about it.
+
+        The scatter matters as much as the slope. A large scatter means the
+        mapping is shape-dependent and the proxy should be reported on its own
+        terms rather than converted.
+
+    Raises
+    ------
+    ValueError
+        If fewer than 2 truths are given.
+    """
+    from veldist.analysis import compute_percentile_summary, gauss_hermite_fit
+
+    if len(truths) < 2:
+        msg = "at least 2 truths are required to fit a slope"
+        raise ValueError(msg)
+
+    edges = np.linspace(-grid_width / 2.0, grid_width / 2.0, n_bins + 1)
+    centers = 0.5 * (edges[:-1] + edges[1:])
+
+    proxies_skew, proxies_kurt, gh3, gh4 = [], [], [], []
+    for t in truths:
+        pdf, _ = t.scaled(sigma)
+        mass = np.asarray(pdf(centers), dtype=float)
+        mass = mass / mass.sum()
+        # gauss_hermite_fit needs at least 2 successful fits to report a
+        # median rather than nan, and it only ever fits n_samples rows
+        # regardless of n_draws. The curve is identical on both rows, so
+        # this stays deterministic (no sampling), it just satisfies that
+        # minimum.
+        row = np.tile(mass[None, :], (2, 1))
+
+        pct = compute_percentile_summary(row, centers)
+        gh = gauss_hermite_fit(row, centers, n_draws=2)
+        if not np.isfinite(gh["h3"][0]):
+            continue
+        proxies_skew.append(pct["skew_pct"][0])
+        proxies_kurt.append(pct["kurtosis_pct"][0])
+        gh3.append(gh["h3"][0])
+        gh4.append(gh["h4"][0])
+
+    def _slope(x, y):
+        x, y = np.asarray(x), np.asarray(y)
+        denom = float(np.sum(x * x))
+        if denom == 0:
+            return (float("nan"), float("nan"))
+        slope = float(np.sum(x * y) / denom)
+        return (slope, float(np.sqrt(np.mean((y - slope * x) ** 2))))
+
+    return {
+        "skew_pct_to_h3": _slope(proxies_skew, gh3),
+        "kurtosis_pct_to_h4": _slope(proxies_kurt, gh4),
+    }
