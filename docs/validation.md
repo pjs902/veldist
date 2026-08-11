@@ -249,6 +249,118 @@ Empty bins are excluded and reported separately. They are dominated by the
 relative uncertainty floor and over-cover trivially at ~0.88, so averaging them
 in would manufacture a passing number.
 
+## Comparison against a Gaussian MLE baseline
+
+`veldist.baseline.gaussian_mle` maximises
+`sum_i log N(v_i | mu, sqrt(sigma^2 + err_i^2))` over `mu` and `sigma`, i.e.
+the classic two-parameter fit that treats the LOSVD as Gaussian and
+error-convolves it star by star. On a truly Gaussian LOSVD with known
+per-star Gaussian errors this is the exact maximum-likelihood optimum, so
+veldist cannot beat it there. Matching it is the pass condition, not a
+target to exceed.
+
+**Equivalence on the first two moments.** On a Gaussian truth at 150 stars
+per bin, the ratio of veldist's posterior 68% credible-interval half-width to
+the MLE's analytic standard error is 0.999 +/- 0.003 for `v_mean` and
+1.016 +/- 0.005 for `sigma`, pooled over 60 mock realisations across three
+independent seed blocks. The 37-dimensional non-parametric posterior
+reproduces the two-parameter exact-optimum estimator's precision to about
+half a percent.
+
+That ratio is only meaningful if the denominator is trustworthy, so it was
+checked independently: the MLE's expected-Fisher-information error matches
+the actual scatter of its own point estimates to within 0.2 to 0.7 percent
+at N = 150 over 5000 realisations. Without that check, the ratios above could
+be an artifact of an optimistic asymptotic error rather than a real result.
+
+**The two methods tie on `v_mean` and `sigma` across all nine mock truths**
+in the calibration library (`veldist.calibration.make_truths`), not only the
+Gaussian one. Across all 18 truth-by-metric cells (9 truths, 2 metrics),
+every paired comparison is a statistical tie, with a maximum |t| of 1.41, and
+the sign favours veldist in 10 of the 18 cells, consistent with a coin flip.
+Paired per-realisation agreement between the two estimators is about
+0.05 km/s, against per-realisation errors of about 1 km/s.
+
+The tie is structural, not coincidental. `Truth.scaled(sigma)` constructs
+every truth in the library to share the same second moment, so any correctly
+implemented second-moment estimator recovers `sigma` regardless of the
+LOSVD's shape. Consistent with this, the measured Gaussian MLE `sigma` bias
+is a uniform -0.07 to -0.12 km/s across all nine truths: ordinary small-sample
+maximum-likelihood dispersion bias, not shape-driven misspecification. An
+earlier version of this test asserted that the MLE would be *biased* on
+non-Gaussian shapes; that assertion was wrong and has been removed.
+
+This tie is the desired result, not a shortfall. The non-parametric model
+costs essentially nothing on the first two moments while allowing arbitrary
+LOSVD shape: there is no precision paid for the extra flexibility.
+
+**Where the methods actually differ is shape.** On
+`bimodal_counter_rotation`, total variation distance from the true LOSVD is
+0.0712 for veldist versus 0.2168 for the Gaussian MLE, a paired difference of
+0.1457 +/- 0.0046 over 20 realisations, t = 31.8. The large t comes from an
+unusually small `std(d)` of 0.0205, not only from a large mean: this truth is
+two well-separated Gaussians at +/-18 km/s, so a single Gaussian must straddle
+the gap between the two modes in every realisation. The penalty is systematic
+rather than statistical, which collapses the denominator of the paired t-test.
+
+One caveat applies to that comparison, stated honestly: veldist's
+`intrinsic_pdf` is probability mass per bin, while the truth and the MLE
+curves are evaluated as density at bin centres and then renormalised. These
+differ at second order in bin width through curvature, and the mismatch
+penalises veldist rather than the MLE, so the measured 3x advantage in total
+variation distance is if anything conservative.
+
+The conclusion to take from this section is that veldist's justification over
+a two-parameter fit rests on the recovered distribution and the shape
+statistics, never on `v_mean` or `sigma`. The moment-level agreement above is
+a correctness result, confirming veldist gets the easy case right, not a
+superiority result.
+
+### Percentile-to-Gauss-Hermite mapping
+
+`veldist.calibration.PROXY_TO_GH` records the measured relation between the
+cheap percentile-based shape proxies (`skew_pct`, `kurtosis_pct`) and the
+classical Gauss-Hermite coefficients (`h3`, `h4`). For smoothly non-Gaussian
+LOSVDs, `h4` is about 0.633 times `kurtosis_pct`: the median ratio over the
+five ratio-eligible truths, with the four smooth ones spanning 0.604 to
+0.659.
+
+The exception is `cold_disk_component`, a 4 percent kinematically cold
+sub-component: there the octile statistic reads slightly positive
+(`kurtosis_pct` = +0.0047) while Gauss-Hermite `h4` comes out negative
+(-0.0160). The two measures disagree in sign on this physically realistic
+case, so `kurtosis_pct` alone can point the wrong way for a small cold
+sub-population.
+
+`skew_pct_to_h3` rests on only three ratio-eligible truths and is
+correspondingly weakly constrained; treat it with less confidence than the
+five-truth `h4` mapping. The mapping is calibrated only within the amplitude
+envelope `|h3| <= 0.15`, `|h4| <= 0.10`. Outside that envelope,
+`bimodality_score` is the right diagnostic, not a percentile-to-GH
+conversion.
+
+### Recovery-curve status
+
+`veldist.calibration.recovery_curve` sweeps `ObservingProfile` information
+content and reports, per metric, the ivar threshold below which coverage or
+CI-ratio calibration breaks down. A smoke run at 3 ivar values and 12
+realisations returned a `v_mean` threshold at the *bottom* of the swept range
+(ivar 0.25) and a `sigma` threshold at the *top* (ivar 4.0). A threshold
+pinned at either end of a sweep means the sweep did not bracket it, so
+neither number is a result yet; `RecoveryCurve.report()` now annotates this
+case explicitly rather than reporting a bare number that looks final.
+
+What the smoke run does indicate, directionally, is that `sigma` needs
+substantially more information than `v_mean` to calibrate well.
+
+Information content is defined as `sum_i 1/(sigma^2 + err_i^2)`, **not**
+`1/err_i^2`: a star constrains the LOSVD centroid only up to the intrinsic
+spread it was drawn from, not down to its measurement error alone. At
+sigma = 20 km/s each star contributes about 1/400 to that sum, so a 150-star
+bin carries ivar of about 0.375, i.e. `v_mean` to roughly 1.6 km/s. The full
+recovery campaign, swept over a range bracketed to real data, is still
+outstanding.
+
 ## 2D solver results
 
 All results below use the ``gaussian_core`` prior (``prior="gaussian_core"``

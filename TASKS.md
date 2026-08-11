@@ -20,6 +20,50 @@ h3/h4 limitation honestly rather than engineering around it.
 
 ## Now
 
+- **[RESOLVED 2026-08-06] 1D `num_samples` raised 1000 -> 3000; 2D sampler
+  defaults fixed (`dense_mass=False`, `num_samples=3000`).** On real HST
+  proper-motion data (`omegaCen/dynamite_dataprep/hst_veldist.ipynb`), the
+  2D solver's inherited-from-1D `dense_mass=True` default (added the same
+  day, then reverted) was measured to be actively pathological: NUTS hit
+  `max_tree_depth` (1023 steps/sample) on nearly every sample regardless of
+  `target_accept_prob`, gave *lower* min ESS (~200-290) than
+  `dense_mass=False` (~260-470 at the same `num_samples=1000`) despite
+  ~30x more leapfrog steps, and cost ~100s/bin in JIT compile alone on a
+  run with ~1400 distinct star-count shapes (~43h projected for a full
+  ~1400-bin run). `KinematicSolver2D.run` now defaults to
+  `dense_mass=False`, `target_accept_prob=0.95` (0 divergences across 5
+  test bins vs. several at 0.8), `num_samples=3000` (default raised from
+  1000: roughly triples min ESS for near-identical per-bin wall time,
+  since compile time dominates over sampling here). A `max_tree_depth`
+  parameter was also added (not present before) so this pathology can be
+  capped/diagnosed in the future without re-deriving it from scratch.
+  `fit_all_bins_2d` also gained an `n_jobs` parameter (spawned
+  `ProcessPoolExecutor`, parallelises across bins since they're
+  independent, not across chains) — measured 1.8x wall-time speedup on 12
+  real bins with `n_jobs=4` (contended by another job at measurement time,
+  likely an underestimate), byte-identical posteriors to sequential at
+  matching seeds.
+
+  Separately, 1D's `KinematicSolver.run` default `num_samples` was raised
+  1000 -> 3000 on the same "more ESS for ~free wall time" reasoning.
+  Unlike the 2D change, this touches an already-SBC/coverage-validated
+  regime (`docs/validation.md`), so `test_sbc_calibration` (both priors)
+  and `test_per_bin_losvd_coverage` (all three truth shapes) were
+  re-run at `num_samples=3000` before adopting it: **5 passed, 3 xfailed
+  (pre-existing, unrelated), 0 failures** — the calibration holds at the
+  new sample count. `tests/test_calibration.py`'s `NUM_SAMPLES` constant
+  was updated to match (that file's own comment requires it track
+  `KinematicSolver.run`'s default, or SBC validates a configuration nobody
+  runs).
+
+  **Still open:** the 2D solver has no equivalent SBC campaign to 1D's
+  (`test_sbc_calibration_2d`/`test_coverage_2d.py` exist but are a
+  different, smaller check) — the `dense_mass=False`/`tap=0.95`/
+  `num_samples=3000` combination is measured-good on real data (ESS,
+  divergences, wall time) but not formally SBC-validated the way 1D's
+  regularisation choice was. Treat it as strong evidence, not the same
+  tier of validation as 1D's.
+
 - **[RESOLVED 2026-08-04] The prior was never the problem — the sampler was.**
   Every SBC failure was low ESS on `sigma3`: a funnel, where the deviation
   scale approaching zero narrows the posterior into a neck that a step size
@@ -215,6 +259,45 @@ h3/h4 limitation honestly rather than engineering around it.
   **Still open:**
   - Sheppard correction if reporting continuous σ (not needed for DYNAMITE
     output, which chi-squares per-cell mass, not cell-centre moments).
+
+- **[P1] 2D solver: `target_accept_prob`/`dense_mass` ported from 1D without
+  re-validating on 2D.** (2026-08-06.) `KinematicSolver2D.run` previously
+  hardcoded NumPyro's defaults (`target_accept_prob=0.8`, diagonal mass
+  matrix) with no way to override them — unlike 1D, which found `tap=0.8`
+  gave 17% SBC failures at `SIGMA3_RATE=0.35` from a funnel in the
+  smoothness-deviation scale (`docs/validation.md`). Added
+  `target_accept_prob=0.95`, `dense_mass=True` as new parameters/defaults
+  on `KinematicSolver2D.run`, on the expectation that the 2D
+  `gaussian_core` prior has the same funnel-prone structure, **not on 2D-
+  specific measurement** — no SBC/coverage re-run at this setting has been
+  done yet. `test_sbc_calibration_2d`/`test_coverage_2d` now exercise this
+  default; re-run them and confirm they still pass (or improve) before
+  treating this as settled the way the 1D case is.
+
+- **[2026-08-11] Branch `validation-and-binning`: Gaussian MLE baseline, GH
+  fitting, data-driven observing profiles, recovery-curve sweep and an
+  information-content floor landed.** What shipped: `veldist.baseline.gaussian_mle`
+  (the two-parameter exact-optimum comparison point, see `docs/validation.md`
+  "Comparison against a Gaussian MLE baseline"); Gauss-Hermite `h3`/`h4`
+  fitting in `analysis.py` (`gauss_hermite_fit`); `ObservingProfile.from_data`
+  in `calibration.py`, fitting a profile's grid and error distribution
+  directly from a real catalogue instead of by hand; the `recovery_curve`
+  sweep and `RecoveryCurve` in `calibration.py`; the measured
+  `PROXY_TO_GH` percentile-to-Gauss-Hermite mapping; information-content
+  binning helpers in `binning.py` (`make_ivar_sn_func`, matching the
+  `sum_i 1/(sigma^2+err_i^2)` definition used everywhere else); and a
+  `min_ivar` floor parameter on `fit_all_bins` so low-information bins can be
+  skipped the same way `min_stars` already does.
+
+  What remains: fitting a real `ObservingProfile.from_data` from the
+  omegaCen catalogue (only mock/hand-built profiles have been used so far),
+  and running the full `recovery_curve` campaign, not just the 12-realisation
+  smoke test recorded in `docs/validation.md`. The plan's originally proposed
+  sweep range of ivar 0.05 to 15 is probably wrong: real 150-star bins sit
+  near ivar 0.375 (`sigma = 20` km/s), nowhere near the middle of that range.
+  Task 12 should set the sweep range from the real data's ivar distribution
+  before any campaign compute is spent, not from the plan's placeholder
+  range.
 
 ## Ruled out by measurement — do not re-raise
 
@@ -494,6 +577,28 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   solver and export pipeline are both tested and stable
 
 ## Completed
+
+- Docs pass (2026-08-06): rewrote `theory.md`'s smoothing-prior section for
+  `gaussian_core` (previously only documented `rw1`), with a from-scratch
+  derivation of the `QQ^T` projection (`docs/fig_projection.py`) rather than
+  naming the operation unexplained. Added 2D coverage to `examples.md`
+  (`KinematicSolver2D`, `calibration2d`, `fit_all_bins_2d`/`n_jobs`,
+  `dynamite2d`), previously undocumented despite being merged. Fixed the
+  flagship `fig_deconvolution.py` demo (was unimodal-blending its "shoulder"
+  feature into invisibility) and `fig_2d_recovery.py` (had a transposed
+  x/y reshape that made a correct recovery look wrong, and used an invented
+  error scale ~30x outside any calibrated profile — now uses
+  `HST_FAINT.draw_errors()`). Every `docs/fig_*.py` now calls
+  `matplotlib.rcdefaults()` so figures don't inherit a developer's personal
+  `matplotlibrc`. `fig_kin_maps.py` cut from >20 min to under a minute by
+  fixing `n_stars_per_bin` (was forcing a JIT recompile per distinct star
+  count across ~40 shapes); redesigned to plot naive-vs-`veldist` sigma bias
+  against known ground truth instead of unreliable skew/kurtosis maps.
+  `fig_sigma3_rate.py` added to `validation.md` (previously table-only).
+  Added explicit naive-estimator comparisons to Examples 1, 2b, and 3, with
+  honest reporting where results were mixed rather than a clean win (2D
+  single-draw `cov_xx` recovery was worse than the naive sample covariance
+  on one draw, within posterior uncertainty — noted in text, not hidden).
 
 - Design-matrix cancellation bug (P0, commit 5cda2cc): `precompute_design_matrix`
   could return *negative* probabilities (to -1.2e-7) for bins ~5-7 sigma from a
