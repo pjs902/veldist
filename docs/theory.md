@@ -212,6 +212,17 @@ smoothness adapts automatically to the signal-to-noise of each bin.
 
 ## The Likelihood: Design Matrix
 
+This is the idea that makes the method affordable. Every star's measurement
+error convolves with the velocity grid in a way that does not depend on the
+current guess at the LOSVD, only on that star's own observed velocity and
+uncertainty, so it never changes during sampling. Rather than recompute that
+convolution at every one of the thousands of MCMC steps, it is computed once,
+for every star against every bin, before inference starts, and stored as a
+matrix $\mathbf{M}$. Each NUTS step then only needs a matrix-vector multiply
+against $\mathbf{M}$ instead of thousands of fresh Gaussian integrals, which
+is what keeps inference fast even though it is the exact per-star likelihood
+and not an approximation.
+
 ### The deconvolution problem
 
 The central difficulty is that every star has a different measurement
@@ -277,6 +288,14 @@ requires only linear algebra.
 
 ## Inference
 
+The latent space here has one dimension per velocity bin plus a handful of
+hyperparameters, easily tens of dimensions for a realistic grid, which rules
+out grid-based or rejection sampling: both scale so poorly with dimension
+that they become useless well before this size. The model is differentiable
+throughout, though, so a gradient can point the sampler toward regions of
+high posterior density instead of it wandering there by chance, which is
+exactly the situation gradient-based Hamiltonian Monte Carlo exists for.
+
 Posterior sampling is performed with the No-U-Turn Sampler (NUTS; Hoffman &
 Gelman 2014) as implemented in NumPyro (Phan et al. 2019).  NUTS is a
 gradient-based Hamiltonian Monte Carlo variant that adapts its step size and
@@ -304,6 +323,11 @@ will reflect it.
 ---
 
 ## Relationship to Prior Work
+
+This section places `veldist` among earlier methods for recovering an LOSVD
+from discrete or spectral kinematic data, and says specifically what each one
+does differently: mainly how each handles regularisation and what
+assumptions, if any, it makes about the shape of the LOSVD.
 
 ### Merritt (1997); Saha & Williams (1994)
 
