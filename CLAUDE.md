@@ -63,6 +63,12 @@ The gates that matter most there are `test_sbc_calibration` (both priors) and `t
 4. `KinematicSolver.clip_uncertainties()` — post-processes samples into per-bin median + half-68CI, with uncertainty floors (prevents Dynamite NNLS failures from zero-uncertainty bins)
 5. `write_dynamite_kinematics(solvers, output_dir, voronoi_bin_metadata)` — writes three Dynamite input files: ECSV kinematics, `aperture.dat`, `bins.dat`
 
+   **The writers do no frame handling and no frame validation** — `angle_deg` and the sky orientation of the positions/PM components are written verbatim and are entirely the caller's responsibility. Two ways to get this wrong, both of which silently invert fitted rotation while leaving surface brightness and sigma looking correct:
+   - `angle_deg` is `-theta_maj` with `theta_maj` the *receding* major axis measured CCW from +x **in the caller's own frame**. Dynamite's docs phrase it as `90 - position_angle`, but that is `pafit`'s angle on the same x/y/v — *not* a sky PA. The two agree only mod 180.
+   - Dynamite's projection is right-handed with the LOS along `x' x y'`, so `(x, y, v_los)` must be right-handed; with y=North and v receding-positive that means **x-East**. `pm2` (minor-axis component) flips sign under an East/West mirror, `pm1` does not.
+
+   The consumer that gets this right, with the full derivation and sources, is `omegaCen/dynamite_dataprep/dynamite_frame.py`.
+
 **Batch pipeline:** `fit_all_bins(bin_data_list, grid_kwargs, run_kwargs)` runs steps 1–4 for every Voronoi bin, skipping bins below `min_stars=10` (returns `None` at that index). Uses `base_seed + bin_index` to decorrelate chains.
 
 **Important conventions:**

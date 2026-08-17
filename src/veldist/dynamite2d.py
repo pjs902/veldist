@@ -36,6 +36,18 @@ def _write_aperture_and_bins_files(
     """Write aperture.dat / bins.dat. Format unchanged from 1D's writer
     (veldist.write_dynamite_kinematics); duplicated here rather than shared
     because that function is not importable without pulling in astropy.
+
+    ``ap['angle_deg']`` is written verbatim: this writer does no frame handling
+    and no validation. DYNAMITE's rule is ``angle_deg = -theta_maj`` with
+    ``theta_maj`` the receding major axis measured CCW from +x **in the caller's
+    own frame** -- not a sky position angle (the two agree only mod 180, and
+    substituting one for the other silently inverts every fitted rotation).
+
+    The frame of the ``pm1``/``pm2`` histograms matters too and is likewise the
+    caller's responsibility: DYNAMITE's projection is right-handed with the LOS
+    along ``x' x y'``, so ``(x, y, v_los)`` must be right-handed. In particular
+    ``pm2`` (the minor-axis component) flips sign under an East/West mirror while
+    ``pm1`` does not. See ``omegaCen/dynamite_dataprep/dynamite_frame.py``.
     """
     ap = voronoi_bin_metadata["aperture"]
     ap_path = output_dir / aperture_filename

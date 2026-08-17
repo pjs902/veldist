@@ -1402,7 +1402,18 @@ def write_dynamite_kinematics(
                     'y_start':   float,   # arcsec, lower-left corner y
                     'x_size':    float,   # arcsec, total x extent
                     'y_size':    float,   # arcsec, total y extent
-                    'angle_deg': float,   # degrees (= 90 - position_angle)
+                    # degrees. DYNAMITE's rule is angle_deg = -theta_maj, where
+                    # theta_maj is the RECEDING major axis measured CCW from +x
+                    # in the frame of the file you are writing. Its docs phrase
+                    # this as "90 - position_angle", but that position_angle is
+                    # pafit's, obtained by running pafit on the same x/y/v you
+                    # pass here -- NOT a sky position angle. Substituting a sky
+                    # PA is a 180 deg error (they agree only mod 180), and it
+                    # silently inverts every fitted rotation while leaving
+                    # surface brightness and sigma looking fine. Callers are
+                    # responsible for computing this in their own frame; see
+                    # omegaCen/dynamite_dataprep/dynamite_frame.py.
+                    'angle_deg': float,
                     'nx':        int,     # pixels along x
                     'ny':        int,     # pixels along y
                 },
