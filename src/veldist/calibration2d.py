@@ -274,17 +274,22 @@ def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
     ~h^2/12 (Sheppard), which at cell_per_sigma=0.78 is +0.42 km/s on
     sigma=17 -- over half the posterior interval at N=250, enough on its own
     to destroy coverage.
+
+    ``edges_x``/``edges_y`` need not have the same length -- a rectangular
+    grid (``kx != ky``) is fine. The flat index follows the same row-major
+    convention as ``setup_grid_2d``: ``m = ix * ky + iy``.
     """
     from scipy.stats import multivariate_normal
 
     cov = [[t["sx"] ** 2, t["rho"] * t["sx"] * t["sy"]],
            [t["rho"] * t["sx"] * t["sy"], t["sy"] ** 2]]
     mvn = multivariate_normal(mean=[t["mux"], t["muy"]], cov=cov)
-    k = len(edges_x) - 1
-    mass = np.empty(k * k)
-    for ix in range(k):
-        for iy in range(k):
-            mass[ix * k + iy] = (
+    kx = len(edges_x) - 1
+    ky = len(edges_y) - 1
+    mass = np.empty(kx * ky)
+    for ix in range(kx):
+        for iy in range(ky):
+            mass[ix * ky + iy] = (
                 mvn.cdf([edges_x[ix + 1], edges_y[iy + 1]])
                 - mvn.cdf([edges_x[ix], edges_y[iy + 1]])
                 - mvn.cdf([edges_x[ix + 1], edges_y[iy]])
@@ -345,6 +350,28 @@ class RecoveryCurve2D:
     only on coverage. The ratio is still computed and printed by
     :meth:`report` for every metric, ``rho`` included, but it is advisory
     only there.
+
+    ``rms_z`` (see :func:`recovery_curve_2d`) sidesteps this entirely: it
+    measures interval calibration directly from the standardised residuals
+    ``(median - truth) / half68``, with no analytic Cramer-Rao bound
+    involved at all. That makes it a Cramer-Rao-FREE efficiency measure --
+    unlike the ``ci_width``/``cr_bound`` ratio, it is reliable for ``rho``
+    too, and is not exempted from anything.
+
+    It also fixes a resolution problem with ``coverage`` itself: coverage
+    thresholds the continuous residual at 1.0 (hit or miss), so a fit that
+    misses by 1.01 half-widths counts identically to one that misses by
+    3.0. Measured on an isotropic truth, where ``sigma_x`` and ``sigma_y``
+    are provably identical in expectation (an A/A test whose true
+    difference is zero), the observed coverage difference between them at
+    n_real=100 was 0.14 -- the end-to-end noise floor of the coverage
+    statistic. The bias statistic's A/A spread over the same run was only
+    0.052, about 3x better resolution. Several conclusions had been drawn
+    from coverage differences of 0.04-0.09, i.e. below its noise floor.
+    ``rms_z`` keeps the continuous residual instead of thresholding it, and
+    is the preferred statistic for reading off small differences between
+    runs; use :meth:`aa_noise` to measure the noise floor of any of these
+    statistics for your own data.
     """
 
     profile: object
@@ -421,13 +448,81 @@ class RecoveryCurve2D:
                 elif t == n_values[-1]:
                     note = " (at the top of the swept range, may not be bracketed)"
             lines.append(f"  {metric}: threshold n_stars = " + ("not reached" if t is None else f"{t:.4g}{note}"))
-            lines.append("    n_stars  cover  CI/CR  bias")
+            lines.append("    n_stars  cover  CI/CR  bias    rms_z  mean_z")
             for r in sorted([x for x in self.rows if x["metric"] == metric], key=lambda x: x["n_stars"]):
                 ratio = r["ci_width"] / r["cr_bound"] if r["cr_bound"] > 0 else float("nan")
+                rms_z = r.get("rms_z", float("nan"))
+                mean_z = r.get("mean_z", float("nan"))
                 lines.append(
-                    f"    {r['n_stars']:<8.4g} {r['coverage']:5.2f}  {ratio:5.2f}  {r['bias']:+.3f}"
+                    f"    {r['n_stars']:<8.4g} {r['coverage']:5.2f}  {ratio:5.2f}  {r['bias']:+.3f}  "
+                    f"{rms_z:5.2f}  {mean_z:+.3f}"
                 )
         return "\n".join(lines)
+
+    def aa_noise(self, metric_a, metric_b, n_stars):
+        """Observed difference between two metrics that are exchangeable
+        under the truth used, i.e. an A/A test whose true difference is
+        zero.
+
+        Returns the observed difference in coverage, bias, and rms_z, which
+        together estimate the end-to-end noise floor of each statistic --
+        including mock-draw noise and NUTS sampling noise, not just the
+        binomial term the coverage floor assumes.
+
+        This is ONLY meaningful when *metric_a* and *metric_b* really are
+        exchangeable under the truth this curve was built with --
+        specifically ``("sigma_x", "sigma_y")`` or ``("mean_x", "mean_y")``
+        on the ``"isotropic"`` truth, where the square grid and symmetric
+        prior make x and y statistically identical. On an anisotropic truth
+        these metrics are NOT exchangeable and the result is meaningless.
+        This method cannot verify the pair itself, only the truth, so it
+        raises if ``self.truth_name`` is not ``"isotropic"`` -- callers are
+        responsible for only passing an exchangeable pair.
+
+        Parameters
+        ----------
+        metric_a, metric_b : str
+            The two metric names to compare.
+        n_stars : float or int
+            The swept star count to compare at.
+
+        Returns
+        -------
+        dict
+            ``{"d_coverage": ..., "d_bias": ..., "d_rms_z": ...}``, each the
+            absolute difference between the two metrics' rows.
+
+        Raises
+        ------
+        ValueError
+            If ``self.truth_name != "isotropic"``, or if either metric lacks
+            a row at ``n_stars``.
+        """
+        if self.truth_name != "isotropic":
+            msg = (
+                f"aa_noise is only meaningful on the 'isotropic' truth, where "
+                f"sigma_x/sigma_y and mean_x/mean_y are exchangeable by "
+                f"symmetry; this curve's truth_name is {self.truth_name!r}"
+            )
+            raise ValueError(msg)
+
+        def _row(metric):
+            matches = [
+                r for r in self.rows
+                if r["metric"] == metric and r["n_stars"] == float(n_stars)
+            ]
+            if not matches:
+                msg = f"no row for metric={metric!r}, n_stars={n_stars!r}"
+                raise ValueError(msg)
+            return matches[0]
+
+        row_a = _row(metric_a)
+        row_b = _row(metric_b)
+        return {
+            "d_coverage": abs(row_a["coverage"] - row_b["coverage"]),
+            "d_bias": abs(row_a["bias"] - row_b["bias"]),
+            "d_rms_z": abs(row_a["rms_z"] - row_b["rms_z"]),
+        }
 
     def mcnemar(self, other, metric, n_stars):
         """Paired comparison of this curve against *other* at one metric and
@@ -508,6 +603,88 @@ class RecoveryCurve2D:
         return b, c, pvalue
 
 
+def _validate_grid_override(grid):
+    """Check a ``recovery_curve_2d`` ``grid`` override dict for values that
+    would silently corrupt DYNAMITE output or the grid itself.
+
+    DYNAMITE requires an odd bin count per axis (a centre bin at zero);
+    widths must be positive. Raises ``ValueError`` with a message naming the
+    offending axis/value on failure.
+    """
+    width = grid["width"]
+    n_bins = grid["n_bins"]
+    wx, wy = (width, width) if np.isscalar(width) else tuple(width)
+    kx, ky = (n_bins, n_bins) if np.isscalar(n_bins) else tuple(n_bins)
+
+    for axis, k in (("x", kx), ("y", ky)):
+        if int(k) % 2 == 0:
+            msg = f"grid override n_bins[{axis}] = {k} is even; DYNAMITE requires an odd bin count per axis"
+            raise ValueError(msg)
+    for axis, w in (("x", wx), ("y", wy)):
+        if not (w > 0):
+            msg = f"grid override width[{axis}] = {w} is not positive"
+            raise ValueError(msg)
+
+
+def _resolve_grid(profile, grid):
+    """Single source of truth for the (center, width, n_bins) used by
+    ``recovery_curve_2d``'s truth-moment solver, the per-realisation solver,
+    and ``_discretised_truth_moments`` -- see the module docstring warning
+    about those three needing to agree.
+
+    ``grid`` is ``None`` (profile-derived square grid, original behaviour)
+    or an override dict with keys ``width`` and ``n_bins``, each a scalar or
+    a 2-tuple.
+    """
+    center = (0.0, 0.0)
+    if grid is None:
+        return center, (profile.grid_width, profile.grid_width), profile.n_bins
+
+    _validate_grid_override(grid)
+    return center, grid["width"], grid["n_bins"]
+
+
+def square_cell_grid(sigma_ref, half_extent_x_sigma, half_extent_y_sigma, cell_sigma):
+    """Rectangular grid with SQUARE cells, sized per axis in units of
+    ``sigma_ref``.
+
+    ``sigma_ref`` cancels out of the returned bin counts (only the widths
+    scale with it) -- it is here so callers can pass a profile's own
+    ``sigma_ref`` without doing the multiplication themselves.
+
+    The cell width is ``h = cell_sigma * sigma_ref``. Per-axis bin count is
+    ``2 * half_extent_*_sigma * sigma_ref / h`` rounded UP to the nearest ODD
+    integer (DYNAMITE requires odd per-axis counts), then that axis's width
+    is set to exactly ``n_bins * h`` so the cells stay exactly square. This
+    means the returned width on each axis is always >= the requested extent,
+    never smaller -- rounding up preserves the requested minimum extent, it
+    just doesn't hit it exactly.
+
+    Square cells matter here because the GMRF prior's diagonal-neighbour
+    weighting (``diag_weight=1/sqrt(2)`` in ``build_gmrf_precision``) assumes
+    a square lattice; non-square cells would change what the smoothness
+    prior actually means, and supporting that is deliberately out of scope.
+
+    Returns
+    -------
+    dict
+        ``{"width": (wx, wy), "n_bins": (kx, ky)}``, suitable for
+        ``recovery_curve_2d``'s ``grid`` parameter.
+    """
+    h = cell_sigma * sigma_ref
+
+    def _axis(half_extent_sigma):
+        full_width = 2.0 * half_extent_sigma * sigma_ref
+        k = int(np.ceil(full_width / h))
+        if k % 2 == 0:
+            k += 1
+        return k, k * h
+
+    kx, wx = _axis(half_extent_x_sigma)
+    ky, wy = _axis(half_extent_y_sigma)
+    return {"width": (wx, wy), "n_bins": (kx, ky)}
+
+
 def recovery_curve_2d(
     profile,
     truth_name,
@@ -517,6 +694,7 @@ def recovery_curve_2d(
     num_warmup=300,
     num_samples=600,
     seed=20260805,
+    grid=None,
 ):
     """Sweep raw star count and measure bias, coverage, and efficiency for
     all five 2D moments, including tilt (``rho``).
@@ -553,6 +731,26 @@ def recovery_curve_2d(
         Base RNG seed; realisation ``i`` at a given ``n_stars`` uses
         ``seed + i``, matching :func:`veldist.calibration.recovery_curve`'s
         convention.
+    grid : dict, optional
+        Overrides the profile-derived grid. ``{"width": w, "n_bins": k}``
+        with each of ``w``/``k`` a scalar (square grid, original behaviour)
+        or a ``(x, y)`` 2-tuple (rectangular grid). ``center`` is always
+        ``(0.0, 0.0)`` and is not configurable here. When ``None`` (default),
+        the grid is derived from ``profile`` exactly as before -- this
+        parameter changes nothing about the default numerical behaviour.
+        See :func:`square_cell_grid` for a helper that builds a rectangular,
+        square-celled override from a target resolution and extent.
+        Validated by :func:`_validate_grid_override`: per-axis bin counts
+        must be odd (DYNAMITE requirement) and widths must be positive.
+
+    Each row also carries the standardised residual vector ``z`` (one entry
+    per realisation, ``(median - truth) / half68``, ``nan`` where ``half68``
+    is zero or non-finite -- see ``n_z_excluded``) and its aggregates
+    ``rms_z`` (target 1.0 under correct calibration; >1 means intervals too
+    narrow, <1 too wide), ``mean_abs_z`` (target sqrt(2/pi) ~= 0.7979), and
+    ``mean_z`` (standardised bias, target 0). These keep the continuous
+    information ``coverage`` throws away by thresholding at 1.0 -- see
+    :class:`RecoveryCurve2D`'s docstring for why that matters.
 
     Returns
     -------
@@ -564,9 +762,11 @@ def recovery_curve_2d(
     rows = []
     metrics = ["mean_x", "mean_y", "sigma_x", "sigma_y", "rho"]
 
-    grid_center = (0.0, 0.0)
-    grid_width = (profile.grid_width, profile.grid_width)
-    n_bins = profile.n_bins
+    # Single source of truth for (center, width, n_bins): read by solver0
+    # (truth-moment edges), _discretised_truth_moments, and the per-
+    # realisation solver in the loop below. Keep it that way -- if these
+    # ever diverge the coverage numbers are silently meaningless.
+    grid_center, grid_width, n_bins = _resolve_grid(profile, grid)
 
     solver0 = KinematicSolver2D()
     solver0.setup_grid(center=grid_center, width=grid_width, n_bins=n_bins)
@@ -583,6 +783,7 @@ def recovery_curve_2d(
         rng = np.random.default_rng(seed)
 
         hit_vectors = {m: [] for m in metrics}
+        z_vectors = {m: [] for m in metrics}
 
         for i in range(n_real):
             obs_x, obs_y, cov = _draw_stars(rng, truth, n_stars, profile)
@@ -606,6 +807,10 @@ def recovery_curve_2d(
                 hit_vectors[m].append(bool(hit))
                 if hit:
                     hits[m] += 1
+                if half68 > 0 and np.isfinite(half68):
+                    z_vectors[m].append((median - true_moments[m]) / half68)
+                else:
+                    z_vectors[m].append(float("nan"))
 
         # Cramer-Rao-style bounds at this n_stars. See RecoveryCurve2D's
         # docstring for the rho approximation's caveat.
@@ -619,6 +824,17 @@ def recovery_curve_2d(
         }
 
         for m in metrics:
+            z = np.asarray(z_vectors[m], dtype=float)
+            finite = np.isfinite(z)
+            n_excluded = int(np.sum(~finite))
+            z_ok = z[finite]
+            if z_ok.size > 0:
+                rms_z = float(np.sqrt(np.mean(z_ok**2)))
+                mean_abs_z = float(np.mean(np.abs(z_ok)))
+                mean_z = float(np.mean(z_ok))
+            else:
+                rms_z = mean_abs_z = mean_z = float("nan")
+
             rows.append(
                 {
                     "n_stars": float(n_stars),
@@ -629,6 +845,11 @@ def recovery_curve_2d(
                     "ci_width": float(np.mean(widths[m])),
                     "cr_bound": float(cr[m]),
                     "hits": list(hit_vectors[m]),
+                    "z": list(z_vectors[m]),
+                    "rms_z": rms_z,
+                    "mean_abs_z": mean_abs_z,
+                    "mean_z": mean_z,
+                    "n_z_excluded": n_excluded,
                 }
             )
 

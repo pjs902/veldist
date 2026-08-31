@@ -705,6 +705,7 @@ def test_model_gaussian_core_2d_prior_predictive_is_not_degenerate():
         n_cells=k * k,
         L=L,
         centers_2d=jnp.asarray(grid["centers_2d"]),
+        shape=k,
     )
     pdfs = np.asarray(draws["intrinsic_pdf"])
     assert pdfs.shape == (200, k * k)
@@ -911,3 +912,147 @@ def test_fit_all_bins_2d_uses_distinct_seeds_per_bin():
     assert len(seen_seeds) == 2
     assert seen_seeds[0] != seen_seeds[1]
     assert seen_seeds == [100, 101]
+
+
+# ==============================================================================
+# Rectangular (per-axis) grid support
+# ==============================================================================
+
+
+def test_square_grid_scalar_and_tuple_are_identical():
+    """Backward-compatibility guard: (k, k) must be indistinguishable from k.
+
+    This is the most important test in this section -- every existing caller
+    passes a scalar n_bins and must keep getting bit-identical results.
+    """
+    from veldist.veldist2d import _null_space_basis_2d
+
+    k = 9
+    grid_scalar = setup_grid_2d(center=(1.0, -2.0), width=(20.0, 14.0), n_bins=k)
+    grid_tuple = setup_grid_2d(center=(1.0, -2.0), width=(20.0, 14.0), n_bins=(k, k))
+
+    assert grid_scalar["shape"] == grid_tuple["shape"] == (k, k)
+    assert grid_scalar["n_bins"] == grid_tuple["n_bins"] == k
+    assert grid_scalar["n_bins_x"] == grid_tuple["n_bins_x"] == k
+    assert grid_scalar["n_bins_y"] == grid_tuple["n_bins_y"] == k
+    assert grid_scalar["n_cells"] == grid_tuple["n_cells"] == k * k
+
+    for key in ("centers_x", "centers_y", "edges_x", "edges_y", "centers_2d"):
+        np.testing.assert_array_equal(grid_scalar[key], grid_tuple[key])
+
+    Q_s, Qreg_s = build_gmrf_precision(k)
+    Q_t, Qreg_t = build_gmrf_precision((k, k))
+    np.testing.assert_array_equal(Q_s, Q_t)
+    np.testing.assert_array_equal(Qreg_s, Qreg_t)
+
+    basis_s = _null_space_basis_2d(k)
+    basis_t = _null_space_basis_2d((k, k))
+    np.testing.assert_array_equal(basis_s, basis_t)
+
+
+def test_rectangular_grid_shapes():
+    """A rectangular grid must produce consistently-shaped output everywhere."""
+    from veldist.veldist2d import _null_space_basis_2d
+
+    kx, ky = 25, 21
+    n_cells = kx * ky
+    grid = setup_grid_2d(center=(0.0, 0.0), width=(30.0, 20.0), n_bins=(kx, ky))
+
+    assert grid["shape"] == (kx, ky)
+    assert grid["n_bins_x"] == kx
+    assert grid["n_bins_y"] == ky
+    assert grid["n_cells"] == n_cells
+    assert "n_bins" not in grid  # non-square: scalar access must not silently work
+    assert grid["centers_x"].shape == (kx,)
+    assert grid["centers_y"].shape == (ky,)
+    assert grid["centers_2d"].shape == (n_cells, 2)
+
+    Q, Q_reg = build_gmrf_precision((kx, ky))
+    assert Q.shape == (n_cells, n_cells)
+    assert Q_reg.shape == (n_cells, n_cells)
+    L = np.linalg.cholesky(Q_reg)
+    assert np.all(np.isfinite(L))
+
+    basis = _null_space_basis_2d((kx, ky))
+    assert basis.shape == (n_cells, 6)
+    np.testing.assert_allclose(basis.T @ basis, np.eye(6), atol=1e-10)
+
+
+def test_rectangular_grid_flattening_round_trips():
+    """np.unravel_index of each flat index must recover the (ix, iy) whose
+    centers_2d entry matches centers_x[ix], centers_y[iy].
+
+    This is the test the docstring's transposition-bug warning is about:
+    a hand-rolled or swapped-shape flattening would pass the shape checks
+    above but scramble which physical (x, y) pair each flat index refers to.
+    """
+    kx, ky = 25, 21
+    grid = setup_grid_2d(center=(3.0, -5.0), width=(30.0, 20.0), n_bins=(kx, ky))
+    centers_x, centers_y = grid["centers_x"], grid["centers_y"]
+    centers_2d = grid["centers_2d"]
+
+    for m in range(kx * ky):
+        ix, iy = np.unravel_index(m, (kx, ky), order="C")
+        assert centers_2d[m, 0] == pytest.approx(centers_x[ix])
+        assert centers_2d[m, 1] == pytest.approx(centers_y[iy])
+
+
+def test_rectangular_grid_null_space_spans_bivariate_gaussian():
+    """The null-space basis on a RECTANGULAR grid must still exactly span the
+    quadratic space: a bivariate-Gaussian log-density evaluated on the cell
+    centres must be reproduced by projection onto the basis to numerical
+    tolerance.
+
+    This is the test that would have caught the sqrt-of-n_cells landmine in
+    model_gaussian_core_2d: on a rectangular grid, round(sqrt(kx*ky)) gives a
+    wrong square k and _null_space_basis_2d(k) then spans quadratics in the
+    WRONG index grid, so a true bivariate-Gaussian log-density would NOT be
+    exactly reproduced by projection.
+    """
+    from veldist.veldist2d import _null_space_basis_2d
+
+    kx, ky = 25, 19
+    grid = setup_grid_2d(center=(0.0, 0.0), width=(40.0, 40.0), n_bins=(kx, ky))
+    c = grid["centers_2d"]
+    x, y = c[:, 0], c[:, 1]
+
+    mu_x, mu_y, sx, sy, rho = 1.5, -2.0, 5.0, 3.0, 0.4
+    dx = (x - mu_x) / sx
+    dy = (y - mu_y) / sy
+    quad = (dx**2 - 2.0 * rho * dx * dy + dy**2) / (1.0 - rho**2)
+    log_density = -0.5 * quad  # true bivariate-Gaussian log-density, up to a constant
+
+    q = _null_space_basis_2d((kx, ky))
+    projected = q @ (q.T @ log_density)
+    residual = log_density - projected
+    # Up to an additive constant (also in the null space), the residual must
+    # vanish -- subtract its own mean before comparing.
+    residual -= residual.mean()
+    assert np.max(np.abs(residual)) < 1e-8 * np.max(np.abs(log_density)), (
+        "a true bivariate-Gaussian log-density was not exactly reproduced by "
+        "projection onto the rectangular-grid null-space basis"
+    )
+
+
+def test_model_gaussian_core_2d_requires_shape_argument():
+    """model_gaussian_core_2d must take shape explicitly, not infer it from
+    n_cells via sqrt -- the landmine this task fixes."""
+    import inspect
+    from veldist.veldist2d import model_gaussian_core_2d
+
+    params = inspect.signature(model_gaussian_core_2d).parameters
+    assert "shape" in params
+
+
+def test_solver_setup_grid_rectangular_smoke():
+    """KinematicSolver2D.setup_grid must accept a rectangular n_bins and
+    build a consistent Q/L without raising."""
+    kx, ky = 15, 11
+    solver = KinematicSolver2D()
+    solver.setup_grid(center=(0.0, 0.0), width=(20.0, 14.0), n_bins=(kx, ky))
+
+    assert solver.grid["shape"] == (kx, ky)
+    n_cells = kx * ky
+    assert solver.Q.shape == (n_cells, n_cells)
+    assert solver.L.shape == (n_cells, n_cells)
+    assert np.all(np.isfinite(solver.L))

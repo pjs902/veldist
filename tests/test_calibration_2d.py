@@ -283,7 +283,11 @@ def test_sbc_calibration_2d(prior):
     """
     if prior == "gaussian_core":
         model_fn = model_gaussian_core_2d
-        extra_kwargs = {"centers_2d": CENTERS_2D_JAX}
+        # `shape` is passed explicitly rather than inferred from `n_cells`:
+        # model_gaussian_core_2d used to recover the per-axis counts as
+        # round(sqrt(n_cells)), which silently returns the wrong answer on a
+        # rectangular grid. See veldist2d.model_gaussian_core_2d.
+        extra_kwargs = {"centers_2d": CENTERS_2D_JAX, "shape": GRID["shape"]}
         hyper_name = "sigma3"
         quantity_names = [*QUANTITY_NAMES, hyper_name]
     else:
