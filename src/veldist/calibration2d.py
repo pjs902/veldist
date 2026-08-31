@@ -16,12 +16,15 @@ distance[kpc] km/s relation at the adopted cluster distance of 5494 pc
 0.3 mas/yr.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 
+from veldist.calibration import coverage_floor
+
 __all__ = [
     "ObservingProfile2D",
+    "RecoveryCurve2D",
     "HST_BRIGHT",
     "HST_FAINT",
     "GAIA_OUTER",
@@ -30,6 +33,7 @@ __all__ = [
     "KMS_PER_MASYR",
     "PM_QUALITY_CUT_KMS",
     "truths_for",
+    "coverage_floor",
 ]
 
 #: Adopted cluster distance (Peter, 2026-08-06).
@@ -292,6 +296,95 @@ def _moments_from_pdf_samples_2d(pdf_samples, centers_2d):
     rho = np.where((sigma_x > 0) & (sigma_y > 0), cov_xy / safe_denom, 0.0)
 
     return mean_x, mean_y, sigma_x, sigma_y, rho
+
+
+@dataclass
+class RecoveryCurve2D:
+    """How well each 2D moment (including tilt, ``rho``) is recovered as a
+    function of raw star count.
+
+    2D counterpart of :class:`RecoveryCurve`, swept over ``n_stars`` directly
+    rather than an information-content proxy (no 2D ``ivar`` equivalent
+    exists yet -- see :func:`recovery_curve_2d`'s docstring).
+
+    Notes
+    -----
+    ``cr_bound`` for ``rho`` uses the standard bivariate-normal MLE
+    approximation ``Var(rho_hat) ~= (1 - rho**2)**2 / n``, i.e.
+    ``(1 - rho**2) / sqrt(n)`` as a CI-width-like quantity. Like 1D's
+    skewness/kurtosis Cramer-Rao bounds, this is only exact for homogeneous
+    per-star errors; with the heterogeneous errors this package actually
+    fits, treat the CI/CR ratio for ``rho`` as indicative, not exact.
+    """
+
+    profile: object
+    truth_name: str
+    rows: list = field(default_factory=list)
+    n_real: int = None
+
+    def threshold(self, metric, min_coverage=None, max_ci_ratio=1.5, band=0.99):
+        """Smallest ``n_stars`` at which *metric* is trustworthy, or ``None``.
+
+        Same two-condition, walk-down-from-the-top logic as
+        :meth:`RecoveryCurve.threshold`, keyed on ``n_stars`` instead of
+        ``ivar``. See that method's docstring for the full rationale.
+        """
+        sel = [r for r in self.rows if r["metric"] == metric]
+        if not sel:
+            msg = f"no rows for metric {metric!r}"
+            raise ValueError(msg)
+
+        floor, _floor_desc = self._resolve_coverage_floor(min_coverage, band)
+
+        by_n = {}
+        for r in sel:
+            by_n.setdefault(r["n_stars"], []).append(r)
+
+        def ok(rows):
+            return all(r["coverage"] >= floor and r["ci_width"] <= max_ci_ratio * r["cr_bound"] for r in rows)
+
+        n_values = sorted(by_n)
+        best = None
+        for n in reversed(n_values):
+            if not ok(by_n[n]):
+                break
+            best = n
+        return best
+
+    def _resolve_coverage_floor(self, min_coverage, band):
+        if min_coverage is not None:
+            return min_coverage, "explicit"
+        if self.n_real is not None:
+            floor = coverage_floor(self.n_real, band=band)
+            return floor, f"{band:.0%} binomial band at n_real={self.n_real}"
+        return 0.60, "historical default, n_real unknown"
+
+    def report(self, min_coverage=None, max_ci_ratio=1.5, band=0.99):
+        """Human-readable table, one block per metric."""
+        floor, floor_desc = self._resolve_coverage_floor(min_coverage, band)
+        metrics = sorted({r["metric"] for r in self.rows})
+        lines = [
+            f"RecoveryCurve2D: {self.profile.name} / {self.truth_name}",
+            f"  {len({r['n_stars'] for r in self.rows})} n_stars value(s)",
+            f"  coverage floor {floor:.3f} ({floor_desc})",
+        ]
+        for metric in metrics:
+            t = self.threshold(metric, min_coverage=min_coverage, max_ci_ratio=max_ci_ratio, band=band)
+            n_values = sorted({r["n_stars"] for r in self.rows if r["metric"] == metric})
+            note = ""
+            if t is not None and n_values:
+                if t == n_values[0]:
+                    note = " (at the bottom of the swept range, true threshold may be lower)"
+                elif t == n_values[-1]:
+                    note = " (at the top of the swept range, may not be bracketed)"
+            lines.append(f"  {metric}: threshold n_stars = " + ("not reached" if t is None else f"{t:.4g}{note}"))
+            lines.append("    n_stars  cover  CI/CR  bias")
+            for r in sorted([x for x in self.rows if x["metric"] == metric], key=lambda x: x["n_stars"]):
+                ratio = r["ci_width"] / r["cr_bound"] if r["cr_bound"] > 0 else float("nan")
+                lines.append(
+                    f"    {r['n_stars']:<8.4g} {r['coverage']:5.2f}  {ratio:5.2f}  {r['bias']:+.3f}"
+                )
+        return "\n".join(lines)
 
 
 #: HST, inner region, bright stars (m_F625W ~ 18). Median 1D PM error
