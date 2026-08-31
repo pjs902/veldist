@@ -643,10 +643,44 @@ def generate_gaussian_core_field_2d(shape, centers_2d, L):
     # endpoints clipped, written explicitly so rho0 is a rankable site.
     rho0 = numpyro.sample("rho0", dist.Uniform(-0.95, 0.95))
 
-    dx = (cx - v0x) / jnp.clip(s0x, 1e-3)
-    dy = (cy - v0y) / jnp.clip(s0y, 1e-3)
-    quad = (dx**2 - 2.0 * rho0 * dx * dy + dy**2) / (1.0 - rho0**2)
-    core = -0.5 * quad
+    sx_c = jnp.clip(s0x, 1e-3)
+    sy_c = jnp.clip(s0y, 1e-3)
+    dx = (cx - v0x) / sx_c
+    dy = (cy - v0y) / sy_c
+    omr2 = 1.0 - rho0**2
+    quad = (dx**2 - 2.0 * rho0 * dx * dy + dy**2) / omr2
+
+    # `intrinsic_pdf` is cell probability MASS -- the design matrix integrates
+    # each star's error kernel over the cell (see _design_matrix_gl_quadrature),
+    # so the likelihood `matrix @ intrinsic_pdf` is only dimensionally right if
+    # the field softmaxes to mass. But softmax(-quad/2) is the Gaussian DENSITY
+    # sampled at cell centres, normalised -- which is not the mass of a
+    # Gaussian. The two agree only as h -> 0, and the mismatch is O(h^2):
+    #
+    #     mass = int_cell f  ~=  h_x h_y [f + (h_x^2/24) f_xx + (h_y^2/24) f_yy]
+    #
+    # f'' is positive in the tails and negative near the peak, so centre
+    # sampling under-weights the tails and the "free Gaussian core" comes out
+    # systematically NARROWER than the Gaussian it is meant to represent. That
+    # is a bias in the one part of the prior which is supposed to be
+    # unpenalised, and it is why coarse grids under-disperse: measured
+    # sigma_y bias -0.250 at K=15 falling to -0.050 at K=29, of which this
+    # term accounts for roughly half (-0.132 -> -0.035, predicted analytically).
+    #
+    # Correcting it here rather than buying resolution matters because the
+    # error is O(h^2) at EVERY grid size: fine grids only brute-force it small.
+    #
+    # For f = exp(-Q/2):  f_xx/f = Q_x^2/4 - Q_xx/2, with
+    #   Q_x  = 2(dx - rho*dy) / (omr2 * s0x)
+    #   Q_xx = 2 / (omr2 * s0x^2)
+    hx = (jnp.max(cx) - jnp.min(cx)) / jnp.maximum(kx - 1, 1)
+    hy = (jnp.max(cy) - jnp.min(cy)) / jnp.maximum(ky - 1, 1)
+    fxx_over_f = (dx - rho0 * dy) ** 2 / (omr2**2 * sx_c**2) - 1.0 / (omr2 * sx_c**2)
+    fyy_over_f = (dy - rho0 * dx) ** 2 / (omr2**2 * sy_c**2) - 1.0 / (omr2 * sy_c**2)
+    cell_corr = (hx**2 / 24.0) * fxx_over_f + (hy**2 / 24.0) * fyy_over_f
+    # log1p, and floored well above -1, so a large negative correction near the
+    # peak can never produce log of a non-positive number.
+    core = -0.5 * quad + jnp.log1p(jnp.clip(cell_corr, -0.9, None))
 
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample(
