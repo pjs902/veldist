@@ -435,11 +435,15 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
         Physical centres of the velocity bins. Required because the Gaussian
         core is quadratic in *velocity*, not in bin index.
     bin_width : float
-        Unused by this prior, because the Sorbye-Rue standardisation is already
-        resolution-invariant, and the latent curve is in dimensionless
-        log-mass units, so no physical scale enters the deviation. Retained
-        for signature compatibility with ``generate_smooth_curve`` and
-        ``model_gaussian_core``.
+        Width of one velocity bin. Used by the Gaussian **core**, which is the
+        Gaussian's per-bin probability mass and so must know the bin edges
+        (``centers +/- bin_width/2``) to integrate between. It does NOT enter
+        the *deviation*: the Sorbye-Rue standardisation is already
+        resolution-invariant and the deviation is in dimensionless log-mass
+        units, so no physical scale reaches it. (This parameter was documented
+        as unused while the core point-evaluated a density at bin centres --
+        needing no scale was the symptom of that bug, not a property of the
+        prior. See the mass-vs-density invariant in CLAUDE.md.)
 
     Returns
     -------
@@ -473,20 +477,25 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
     # in the tails and < 0 near the peak, centre sampling under-weights the
     # tails and the free (unpenalised) Gaussian core comes out narrower than
     # the Gaussian it represents, biasing sigma low by O(h^2).
-    # In 1D the bin mass of a Gaussian is available in CLOSED FORM, so no
-    # quadrature or Taylor term is needed -- integrate exactly between bin
-    # edges with the same erf CDF that precompute_design_matrix uses for the
-    # error kernel (see veldist.py:161). Core and likelihood are then
-    # integrated by the same function, which is what makes the measure
-    # consistency structural rather than a correction a later edit could drop.
+    # `intrinsic_pdf` is per-bin probability MASS, so the core must be a
+    # Gaussian's bin mass -- NOT its density sampled at bin centres, which is
+    # what softmax(-((c-v0)/s0)^2 / 2) would give. See the mass-vs-density
+    # invariant in CLAUDE.md for why the two differ and why it is easy to get
+    # wrong.
+    #
+    # `precompute_design_matrix` already IS "Gaussian bin masses by erf CDF
+    # difference" -- it is what integrates each star's error kernel between
+    # bin edges for the likelihood. Calling it here for the single "star"
+    # (v0, s0) makes core and likelihood share one implementation, so they
+    # cannot disagree about what a bin value means, and inherits its clip
+    # floor rather than growing a second one that can drift. (An earlier
+    # version of this fix hand-rolled the erf algebra with a different floor;
+    # that is exactly the drift this avoids.)
     s0_c = jnp.clip(s0, 1e-3)
-    h_bin = centers[1] - centers[0]
-    z_hi = (centers + 0.5 * h_bin - v0) / (s0_c * jnp.sqrt(2.0))
-    z_lo = (centers - 0.5 * h_bin - v0) / (s0_c * jnp.sqrt(2.0))
-    # 0.5*(erf(hi) - erf(lo)) is the exact bin mass; the 0.5 is a constant
-    # across bins and softmax is invariant to an additive constant in log.
-    # Floor before the log: the far tails underflow erf to a flat difference.
-    core = jnp.log(jnp.clip(jsp.erf(z_hi) - jsp.erf(z_lo), 1e-300, None))
+    bin_mass = precompute_design_matrix(
+        jnp.atleast_1d(v0), jnp.atleast_1d(s0_c), centers, bin_width=bin_width
+    )[0]
+    core = jnp.log(bin_mass)
 
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw_deviation_scale(N_bins, rw_order)

@@ -649,58 +649,50 @@ def generate_gaussian_core_field_2d(shape, centers_2d, L):
     dx = (cx - v0x) / sx_c
     dy = (cy - v0y) / sy_c
     omr2 = 1.0 - rho0**2
-    quad = (dx**2 - 2.0 * rho0 * dx * dy + dy**2) / omr2
 
-    # `intrinsic_pdf` is cell probability MASS -- the design matrix integrates
-    # each star's error kernel over the cell (see _design_matrix_gl_quadrature),
-    # so the likelihood `matrix @ intrinsic_pdf` is only dimensionally right if
-    # the field softmaxes to mass. But softmax(-quad/2) is the Gaussian DENSITY
-    # sampled at cell centres, normalised -- which is not the mass of a
-    # Gaussian. The two agree only as h -> 0, and the mismatch is O(h^2):
+    # `intrinsic_pdf` is cell probability MASS, so the core must be a
+    # Gaussian's cell mass -- NOT its density sampled at cell centres, which
+    # is what softmax(-quad/2) would give. See the mass-vs-density invariant
+    # in CLAUDE.md for why the two differ and why it is easy to get wrong.
     #
-    #     mass = int_cell f  ~=  h_x h_y [f + (h_x^2/24) f_xx + (h_y^2/24) f_yy]
-    #
-    # f'' is positive in the tails and negative near the peak, so centre
-    # sampling under-weights the tails and the "free Gaussian core" comes out
-    # systematically NARROWER than the Gaussian it is meant to represent. That
-    # is a bias in the one part of the prior which is supposed to be
-    # unpenalised, and it is why coarse grids under-disperse: measured
-    # sigma_y bias -0.250 at K=15 falling to -0.050 at K=29, of which this
-    # term accounts for roughly half (-0.132 -> -0.035, predicted analytically).
-    #
-    # Correcting it here rather than buying resolution matters because the
-    # error is O(h^2) at EVERY grid size: fine grids only brute-force it small.
-    #
-    # For f = exp(-Q/2):  f_xx/f = Q_x^2/4 - Q_xx/2, with
-    #   Q_x  = 2(dx - rho*dy) / (omr2 * s0x)
-    #   Q_xx = 2 / (omr2 * s0x^2)
-    # The fix: integrate the core over each cell with the SAME Gauss-Legendre
-    # rule the design matrix uses for the error kernel, rather than adding a
-    # hand-derived Taylor term. This makes the measure consistency structural
-    # -- core and likelihood are integrated by one routine -- instead of a
-    # correction a later edit could silently drop. It is also exact through
-    # cubics rather than through h^2, needs no clipping to stay in log's
-    # domain, and generalises to any core shape.
+    # Integrate with the same 2x2 Gauss-Legendre rule the design matrix uses
+    # for the error kernel (_design_matrix_gl_quadrature), so core and
+    # likelihood agree on what a cell value means by construction rather than
+    # by a correction a later edit could drop. A tilted bivariate Gaussian
+    # over an axis-aligned cell has no closed form, hence quadrature here
+    # where the 1D core gets an exact erf difference.
     #
     # Measured against the exact bivariate cell mass at K=15 (sx=13.11,
-    # sy=8.44, rho=0.4): centre sampling errs by -0.074 / -0.131 on sigma_x /
-    # sigma_y; GL 2x2 errs by +0.00007 / +0.000005.
+    # sy=8.44, rho=0.4): centre sampling errs by -0.074 / -0.131 on
+    # sigma_x / sigma_y; GL 2x2 errs by +7e-5 / +5e-6. 3x3 buys nothing.
+    #
+    # NOTE ON WHAT THIS DOES *NOT* FIX: a separate, larger sigma_y
+    # under-dispersion at coarse resolution (-0.250 at K=15, shrinking to
+    # -0.050 at K=29) was initially attributed to this term. Measured
+    # end-to-end, correcting the core moved it by 0.002 -- i.e. essentially
+    # not at all. The measure bug was real and is fixed here, but it is not
+    # the cause of that bias, which remains open. Do not cite this fix as the
+    # explanation for the resolution-dependent dispersion bias.
     #
     # Equal GL weights and the constant cell Jacobian are dropped: both are
     # constant across cells on a uniform grid and softmax is invariant to an
     # additive constant in the log field.
-    hx = (jnp.max(cx) - jnp.min(cx)) / jnp.maximum(kx - 1, 1)
-    hy = (jnp.max(cy) - jnp.min(cy)) / jnp.maximum(ky - 1, 1)
+    # span_x/span_y were already reduced from cx/cy above for the v0 priors.
+    hx = span_x / jnp.maximum(kx - 1, 1)
+    hy = span_y / jnp.maximum(ky - 1, 1)
     nodes, _ = _gauss_legendre_2x2_nodes()
     offs_x = 0.5 * hx * jnp.asarray(nodes)
     offs_y = 0.5 * hy * jnp.asarray(nodes)
 
+    # Hoisted: omr2 is loop-invariant, but each iteration's numerator differs,
+    # so XLA cannot CSE four separate divides into one. Reciprocal once.
+    neg_half_over_omr2 = -0.5 / omr2
     sub = []
     for ox in offs_x:
         for oy in offs_y:
             sdx = dx + ox / sx_c
             sdy = dy + oy / sy_c
-            sub.append(-0.5 * (sdx**2 - 2.0 * rho0 * sdx * sdy + sdy**2) / omr2)
+            sub.append(neg_half_over_omr2 * (sdx**2 - 2.0 * rho0 * sdx * sdy + sdy**2))
     core = logsumexp(jnp.stack(sub, axis=0), axis=0)
 
     # --- penalised non-Gaussian deviation ---
