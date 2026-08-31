@@ -459,7 +459,34 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
     # span/8 with ~1 dex of spread either side.
     v0 = numpyro.sample("v0", dist.Normal(mid, span / 4.0))
     s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 1.0))
-    core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
+    # `intrinsic_pdf` is per-bin probability MASS: precompute_design_matrix
+    # integrates each star's error kernel between bin EDGES, so the likelihood
+    # `matrix @ intrinsic_pdf` only type-checks if the pdf is mass. But
+    # softmax(-((c-v0)/s0)^2 / 2) is the Gaussian DENSITY sampled at bin
+    # centres and renormalised, which is not a Gaussian's bin mass. See the
+    # mass-vs-density invariant in CLAUDE.md; this is the 1D sibling of the bug
+    # fixed in generate_gaussian_core_field_2d.
+    #
+    #   mass = int_bin f ~= h*f(c) + (h^3/24)*f''(c),  f''/f = Q_x^2/4 - Q_xx/2
+    #
+    # with Q = ((c-v0)/s0)^2, so f''/f = (c-v0)^2/s0^4 - 1/s0^2. Since f'' > 0
+    # in the tails and < 0 near the peak, centre sampling under-weights the
+    # tails and the free (unpenalised) Gaussian core comes out narrower than
+    # the Gaussian it represents, biasing sigma low by O(h^2).
+    # In 1D the bin mass of a Gaussian is available in CLOSED FORM, so no
+    # quadrature or Taylor term is needed -- integrate exactly between bin
+    # edges with the same erf CDF that precompute_design_matrix uses for the
+    # error kernel (see veldist.py:161). Core and likelihood are then
+    # integrated by the same function, which is what makes the measure
+    # consistency structural rather than a correction a later edit could drop.
+    s0_c = jnp.clip(s0, 1e-3)
+    h_bin = centers[1] - centers[0]
+    z_hi = (centers + 0.5 * h_bin - v0) / (s0_c * jnp.sqrt(2.0))
+    z_lo = (centers - 0.5 * h_bin - v0) / (s0_c * jnp.sqrt(2.0))
+    # 0.5*(erf(hi) - erf(lo)) is the exact bin mass; the 0.5 is a constant
+    # across bins and softmax is invariant to an additive constant in log.
+    # Floor before the log: the far tails underflow erf to a flat difference.
+    core = jnp.log(jnp.clip(jsp.erf(z_hi) - jsp.erf(z_lo), 1e-300, None))
 
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw_deviation_scale(N_bins, rw_order)

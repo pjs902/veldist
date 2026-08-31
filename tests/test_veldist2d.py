@@ -671,6 +671,15 @@ def test_gaussian_core_2d_deviation_is_orthogonal_to_quadratics():
                     data=fixed)
     field = np.asarray(fn(k, jnp.asarray(centers), L))
 
+    # The core is the Gaussian's cell MASS (GL-integrated over the cell), so a
+    # flattened core (s0 -> huge) is flat at a large negative CONSTANT -- the
+    # log normalisation -- not at zero. softmax is invariant to an additive
+    # constant, so that offset is gauge, not signal, and it lands entirely on
+    # the null space's constant basis vector. Remove it before projecting; the
+    # invariant under test is that the deviation carries no x, y, x^2, xy or
+    # y^2 content.
+    field = field - field.mean()
+
     q_ns = _null_space_basis_2d(k)
     residual = q_ns.T @ field
     scale = max(1.0, np.max(np.abs(field)))
