@@ -214,6 +214,82 @@ per-axis. That is why tuning K trades one axis against the other.
   star count on one truth and is not validated at 435 stars or on the HST
   profiles.
 
+## Mechanism: two effects, cleanly separated
+
+All at `n_stars=1600`, `n_real=100`, anisotropic truth (`sx=1.18*sigma_ref`,
+`sy=0.76*sigma_ref`). The K series holds extent at 3.5*sigma_ref on BOTH
+axes and refines cells only:
+
+| grid | cell/sigma_ref | sigma_y bias | sigma_x bias |
+|---|---|---|---|
+| K=15 | 0.467 | -0.250 | +0.099 |
+| K=19 | 0.368 | -0.154 | +0.121 |
+| K=21 | 0.333 | -0.119 | +0.145 |
+| K=29 | 0.241 | -0.050 | +0.198 |
+
+Refining cells at fixed extent monotonically **fixes** `sigma_y` and
+monotonically **worsens** `sigma_x`. Two mechanisms:
+
+- **Resolution** causes under-dispersion (negative bias). More cells fix it.
+- **Truncation** causes over-dispersion (positive bias), and finer cells make
+  it WORSE -- they let the fitted field pile mass more sharply against a near
+  boundary.
+
+**Root cause:** extent is set as 3.5*`sigma_ref` on both axes, but what
+matters is 3.5 of each axis's OWN sigma. The wide axis gets only 2.97 `sx`
+(starved); the narrow axis gets 4.60 `sy` (wasteful).
+
+Two independent corroborations:
+
+- The isotropic control gives both axes exactly 3.5 of their own sigma, and
+  shows only the negative resolution component on both (-0.170/-0.222 at
+  K=15, shrinking to -0.072/-0.126 at K=21). No positive component anywhere.
+- Grids A/B (below) trimmed the narrow axis's extent to DYNAMITE's minimum
+  and its bias promptly flipped positive, i.e. the truncation hypothesis
+  correctly predicted a new axis's behaviour before it was measured.
+
+### Grids A/B: a confounded experiment, kept as evidence
+
+| grid | cell/sigma_ref | y half-extent | sigma_x bias | sigma_y bias | rms_z x/y |
+|---|---|---|---|---|---|
+| A 29x17 | 0.250 | 2.13 sigma_ref | +0.186 | +0.124 | 1.13 / 1.17 |
+| B 37x21 | 0.190 | 2.00 sigma_ref | +0.267 | +0.238 | 1.28 / 1.43 |
+
+These changed TWO variables at once against the K series -- cells finer AND
+y extent trimmed from 3.5 to ~2.0 sigma_ref -- because they were sized to
+DYNAMITE's minimum `width/sigma >= 5`. Resolution and extent are therefore
+confounded here and neither effect can be attributed from A/B alone. Kept
+because the direction corroborates the truncation mechanism.
+
+**Lesson worth keeping:** sizing a grid minimally against a spec is the right
+way to build one you intend to ship and the wrong way to build one you intend
+to learn from. Minimising extent to buy cells silently moved a second
+variable. The K series was a clean experiment only by accident of
+construction.
+
+### DYNAMITE's extent minimum is too tight for this inference
+
+`sanity_check`'s `width/sigma >= 5` (half-extent 2.5 sigma) is a threshold
+for DYNAMITE's chi-square against a known histogram. We are *deconvolving*
+measurement error, and the fitted field piles mass against a near boundary.
+Grids A/B sat at 2.63-2.80 `sy` -- above DYNAMITE's minimum -- and were badly
+over-dispersed. Use 3.5 of each axis's own sigma, not 2.5.
+
+### What rms_z bought immediately
+
+At grid B, `mean_x`/`mean_y` come back at rms_z 1.01-1.03 (essentially
+perfect interval calibration) while `sigma_x`/`sigma_y` reach 1.28/1.43
+(badly overconfident), with `mean_z` +0.79/+0.96 -- nearly a full
+interval-width of standardised bias. On coverage alone all five metrics
+looked like variations on "somewhat below floor". The means are demonstrably
+fine and the problem is entirely in the second moments.
+
+At grid C, **`rho` has bias +0.014 and rms_z 0.98** -- essentially perfect.
+The metric this whole investigation started from, which read 0.52 coverage on
+the original grid, is correctly calibrated purely from grid geometry: no
+change to the prior, no `pmxy_cov` modelling. The tilt was always
+recoverable; the grid was hiding it.
+
 ## Ruled out
 
 The `gaussian_core` 2D prior does not enforce axis-alignment or isotropy
