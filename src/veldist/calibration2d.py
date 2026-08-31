@@ -513,6 +513,88 @@ class RecoveryCurve2D:
         return b, c, pvalue
 
 
+def _validate_grid_override(grid):
+    """Check a ``recovery_curve_2d`` ``grid`` override dict for values that
+    would silently corrupt DYNAMITE output or the grid itself.
+
+    DYNAMITE requires an odd bin count per axis (a centre bin at zero);
+    widths must be positive. Raises ``ValueError`` with a message naming the
+    offending axis/value on failure.
+    """
+    width = grid["width"]
+    n_bins = grid["n_bins"]
+    wx, wy = (width, width) if np.isscalar(width) else tuple(width)
+    kx, ky = (n_bins, n_bins) if np.isscalar(n_bins) else tuple(n_bins)
+
+    for axis, k in (("x", kx), ("y", ky)):
+        if int(k) % 2 == 0:
+            msg = f"grid override n_bins[{axis}] = {k} is even; DYNAMITE requires an odd bin count per axis"
+            raise ValueError(msg)
+    for axis, w in (("x", wx), ("y", wy)):
+        if not (w > 0):
+            msg = f"grid override width[{axis}] = {w} is not positive"
+            raise ValueError(msg)
+
+
+def _resolve_grid(profile, grid):
+    """Single source of truth for the (center, width, n_bins) used by
+    ``recovery_curve_2d``'s truth-moment solver, the per-realisation solver,
+    and ``_discretised_truth_moments`` -- see the module docstring warning
+    about those three needing to agree.
+
+    ``grid`` is ``None`` (profile-derived square grid, original behaviour)
+    or an override dict with keys ``width`` and ``n_bins``, each a scalar or
+    a 2-tuple.
+    """
+    center = (0.0, 0.0)
+    if grid is None:
+        return center, (profile.grid_width, profile.grid_width), profile.n_bins
+
+    _validate_grid_override(grid)
+    return center, grid["width"], grid["n_bins"]
+
+
+def square_cell_grid(sigma_ref, half_extent_x_sigma, half_extent_y_sigma, cell_sigma):
+    """Rectangular grid with SQUARE cells, sized per axis in units of
+    ``sigma_ref``.
+
+    ``sigma_ref`` cancels out of the returned bin counts (only the widths
+    scale with it) -- it is here so callers can pass a profile's own
+    ``sigma_ref`` without doing the multiplication themselves.
+
+    The cell width is ``h = cell_sigma * sigma_ref``. Per-axis bin count is
+    ``2 * half_extent_*_sigma * sigma_ref / h`` rounded UP to the nearest ODD
+    integer (DYNAMITE requires odd per-axis counts), then that axis's width
+    is set to exactly ``n_bins * h`` so the cells stay exactly square. This
+    means the returned width on each axis is always >= the requested extent,
+    never smaller -- rounding up preserves the requested minimum extent, it
+    just doesn't hit it exactly.
+
+    Square cells matter here because the GMRF prior's diagonal-neighbour
+    weighting (``diag_weight=1/sqrt(2)`` in ``build_gmrf_precision``) assumes
+    a square lattice; non-square cells would change what the smoothness
+    prior actually means, and supporting that is deliberately out of scope.
+
+    Returns
+    -------
+    dict
+        ``{"width": (wx, wy), "n_bins": (kx, ky)}``, suitable for
+        ``recovery_curve_2d``'s ``grid`` parameter.
+    """
+    h = cell_sigma * sigma_ref
+
+    def _axis(half_extent_sigma):
+        full_width = 2.0 * half_extent_sigma * sigma_ref
+        k = int(np.ceil(full_width / h))
+        if k % 2 == 0:
+            k += 1
+        return k, k * h
+
+    kx, wx = _axis(half_extent_x_sigma)
+    ky, wy = _axis(half_extent_y_sigma)
+    return {"width": (wx, wy), "n_bins": (kx, ky)}
+
+
 def recovery_curve_2d(
     profile,
     truth_name,
@@ -522,6 +604,7 @@ def recovery_curve_2d(
     num_warmup=300,
     num_samples=600,
     seed=20260805,
+    grid=None,
 ):
     """Sweep raw star count and measure bias, coverage, and efficiency for
     all five 2D moments, including tilt (``rho``).
@@ -558,6 +641,17 @@ def recovery_curve_2d(
         Base RNG seed; realisation ``i`` at a given ``n_stars`` uses
         ``seed + i``, matching :func:`veldist.calibration.recovery_curve`'s
         convention.
+    grid : dict, optional
+        Overrides the profile-derived grid. ``{"width": w, "n_bins": k}``
+        with each of ``w``/``k`` a scalar (square grid, original behaviour)
+        or a ``(x, y)`` 2-tuple (rectangular grid). ``center`` is always
+        ``(0.0, 0.0)`` and is not configurable here. When ``None`` (default),
+        the grid is derived from ``profile`` exactly as before -- this
+        parameter changes nothing about the default numerical behaviour.
+        See :func:`square_cell_grid` for a helper that builds a rectangular,
+        square-celled override from a target resolution and extent.
+        Validated by :func:`_validate_grid_override`: per-axis bin counts
+        must be odd (DYNAMITE requirement) and widths must be positive.
 
     Returns
     -------
@@ -569,9 +663,11 @@ def recovery_curve_2d(
     rows = []
     metrics = ["mean_x", "mean_y", "sigma_x", "sigma_y", "rho"]
 
-    grid_center = (0.0, 0.0)
-    grid_width = (profile.grid_width, profile.grid_width)
-    n_bins = profile.n_bins
+    # Single source of truth for (center, width, n_bins): read by solver0
+    # (truth-moment edges), _discretised_truth_moments, and the per-
+    # realisation solver in the loop below. Keep it that way -- if these
+    # ever diverge the coverage numbers are silently meaningless.
+    grid_center, grid_width, n_bins = _resolve_grid(profile, grid)
 
     solver0 = KinematicSolver2D()
     solver0.setup_grid(center=grid_center, width=grid_width, n_bins=n_bins)
