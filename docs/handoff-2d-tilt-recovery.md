@@ -290,6 +290,56 @@ the original grid, is correctly calibrated purely from grid geometry: no
 change to the prior, no `pmxy_cov` modelling. The tilt was always
 recoverable; the grid was hiding it.
 
+## Grid D: the fix, validated at 1600 stars
+
+Grid D holds grid C's cell size (0.241 `sigma_ref`, square cells) and only
+reallocates the extent per-axis, at 3.5 of each axis's OWN sigma:
+**35 x 23 = 805 cells**, half-extent 3.57 `sx` / 3.65 `sy`.
+
+| metric | C bias | D bias | C rms_z | D rms_z |
+|---|---|---|---|---|
+| mean_x | +0.065 | +0.016 | 1.02 | 1.01 |
+| mean_y | +0.068 | +0.053 | 1.03 | 1.01 |
+| rho | +0.014 | +0.010 | 0.98 | 0.94 |
+| sigma_x | +0.198 | **+0.043** | 1.15 | 1.01 |
+| sigma_y | -0.050 | -0.045 | 1.06 | 1.06 |
+
+`sigma_x`'s bias fell 4.6x at identical resolution, purely from giving the
+wide axis 3.57 `sx` of room instead of 2.97. `sigma_y` held as predicted.
+Every `rms_z` is within 0.06 of 1.0 and every bias is under 0.06: all five
+posteriors have honest interval widths. **No model change was involved --
+only how the grid is sized.**
+
+### The tuning rule (validated at n_stars=1600 ONLY)
+
+- half-extent >= 3.5 x each axis's own sigma
+- square cells at <= 0.241 `sigma_ref`
+- odd bin count per axis (DYNAMITE requirement)
+
+### rms_z vs the Cramer-Rao gate
+
+`sigma_y` still reports "threshold not reached" at grid D. That verdict comes
+from `threshold()`'s `ci_width > 1.5 * cr_bound` check (ratio 1.75) -- the
+analytic CR bound the class docstring already flags as unreliable under
+heteroscedastic errors. `rms_z = 1.06` measures the same intervals against
+their own residuals and says they are fine. The CR bound is wrong here, not
+the posterior. Without `rms_z` those two cases are indistinguishable, which
+is precisely what made the original table unreadable. **`threshold()`'s CI/CR
+gate should probably be replaced by an `rms_z` band for every metric, not
+just exempted for `rho`.**
+
+### The open gap that matters
+
+Everything above is at `n_stars=1600`, where 805 cells is ~2.0 stars/cell.
+Gaia's real bins have **435** stars: 0.54 stars/cell on the same geometry,
+well past where `ObservingProfile2D`'s docstring records the method breaking
+down (~1.8 stars/cell effective limit; K=19 "breaks on anisotropic truths" at
+1.1). So the 1600-star results establish the SHAPE of the bias surface but
+not where the affordable point on it lies for real data. At real volumes the
+resolution term and the stars-per-cell term must collide, and the tuning rule
+has to arbitrate between them. Sweeping `n_stars` on grid D's geometry is the
+next run.
+
 ## Ruled out
 
 The `gaussian_core` 2D prior does not enforce axis-alignment or isotropy
