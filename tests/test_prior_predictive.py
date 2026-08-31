@@ -190,8 +190,17 @@ def test_gaussian_core_curve_is_exact_gaussian_bin_mass_when_deviation_is_zero()
     want = np.diff(norm.cdf(edges, fixed["v0"], fixed["s0"]))
     want /= want.sum()
 
-    assert np.max(np.abs(got - want)) < 1e-10, (
-        "core is not the exact Gaussian bin mass when the deviation is off; "
+    # Tolerance reflects 2-point Gauss-Legendre, not exactness. An exact erf
+    # difference was tried and reverted: it needs a floor before the log to
+    # survive far-tail cancellation, and `log(clip(x, eps))` has zero gradient
+    # where it clips, which collapsed small-s0 draws and failed 2/30 SBC
+    # simulations. logsumexp over positive quadrature terms cannot cancel, so
+    # it needs no floor and stays differentiable. See the core's comment.
+    #
+    # The bug this test exists to catch is ~1e-2 in mass, so a 1e-6 bound
+    # still separates the two by four orders of magnitude.
+    assert np.max(np.abs(got - want)) < 1e-6, (
+        "core is not the Gaussian bin mass when the deviation is off; "
         f"max mass error {np.max(np.abs(got - want)):.2e}"
     )
 
@@ -202,7 +211,7 @@ def test_gaussian_core_curve_is_exact_gaussian_bin_mass_when_deviation_is_zero()
         m = w @ centers
         return np.sqrt(w @ (centers - m) ** 2)
 
-    assert abs(_sigma(got) - _sigma(want)) < 1e-8, (
+    assert abs(_sigma(got) - _sigma(want)) < 1e-5, (
         f"core sigma {_sigma(got):.6f} != bin-mass sigma {_sigma(want):.6f}"
     )
 

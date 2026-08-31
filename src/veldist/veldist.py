@@ -483,19 +483,30 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
     # invariant in CLAUDE.md for why the two differ and why it is easy to get
     # wrong.
     #
-    # `precompute_design_matrix` already IS "Gaussian bin masses by erf CDF
-    # difference" -- it is what integrates each star's error kernel between
-    # bin edges for the likelihood. Calling it here for the single "star"
-    # (v0, s0) makes core and likelihood share one implementation, so they
-    # cannot disagree about what a bin value means, and inherits its clip
-    # floor rather than growing a second one that can drift. (An earlier
-    # version of this fix hand-rolled the erf algebra with a different floor;
-    # that is exactly the drift this avoids.)
+    # Integrate with 2-point Gauss-Legendre in log space, matching
+    # generate_gaussian_core_field_2d.
+    #
+    # NOT via precompute_design_matrix or a raw erf difference, despite both
+    # being exact, and the reason is autodiff rather than accuracy. An erf
+    # difference suffers catastrophic cancellation in the far tails, so it
+    # needs a floor before the log -- and `log(clip(x, eps))` has EXACTLY ZERO
+    # gradient wherever it clips. That is harmless in the design matrix, which
+    # is precomputed and constant, but here `v0` and `s0` are sampled sites:
+    # for a small-s0 draw most bins clip, NUTS loses the gradient in s0, and
+    # the pdf sits collapsed on one bin. Measured: 2/30 SBC simulations failed
+    # that way (std = 0, divide-by-zero in the skew/kurtosis diagnostics),
+    # against a 2% budget, while the 2D core -- same fix, quadrature form --
+    # passed.
+    #
+    # logsumexp over positive quadrature terms cannot cancel, so no floor is
+    # needed and the gradient is finite everywhere. The cost is 2e-5 relative
+    # accuracy instead of exactness, which is irrelevant next to a dead
+    # gradient.
     s0_c = jnp.clip(s0, 1e-3)
-    bin_mass = precompute_design_matrix(
-        jnp.atleast_1d(v0), jnp.atleast_1d(s0_c), centers, bin_width=bin_width
-    )[0]
-    core = jnp.log(bin_mass)
+    nodes = jnp.asarray([-1.0 / jnp.sqrt(3.0), 1.0 / jnp.sqrt(3.0)])
+    offs = 0.5 * bin_width * nodes
+    d = (centers[None, :] + offs[:, None] - v0) / s0_c
+    core = jsp.logsumexp(-0.5 * d**2, axis=0)
 
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw_deviation_scale(N_bins, rw_order)
