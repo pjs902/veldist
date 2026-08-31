@@ -131,6 +131,89 @@ anisotropic truths" at N=400 (1.1 stars/cell). This test runs at N=1600,
 so K=19 sees 4.4 stars/cell and K=21 sees 3.6 -- the regime where finer
 cells should be affordable.
 
+## Phase 2 result: grid resolution
+
+At `n_stars=1600`, `n_real=100`, floor 0.56. Script:
+`scratchpad/run_phase2_grid.py`.
+
+| metric | K=15 | K=19 | K=21 |
+|---|---|---|---|
+| mean_x | 0.63 | 0.64 | 0.65 |
+| mean_y | 0.63 | 0.63 | 0.62 |
+| rho | 0.52 FAIL | 0.62 | 0.64 |
+| sigma_x | 0.63 | 0.63 | 0.61 |
+| sigma_y | 0.47 FAIL | 0.62 | 0.58 |
+
+| bias | K=15 | K=19 | K=21 |
+|---|---|---|---|
+| sigma_y | -0.250 | -0.154 | -0.119 |
+| sigma_x | +0.099 | +0.121 | +0.145 |
+| rho | +0.045 | +0.019 | +0.019 |
+
+`sigma_y`'s bias falls monotonically with resolution and both failing
+metrics clear the floor at K=19. That is the dependence a discretisation
+bias should show and one that neither a measurement-error nor an
+identifiability explanation could produce. **Grid resolution is confirmed
+as the cause of the two Phase 1 failures.**
+
+The Sheppard sign objection resolves as a prior-resolution interaction
+rather than a Sheppard term: since `_discretised_truth_moments` bins the
+truth identically, exact cell-mass recovery would cancel the inflation to
+zero. A negative residual that shrinks with finer cells means the model
+*under-recovers* mass in the narrow axis's outer cells -- the softmax-GMRF
+field cannot express enough structure across a profile spanning ~1.6 cells
+per sigma, so it flattens toward the grid.
+
+### The two runs are paired
+
+`recovery_curve_2d` resets `rng = np.random.default_rng(seed)` *inside* the
+`n_stars` loop (`calibration2d.py:480`), so every K setting at a given
+`n_stars` sees identical mock datasets. Comparisons across K are paired.
+
+But only aggregates are retained -- per-realisation hits are discarded --
+so McNemar cannot be computed from saved output. **K=19 vs K=21 on
+`sigma_y` (0.62 vs 0.58) is 4 net flips in 100 shared realisations and is
+not significant**; unpaired it is ~0.6 sigma. Read the bias column there,
+not the coverage. Retaining per-realisation hit vectors is a cheap tooling
+fix and a prerequisite for any future K comparison.
+
+### Why x and y respond oppositely
+
+The grid is square (`±3.5*sigma_ref`, square cells) but the truth is not
+(`sx = 1.18*sigma_ref`, `sy = 0.76*sigma_ref`). Each axis therefore gets a
+different resolution *and* a different extent, in opposite directions:
+
+| axis | cells per own sigma (K=15 -> K=21) | half-extent in own sigma |
+|---|---|---|
+| x (wide) | 0.40 -> 0.28 | **2.97** |
+| y (narrow) | **0.62** -> 0.43 | 4.63 |
+
+x is well-resolved but tightly truncated; y is roomy but under-resolved.
+Refining cells fixes y's problem and leaves x's boundary where it was --
+and `sigma_x`'s bias *grows* (+0.099 -> +0.145) because finer cells let the
+field pile mass more sharply against an unmoved boundary.
+
+**Prediction (untested):** raising `n_sigma_grid` should move `sigma_x` and
+leave `sigma_y` alone. One run settles it.
+
+**The underlying defect:** `ObservingProfile2D` parameterises the grid
+against a single scalar `sigma_ref`, which is only meaningful for an
+isotropic truth. For an anisotropic velocity ellipsoid no single square-grid
+setting can put both axes at their calibrated resolution *and* extent, since
+`cell_per_sigma` and `n_sigma_grid` are shared while the requirement is
+per-axis. That is why tuning K trades one axis against the other.
+
+### What the grid fix did not touch
+
+- `rho`'s CI/CR stays 1.63-1.66 at every K. `rho`'s remaining failure mode
+  is interval *width*, and grid resolution does not address it. This is
+  what re-opens the correlated-error question (see Phase 2b).
+- The 435 -> 1600 coverage decline. At K=19/1600 every metric sits at
+  0.62-0.64, still below the 435-star K=15 numbers (0.67-0.74).
+- `cell_per_sigma=0.37` is a *candidate* default only. It was chosen at one
+  star count on one truth and is not validated at 435 stars or on the HST
+  profiles.
+
 ## Ruled out
 
 The `gaussian_core` 2D prior does not enforce axis-alignment or isotropy
@@ -155,14 +238,17 @@ The model is already rotation-invariant.
 
 See "Phase 1 result" above.
 
-### Phase 2 — grid resolution — RUNNING
+### Phase 2 — grid resolution — DONE
 
-See "Phase 2 (revised)" above. Supersedes the correlated-error work below
-as the next thing to run, on the Phase 1 evidence.
+Confirmed. See "Phase 2 result" above.
 
-### Phase 2b — correlated measurement errors (deferred)
+### Phase 2b — correlated measurement errors — REINSTATED
 
-Run this only if the grid test comes back null.
+Demoted after Phase 1 on the grounds that `rho`'s *bias* was small. That
+argument only ever covered centring; `rho`'s actual failure mode is
+interval width (CI/CR ~1.65), which the grid fix did not move at any K.
+Correlated measurement errors are a live candidate for that residual, so
+this comes back on the list rather than staying shelved.
 
 `_draw_stars` (`calibration2d.py:221-240`) builds a **diagonal** per-star
 covariance: `err_x` and `err_y` drawn independently, zero off-diagonal.
