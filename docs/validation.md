@@ -485,15 +485,47 @@ on `HST_BRIGHT`/`HST_FAINT` (both truths); it is excluded only via the same
 `GAIA_OUTER`/`gmrf` exclusions noted in the table above and in
 `test_coverage_2d.py`, not treated as optional the way 1D's h3/h4 are.
 
-Scored against the **discretised truth** (true per-cell probability mass):
-using the continuous truth would charge the model for the `~h²/12` Sheppard
-discretisation offset, which is not a model defect. The discretised
-comparison is also what Dynamite chi-squares.
+Scored against the **continuous truth**. This reversed on 2026-09-01; the
+table above predates the change and the numbers in it were measured against
+the old target.
+
+It previously scored against the *discretised* truth (per-cell probability
+mass, moments at cell centres), on the argument that a continuous target
+would charge the model for the `~h²/12` Sheppard offset. That was correct
+for the estimator as it then stood, and wrong once the estimator was fixed.
+Three components disagreed about what a cell value `p_m` means:
+
+- the **likelihood** integrates each star's error kernel over the cell, so
+  the forward model pulls `p(v) ≈ p_m/h` out of the integral — a
+  piecewise-constant assumption, giving the fitted density
+  `Var(q) = Σ p_m (v_m − μ)² + h²/12`;
+- the **reported moments** treated `p_m` as point masses at cell centres,
+  with no within-cell term;
+- the **truth** used cell-centre moments of the exact masses, `V + h²/12`.
+
+The data drive the first to `V`, so the report was `V − h²/12` against a
+target of `V + h²/12`: a gap of `h²/6` in variance, i.e. `−h²/(12σ)` in
+sigma. Confirmed against an isotropic control at 1600 stars (both axes
+identical by construction, no truncation confound): predicted vs measured
+sigma bias K=15 −0.202 vs −0.196, K=19 −0.126 vs −0.129, K=21 −0.103 vs
+−0.099 — within 4% at every resolution.
+
+The estimator now adds `h²/12` per axis and targets the continuous quantity,
+so the continuous truth is the correct comparison and the old one would
+double-count. See `docs/handoff-2d-tilt-recovery.md` for the full account,
+and the mass-vs-density invariant in `CLAUDE.md` for the bug class.
 
 **The profiling campaign that set these defaults** is recorded in the
 ``cell_per_sigma`` docstring in ``calibration2d.py`` and in TASKS.md. K=15
 (cell_per_sigma=0.47, 1.8 stars/cell) was identified as the effective limit
 for N=400; K=19 (1.1 stars/cell) breaks on anisotropic truths.
+
+> **That campaign's conclusions are suspect.** It was run with the
+> uncorrected estimator, whose `h²`-scaling bias made fine grids look
+> necessary — the resolution requirement it measured was largely the
+> artefact, not a property of the method. With the correction, K=15 (225
+> cells) gives `sigma_y` bias +0.004 and `rho` +0.003 at 1600 stars. Do not
+> rely on `cell_per_sigma=0.47` being a floor until it is re-measured.
 
 **Performance gate** (`PLAN.md` §3.4): the plan defines an explicit,
 measurable gate before considering any SVI/Pathfinder escalation. Run
