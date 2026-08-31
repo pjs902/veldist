@@ -73,6 +73,18 @@ The gates that matter most there are `test_sbc_calibration` (both priors) and `t
 
 **Important conventions:**
 - `intrinsic_pdf` samples are **probability mass** (dimensionless, each row sums to 1), not density. Convert to density by dividing by `grid["width"]` for plotting.
+
+  **This is a hard invariant, not a labelling choice, and it is easy to violate silently.** The design matrix M is built by *integrating* each star's error kernel over each cell (2x2 Gauss-Legendre in 2D). So the likelihood `M @ intrinsic_pdf` is dimensionally correct only if `intrinsic_pdf` is mass. Any code that produces a cell value by *evaluating a density at the cell centre* and then normalising has silently substituted density-at-a-point for mass, and the two differ at second order:
+
+  ```
+  mass = int_cell f  ~=  h * f(centre) + (h^3/24) * f''(centre)
+  ```
+
+  Because `f''` is positive in the tails and negative near the peak, centre-sampling under-weights the tails and **under-estimates the dispersion by O(h^2)**. The failure mode is nasty: it is invisible on fine grids, scales away as you refine (so it looks like a resolution problem you can buy your way out of), and biases *second* moments while leaving means untouched.
+
+  This exact bug lived in `generate_gaussian_core_field_2d`, where `softmax(-quad/2)` produced the Gaussian density at cell centres rather than its cell mass -- so the free, unpenalised Gaussian core was systematically narrower than the Gaussian it was meant to represent. It cost roughly half of a measured `sigma_y` bias that ran from -0.250 (K=15) to -0.050 (K=29). See `docs/handoff-2d-tilt-recovery.md`.
+
+  **When writing or reviewing any code that builds a per-cell quantity, state which one it is.** If it is mass and comes from a smooth density, it needs cell integration (exact, quadrature, or the second-order `+ (h^2/24) f''/f` term), not point evaluation. The same question applies to anything comparing model output against an analytic truth: `_discretised_truth_moments` integrates the truth over cells for precisely this reason.
 - Marginal per-bin medians from `clip_uncertainties` intentionally sum to 0.85–0.95, not 1 — this is expected because marginals are taken independently from a joint simplex posterior.
 - `truncate_losvd()` is an optional repair step for diagnosed tail contamination; it is not called by `fit_all_bins` and should be avoided unless there is a clear reason.
 - `compute_moments` is a legacy function; prefer `compute_summary` for new code.
