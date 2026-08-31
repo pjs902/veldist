@@ -144,14 +144,24 @@ def test_rw1_prior_is_uniform_documents_the_bug():
     )
 
 
-def test_gaussian_core_curve_is_exactly_quadratic_when_deviation_is_zero():
-    """With the deviation forced to zero, the latent curve must be exactly
-    the log of a Gaussian, i.e. exactly quadratic in velocity.
+def test_gaussian_core_curve_is_exact_gaussian_bin_mass_when_deviation_is_zero():
+    """With the deviation forced to zero, softmax(curve) must be the exact
+    per-bin probability MASS of a Gaussian.
 
     This is the defining property of the prior: the Gaussian is the free,
-    unpenalised null-space element (Merritt 1997). A quadratic has zero
-    third derivative, so fitting a parabola through the curve must leave
-    residuals at floating-point noise level.
+    unpenalised null-space element (Merritt 1997). The subtlety is *which*
+    Gaussian object the core has to equal. `intrinsic_pdf` is consumed as bin
+    mass -- precompute_design_matrix integrates each star's error kernel
+    between bin EDGES -- so the core must be the Gaussian's bin mass, not its
+    density sampled at bin centres.
+
+    Those differ at O(h^2): mass = int_bin f ~= h*f(c) + (h^3/24)*f''(c), and
+    f'' > 0 in the tails, so centre sampling under-weights the tails and makes
+    the core narrower than the Gaussian it claims to be. This test previously
+    asserted the curve was exactly QUADRATIC, which is the centre-density
+    property -- it passed while the prior carried exactly that bias. Asserting
+    against the exact bin mass is strictly stronger: it pins the shape, not
+    just the polynomial degree.
     """
     import numpyro
     from numpyro.handlers import seed, substitute, trace
@@ -170,12 +180,39 @@ def test_gaussian_core_curve_is_exactly_quadratic_when_deviation_is_zero():
     model_fn = substitute(seed(generate_gaussian_core_curve, jax.random.PRNGKey(0)), data=fixed)
     curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width))
 
-    # Fit a parabola in velocity and require an essentially perfect fit.
-    coeffs = np.polyfit(centers, curve, 2)
-    residual = curve - np.polyval(coeffs, centers)
-    assert np.max(np.abs(residual)) < 1e-6, (
-        "latent curve is not quadratic when the deviation is switched off; "
-        f"max parabola residual {np.max(np.abs(residual)):.2e}"
+    from scipy.stats import norm
+
+    # softmax the curve, and compare against the exact Gaussian bin mass.
+    got = np.exp(curve - curve.max())
+    got /= got.sum()
+
+    edges = np.concatenate([centers - bin_width / 2, [centers[-1] + bin_width / 2]])
+    want = np.diff(norm.cdf(edges, fixed["v0"], fixed["s0"]))
+    want /= want.sum()
+
+    # Tolerance reflects 2-point Gauss-Legendre, not exactness. An exact erf
+    # difference was tried and reverted: it needs a floor before the log to
+    # survive far-tail cancellation, and `log(clip(x, eps))` has zero gradient
+    # where it clips, which collapsed small-s0 draws and failed 2/30 SBC
+    # simulations. logsumexp over positive quadrature terms cannot cancel, so
+    # it needs no floor and stays differentiable. See the core's comment.
+    #
+    # The bug this test exists to catch is ~1e-2 in mass, so a 1e-6 bound
+    # still separates the two by four orders of magnitude.
+    assert np.max(np.abs(got - want)) < 1e-6, (
+        "core is not the Gaussian bin mass when the deviation is off; "
+        f"max mass error {np.max(np.abs(got - want)):.2e}"
+    )
+
+    # And the moments it implies must match the bin mass's, not the centre
+    # density's. At this grid the centre-density error is ~1e-2 on sigma, so
+    # this tolerance separates the two unambiguously.
+    def _sigma(w):
+        m = w @ centers
+        return np.sqrt(w @ (centers - m) ** 2)
+
+    assert abs(_sigma(got) - _sigma(want)) < 1e-5, (
+        f"core sigma {_sigma(got):.6f} != bin-mass sigma {_sigma(want):.6f}"
     )
 
 
@@ -205,6 +242,13 @@ def test_gaussian_core_deviation_is_orthogonal_to_quadratics():
     }
     model_fn = substitute(seed(generate_gaussian_core_curve, jax.random.PRNGKey(1)), data=fixed)
     curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width))
+
+    # The core is log(Gaussian BIN MASS), so a "flattened" core (s0 -> huge) is
+    # flat at a large negative CONSTANT -- the log normalisation -- not at zero.
+    # softmax is invariant to an additive constant in the log field, so that
+    # offset is gauge, not signal. Remove it before projecting; the invariant
+    # under test is that the deviation carries no LINEAR or QUADRATIC content.
+    curve = curve - curve.mean()
 
     u = (centers - centers.mean()) / (centers.max() - centers.min())
     basis = np.stack([np.ones_like(u), u, u**2], axis=1)
@@ -353,6 +397,11 @@ def test_gaussian_core_null_space_is_polynomial_of_degree_order_minus_one(rw_ord
     }
     model_fn = substitute(seed(generate_gaussian_core_curve, jax.random.PRNGKey(0)), data=fixed)
     curve = np.asarray(model_fn(n_bins, jnp.asarray(centers), bin_width, rw_order=rw_order))
+
+    # See the note in test_gaussian_core_deviation_is_orthogonal_to_quadratics:
+    # the core is log(bin mass), so a flattened core sits at a constant, and
+    # that constant is softmax gauge rather than signal.
+    curve = curve - curve.mean()
 
     u = (centers - centers.mean()) / (centers.max() - centers.min())
     scale = max(1.0, np.max(np.abs(curve)))

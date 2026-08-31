@@ -671,6 +671,12 @@ def test_gaussian_core_2d_deviation_is_orthogonal_to_quadratics():
                     data=fixed)
     field = np.asarray(fn(k, jnp.asarray(centers), L))
 
+    # Same softmax-gauge argument as
+    # test_gaussian_core_deviation_is_orthogonal_to_quadratics in
+    # tests/test_prior_predictive.py: the core is a cell MASS, so a flattened
+    # core sits at a constant, and that constant is gauge rather than signal.
+    field = field - field.mean()
+
     q_ns = _null_space_basis_2d(k)
     residual = q_ns.T @ field
     scale = max(1.0, np.max(np.abs(field)))

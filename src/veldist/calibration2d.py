@@ -266,14 +266,38 @@ def _draw_stars(rng, truth, n_stars, profile):
 
 
 def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
-    """Moments of the TRUE per-cell probability mass, taken at cell centres.
+    """Moments to compare the recovered fit against, plus the TRUE exact
+    per-cell probability mass (used for per-cell coverage, not for the
+    returned moments).
 
-    This is the fair comparison and it is also exactly what DYNAMITE
-    chi-squares. Comparing a cell-centre moment against a continuous truth
-    charges the model for grid discretisation: binning inflates a variance by
-    ~h^2/12 (Sheppard), which at cell_per_sigma=0.78 is +0.42 km/s on
-    sigma=17 -- over half the posterior interval at N=250, enough on its own
-    to destroy coverage.
+    Returns the CONTINUOUS analytic truth's mean/sigma/rho -- i.e. exactly
+    ``t``'s own ``mux``/``muy``/``sx``/``sy``/``rho``, independent of the
+    grid -- alongside the exact per-cell mass array on ``edges_x``/
+    ``edges_y`` (still needed by callers that check per-cell coverage
+    against ``mass``, e.g. ``test_per_cell_losvd_coverage_2d``).
+
+    This function used to return cell-centre POINT-MASS moments of ``mass``
+    instead (i.e. Sheppard-inflated: ``V + h^2/12`` per axis), on the
+    argument that this was "the fair comparison" because comparing a
+    cell-centre moment against the continuous truth "charges the model for
+    grid discretisation". That argument was correct for the OLD
+    ``_moments_from_pdf_samples_2d``, which computed the same kind of
+    point-mass moment on the recovered posterior (``V_hat - h^2/12``, since
+    the likelihood's forward model spreads each cell's mass uniformly
+    across the cell -- see that function's docstring for the full
+    three-way derivation). Comparing two point-mass estimators of the same
+    biased quantity was consistent.
+
+    ``_moments_from_pdf_samples_2d`` now adds ``h^2/12`` back so it
+    estimates the CONTINUOUS variance instead (matching what the
+    likelihood actually fits). Once the recovered side targets the
+    continuous quantity, comparing it against the OLD Sheppard-inflated
+    target here would double-count the ``h^2/12`` term (add it once on
+    "truth", once again implicitly via the recovered side, netting a
+    ``h^2/6`` gap in the wrong direction). The correct target now is the
+    quantity `_moments_from_pdf_samples_2d` actually estimates: the
+    continuous truth, full stop -- which is also grid-independent, as it
+    should be.
 
     ``edges_x``/``edges_y`` need not have the same length -- a rectangular
     grid (``kx != ky``) is fine. The flat index follows the same row-major
@@ -296,29 +320,72 @@ def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
                 + mvn.cdf([edges_x[ix], edges_y[iy]])
             )
     mass /= mass.sum()
-    cx, cy = centers_2d[:, 0], centers_2d[:, 1]
-    mx, my = mass @ cx, mass @ cy
-    vx = mass @ (cx - mx) ** 2
-    vy = mass @ (cy - my) ** 2
-    cxy = mass @ ((cx - mx) * (cy - my))
-    sx, sy = np.sqrt(vx), np.sqrt(vy)
-    return (dict(mean_x=mx, mean_y=my, sigma_x=sx, sigma_y=sy,
-                 rho=cxy / (sx * sy)), mass)
+    moments = dict(
+        mean_x=t["mux"], mean_y=t["muy"],
+        sigma_x=t["sx"], sigma_y=t["sy"], rho=t["rho"],
+    )
+    return moments, mass
 
 
-def _moments_from_pdf_samples_2d(pdf_samples, centers_2d):
-    """Per-sample mean_x, mean_y, sigma_x, sigma_y, rho from 2D pdf draws."""
+def _moments_from_pdf_samples_2d(pdf_samples, centers_2d, grid):
+    """Per-sample mean_x, mean_y, sigma_x, sigma_y, rho from 2D pdf draws.
+
+    ``grid`` must supply the per-axis cell widths (``grid["width_x"]``,
+    ``grid["width_y"]`` -- despite the name these are the CELL width, i.e.
+    ``edges_x[1] - edges_x[0]``, not the grid's total span; see
+    ``setup_grid_2d``'s docstring). Pass the same grid dict the caller used
+    to build ``centers_2d`` (e.g. ``solver.grid``).
+
+    Why this needs the cell width at all
+    --------------------------------------
+    ``p_m`` (one entry of ``pdf_samples``) is interpreted THREE different,
+    mutually inconsistent ways across this codebase:
+
+    1. THE LIKELIHOOD (``precompute_design_matrix`` / its 2D counterpart)
+       treats ``p_m`` as mass spread UNIFORMLY across cell ``m`` -- that is
+       the piecewise-constant assumption implicit in pulling ``p(v) ~= p_m/h``
+       out of the per-cell integral when deriving the forward model. The
+       density the likelihood actually fits, ``q(v)``, therefore has
+       ``Var(q) = sum_m p_m (v_m - mu)^2 + h^2/12`` -- the ``h^2/12`` is the
+       exact variance of a Uniform(cell) distribution.
+    2. THIS FUNCTION, before this fix, treated ``p_m`` as a POINT MASS at
+       the cell centre: ``Var = sum_m p_m (v_m - mu)^2``, with no
+       within-cell term -- i.e. it was reporting a different, smaller
+       quantity than the one the likelihood fits.
+    3. ``_discretised_truth_moments`` computes exact cell masses of the
+       analytic truth and (before this fix) ALSO took point-mass moments at
+       cell centres, giving ``V + h^2/12`` (Sheppard's correction) where
+       ``V`` is the continuous truth variance.
+
+    Since the data drive the likelihood's ``Var(q)`` toward the true
+    continuous ``V``, the old (2) reported ``V - h^2/12`` while the old (3)
+    target was ``V + h^2/12`` -- a resolution-dependent gap of ``h^2/6`` in
+    variance (about ``h^2/(12*sigma)`` in sigma) between what this function
+    reported and what it was compared against. Adding ``h^2/12`` here makes
+    (2) estimate the same continuous quantity the likelihood fits and
+    ``_discretised_truth_moments`` now targets (see that function's
+    docstring for the other half of the fix).
+
+    The x/y COVARIANCE term gets no correction: cells are axis-aligned
+    rectangles, so the within-cell distribution is a uniform product over
+    the cell and x/y are independent within a cell -- zero cross-covariance
+    contribution. ``rho`` is recomputed from the corrected variances, which
+    slightly reduces ``|rho|`` -- that is the correct consequence of the
+    correction, not a separate bug.
+    """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     cx = centers_2d[:, 0]
     cy = centers_2d[:, 1]
+    h_x = grid["width_x"]
+    h_y = grid["width_y"]
 
     mean_x = pdf_samples @ cx
     mean_y = pdf_samples @ cy
     dx = cx[None, :] - mean_x[:, None]
     dy = cy[None, :] - mean_y[:, None]
 
-    var_x = np.einsum("ij,ij->i", pdf_samples, dx**2)
-    var_y = np.einsum("ij,ij->i", pdf_samples, dy**2)
+    var_x = np.einsum("ij,ij->i", pdf_samples, dx**2) + h_x**2 / 12.0
+    var_y = np.einsum("ij,ij->i", pdf_samples, dy**2) + h_y**2 / 12.0
     cov_xy = np.einsum("ij,ij->i", pdf_samples, dx * dy)
 
     sigma_x = np.sqrt(var_x)
@@ -795,7 +862,9 @@ def recovery_curve_2d(
                 num_warmup=num_warmup, num_samples=num_samples, seed=seed + i, prior=prior
             )
             pdf_samples = np.asarray(samples["intrinsic_pdf"])
-            mean_x, mean_y, sigma_x, sigma_y, rho = _moments_from_pdf_samples_2d(pdf_samples, centers_2d)
+            mean_x, mean_y, sigma_x, sigma_y, rho = _moments_from_pdf_samples_2d(
+                pdf_samples, centers_2d, solver.grid
+            )
             draws = {"mean_x": mean_x, "mean_y": mean_y, "sigma_x": sigma_x, "sigma_y": sigma_y, "rho": rho}
 
             for m in metrics:

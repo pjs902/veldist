@@ -133,7 +133,7 @@ def test_coverage_over_mock_realisations_2d(truth_name, profile_name, prior, req
 
         pdf_samples = np.asarray(samples["intrinsic_pdf"])
         mean_x, mean_y, sigma_x, sigma_y, rho = _moments_from_pdf_samples_2d(
-            pdf_samples, centers_2d
+            pdf_samples, centers_2d, solver0.grid
         )
         draws = {
             "mean_x": mean_x,

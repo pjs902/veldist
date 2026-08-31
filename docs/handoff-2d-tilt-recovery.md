@@ -340,6 +340,127 @@ resolution term and the stars-per-cell term must collide, and the tuning rule
 has to arbitrate between them. Sweeping `n_stars` on grid D's geometry is the
 next run.
 
+## SOLVED: the resolution-dependent dispersion bias
+
+The `sigma` under-dispersion that scales with `h/sigma` is a three-way
+bookkeeping disagreement about what a cell value means. It is not a modelling
+error, not the prior, and not the Gaussian-core measure bug (that was real,
+was fixed, and moved this bias by 0.002 -- see below).
+
+### The mechanism
+
+The design matrix is `M[i,m] = int_cell_m N(v; obs_i, Sigma_i) dv`, and the
+likelihood is `M @ intrinsic_pdf`. Deriving the forward model that implies:
+
+    P(obs) = int p(v) N(obs; v, err) dv
+           = sum_m int_cell_m p(v) N(obs; v, err) dv
+           ~= sum_m (p_m / h) int_cell_m N(obs; v, err) dv        [p ~ const]
+
+Pulling `p(v) ~= p_m/h` out of the integral is a **piecewise-constant**
+assumption: the likelihood spreads each cell's mass uniformly across the cell.
+So the density it actually implies has
+
+    Var(q) = sum_m p_m (v_m - mu)^2 + h^2/12
+
+with `h^2/12` the exact variance of a uniform across one cell.
+
+Three places then disagree:
+
+| | treats `p_m` as | variance |
+|---|---|---|
+| likelihood (`M @ p`) | piecewise-constant over the cell | `sum p (v-mu)^2 + h^2/12` |
+| reported moments | point masses at cell centres | `sum p (v-mu)^2` |
+| `_discretised_truth_moments` | centres of exact cell masses | `V + h^2/12` |
+
+The data drive the first to `V`, so `sum p (v-mu)^2 = V - h^2/12` while the
+comparison target is `V + h^2/12`. Gap `h^2/6` in variance, i.e.
+
+    bias(sigma) ~= -h^2 / (12 * sigma)
+
+### Confirmation
+
+Against the isotropic control at 1600 stars (no truncation confound, both
+axes identical by construction), predicted vs measured:
+
+| K | predicted | measured (mean of x, y) | ratio |
+|---|---|---|---|
+| 15 | -0.202 | -0.196 | 0.97 |
+| 19 | -0.126 | -0.129 | 1.03 |
+| 21 | -0.103 | -0.099 | 0.96 |
+
+Within 4% at every resolution. On anisotropic `sigma_y` the ratios are 0.94 /
+0.93 / 0.88 / 0.70 (K=15/19/21/29) -- good where the bias dominates, drifting
+at K=29 where it is small and the truncation term competes.
+
+### The fix
+
+Make the estimator target the CONTINUOUS quantity and compare against the
+CONTINUOUS truth:
+
+- reported moments: `var_x += h_x^2/12`, `var_y += h_y^2/12`. The covariance
+  is unchanged (cells are axis-aligned and the within-cell distribution is a
+  uniform product, so x and y are independent within a cell); `rho` is
+  recomputed from the corrected variances.
+- truth: the analytic continuous moments, NOT the centre-discretised ones.
+
+This is exact, not approximate. `Var(q) = sum p (v-mu)^2 + h^2/12` holds
+exactly for a piecewise-constant reconstruction, so the corrected report is
+`V` and the target is `V`.
+
+Note `_discretised_truth_moments`' docstring previously argued the opposite --
+that centre-discretised truth is "the fair comparison" because a continuous
+truth "charges the model for grid discretisation". That was correct for the
+UNCORRECTED estimator. With the correction it would double-count.
+
+### Confirmed by measurement
+
+K=15, anisotropic, 1600 stars, `n_real=25` (the configuration with the
+largest bias, so the signal is unambiguous):
+
+| metric | original | after core fix | after within-cell fix | rms_z now |
+|---|---|---|---|---|
+| sigma_y | -0.250 | -0.248 | **+0.077** | 1.02 (was 1.40) |
+| sigma_x | +0.099 | +0.061 | +0.162 | 0.93 |
+| rho | +0.045 | +0.027 | **-0.003** | 0.88 |
+| mean_x | -- | +0.049 | -0.024 | 0.82 |
+| mean_y | -- | +0.058 | -0.017 | 0.95 |
+
+`sigma_y` moved by +0.325 against a predicted `h^2/(12*sigma)` = +0.265. At
+`n_real=25` the SE on bias is ~0.06, so the residual +0.077 sits ~1.3 sigma
+from zero -- consistent with the bias being removed, not merely reduced.
+`rms_z` fell 1.40 -> 1.02, so the intervals are honest too, which the core
+fix never achieved.
+
+The residual `sigma_x` +0.162 is NOT this bug: it is the truncation term
+(the wide axis gets only 2.97 `sx` of extent at this grid), diagnosed and
+fixed separately by per-axis extent sizing, which took it to +0.043 in grid
+D. The two fixes are orthogonal and compose.
+
+### Still to do
+
+- Re-run the K series (15/19/21/29) at `n_real=100` to confirm the fix
+  removes the h-dependence across resolutions, not just at K=15.
+- `analysis.py` has the SAME deficit and is NOT fixed. `compute_moments`,
+  `compute_summary` and their `_maps` variants all use
+  `sum_m p_m (v_m - mean)^2` at bin centres with no `h^2/12` term, so every
+  reported dispersion is biased low by about `h^2/(12*sigma)`. This is the
+  user-facing science API, so correcting it changes published numbers
+  (including `docs/validation.md` and anything written to DYNAMITE) --
+  a deliberate scope decision, not a patch. Note the 1D coverage tests call
+  `compute_summary` directly, so the 1D exposure IS this one; there is no
+  separate 1D calibration helper to fix.
+- `calibration.py::true_moments` is already correct (integrates the
+  continuous truth on a 400001-point grid).
+
+### Why this hid for so long
+
+It biases only SECOND moments (means are untouched), it scales away as
+`h -> 0` so it reads as "we just need a finer grid", and it is invisible to
+every normalisation check since all three quantities sum to 1. It is the same
+family as the Gaussian-core measure bug -- a disagreement about whether a cell
+value is a density or a mass -- but in a different place, and it is the larger
+of the two by roughly a factor of two.
+
 ## Ruled out
 
 The `gaussian_core` 2D prior does not enforce axis-alignment or isotropy

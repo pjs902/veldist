@@ -435,11 +435,15 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
         Physical centres of the velocity bins. Required because the Gaussian
         core is quadratic in *velocity*, not in bin index.
     bin_width : float
-        Unused by this prior, because the Sorbye-Rue standardisation is already
-        resolution-invariant, and the latent curve is in dimensionless
-        log-mass units, so no physical scale enters the deviation. Retained
-        for signature compatibility with ``generate_smooth_curve`` and
-        ``model_gaussian_core``.
+        Width of one velocity bin. Used by the Gaussian **core**, which is the
+        Gaussian's per-bin probability mass and so must know the bin edges
+        (``centers +/- bin_width/2``) to integrate between. It does NOT enter
+        the *deviation*: the Sorbye-Rue standardisation is already
+        resolution-invariant and the deviation is in dimensionless log-mass
+        units, so no physical scale reaches it. (This parameter was documented
+        as unused while the core point-evaluated a density at bin centres --
+        needing no scale was the symptom of that bug, not a property of the
+        prior. See the mass-vs-density invariant in CLAUDE.md.)
 
     Returns
     -------
@@ -459,7 +463,50 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
     # span/8 with ~1 dex of spread either side.
     v0 = numpyro.sample("v0", dist.Normal(mid, span / 4.0))
     s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 1.0))
-    core = -0.5 * ((centers - v0) / jnp.clip(s0, 1e-3)) ** 2
+    # `intrinsic_pdf` is per-bin probability MASS: precompute_design_matrix
+    # integrates each star's error kernel between bin EDGES, so the likelihood
+    # `matrix @ intrinsic_pdf` only type-checks if the pdf is mass. But
+    # softmax(-((c-v0)/s0)^2 / 2) is the Gaussian DENSITY sampled at bin
+    # centres and renormalised, which is not a Gaussian's bin mass. See the
+    # mass-vs-density invariant in CLAUDE.md; this is the 1D sibling of the bug
+    # fixed in generate_gaussian_core_field_2d.
+    #
+    #   mass = int_bin f ~= h*f(c) + (h^3/24)*f''(c),  f''/f = Q_x^2/4 - Q_xx/2
+    #
+    # with Q = ((c-v0)/s0)^2, so f''/f = (c-v0)^2/s0^4 - 1/s0^2. Since f'' > 0
+    # in the tails and < 0 near the peak, centre sampling under-weights the
+    # tails and the free (unpenalised) Gaussian core comes out narrower than
+    # the Gaussian it represents, biasing sigma low by O(h^2).
+    # `intrinsic_pdf` is per-bin probability MASS, so the core must be a
+    # Gaussian's bin mass -- NOT its density sampled at bin centres, which is
+    # what softmax(-((c-v0)/s0)^2 / 2) would give. See the mass-vs-density
+    # invariant in CLAUDE.md for why the two differ and why it is easy to get
+    # wrong.
+    #
+    # Integrate with 2-point Gauss-Legendre in log space, matching
+    # generate_gaussian_core_field_2d.
+    #
+    # NOT via precompute_design_matrix or a raw erf difference, despite both
+    # being exact, and the reason is autodiff rather than accuracy. An erf
+    # difference suffers catastrophic cancellation in the far tails, so it
+    # needs a floor before the log -- and `log(clip(x, eps))` has EXACTLY ZERO
+    # gradient wherever it clips. That is harmless in the design matrix, which
+    # is precomputed and constant, but here `v0` and `s0` are sampled sites:
+    # for a small-s0 draw most bins clip, NUTS loses the gradient in s0, and
+    # the pdf sits collapsed on one bin. Measured: 2/30 SBC simulations failed
+    # that way (std = 0, divide-by-zero in the skew/kurtosis diagnostics),
+    # against a 2% budget, while the 2D core -- same fix, quadrature form --
+    # passed.
+    #
+    # logsumexp over positive quadrature terms cannot cancel, so no floor is
+    # needed and the gradient is finite everywhere. The cost is 2e-5 relative
+    # accuracy instead of exactness, which is irrelevant next to a dead
+    # gradient.
+    s0_c = jnp.clip(s0, 1e-3)
+    nodes = jnp.asarray([-1.0 / jnp.sqrt(3.0), 1.0 / jnp.sqrt(3.0)])
+    offs = 0.5 * bin_width * nodes
+    d = (centers[None, :] + offs[:, None] - v0) / s0_c
+    core = jsp.logsumexp(-0.5 * d**2, axis=0)
 
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample("sigma3", dist.Exponential(SIGMA3_RATE)) * _rw_deviation_scale(N_bins, rw_order)

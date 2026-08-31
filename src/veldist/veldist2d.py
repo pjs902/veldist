@@ -38,6 +38,7 @@ jax.config.update("jax_enable_x64", True)  # noqa: FBT003 (jax's own API shape)
 import jax.numpy as jnp
 import numpyro
 import numpyro.distributions as dist
+from jax.scipy.special import logsumexp
 from numpyro.infer import MCMC, NUTS
 
 from .veldist import precompute_design_matrix
@@ -643,10 +644,56 @@ def generate_gaussian_core_field_2d(shape, centers_2d, L):
     # endpoints clipped, written explicitly so rho0 is a rankable site.
     rho0 = numpyro.sample("rho0", dist.Uniform(-0.95, 0.95))
 
-    dx = (cx - v0x) / jnp.clip(s0x, 1e-3)
-    dy = (cy - v0y) / jnp.clip(s0y, 1e-3)
-    quad = (dx**2 - 2.0 * rho0 * dx * dy + dy**2) / (1.0 - rho0**2)
-    core = -0.5 * quad
+    sx_c = jnp.clip(s0x, 1e-3)
+    sy_c = jnp.clip(s0y, 1e-3)
+    dx = (cx - v0x) / sx_c
+    dy = (cy - v0y) / sy_c
+    omr2 = 1.0 - rho0**2
+
+    # `intrinsic_pdf` is cell probability MASS, so the core must be a
+    # Gaussian's cell mass -- NOT its density sampled at cell centres, which
+    # is what softmax(-quad/2) would give. See the mass-vs-density invariant
+    # in CLAUDE.md for why the two differ and why it is easy to get wrong.
+    #
+    # Integrate with the same 2x2 Gauss-Legendre rule the design matrix uses
+    # for the error kernel (_design_matrix_gl_quadrature), so core and
+    # likelihood agree on what a cell value means by construction rather than
+    # by a correction a later edit could drop. A tilted bivariate Gaussian
+    # over an axis-aligned cell has no closed form, hence quadrature here
+    # where the 1D core gets an exact erf difference.
+    #
+    # Measured against the exact bivariate cell mass at K=15 (sx=13.11,
+    # sy=8.44, rho=0.4): centre sampling errs by -0.074 / -0.131 on
+    # sigma_x / sigma_y; GL 2x2 errs by +7e-5 / +5e-6. 3x3 buys nothing.
+    #
+    # NOTE ON WHAT THIS DOES *NOT* FIX: a separate, larger sigma_y
+    # under-dispersion at coarse resolution (-0.250 at K=15, shrinking to
+    # -0.050 at K=29) was initially attributed to this term. Measured
+    # end-to-end, correcting the core moved it by 0.002 -- i.e. essentially
+    # not at all. The measure bug was real and is fixed here, but it is not
+    # the cause of that bias, which remains open. Do not cite this fix as the
+    # explanation for the resolution-dependent dispersion bias.
+    #
+    # Equal GL weights and the constant cell Jacobian are dropped: both are
+    # constant across cells on a uniform grid and softmax is invariant to an
+    # additive constant in the log field.
+    # span_x/span_y were already reduced from cx/cy above for the v0 priors.
+    hx = span_x / jnp.maximum(kx - 1, 1)
+    hy = span_y / jnp.maximum(ky - 1, 1)
+    nodes, _ = _gauss_legendre_2x2_nodes()
+    offs_x = 0.5 * hx * jnp.asarray(nodes)
+    offs_y = 0.5 * hy * jnp.asarray(nodes)
+
+    # Hoisted: omr2 is loop-invariant, but each iteration's numerator differs,
+    # so XLA cannot CSE four separate divides into one. Reciprocal once.
+    neg_half_over_omr2 = -0.5 / omr2
+    sub = []
+    for ox in offs_x:
+        for oy in offs_y:
+            sdx = dx + ox / sx_c
+            sdy = dy + oy / sy_c
+            sub.append(neg_half_over_omr2 * (sdx**2 - 2.0 * rho0 * sdx * sdy + sdy**2))
+    core = logsumexp(jnp.stack(sub, axis=0), axis=0)
 
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample(
