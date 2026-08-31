@@ -189,8 +189,27 @@ class ObservingProfile2D:
             n_stars=int(round(float(np.median(per_bin_n)))),
         )
 
+    def cells_per_sigma(self, axis_sigma):
+        """Cell width in units of an axis's own intrinsic dispersion.
+
+        ``cell_per_sigma`` and ``n_bins`` are defined relative to the single
+        scalar ``sigma_ref``, which only describes the actual per-axis
+        resolution when the velocity ellipsoid is isotropic. For an
+        anisotropic truth, a narrow axis (smaller ``axis_sigma``) gets a
+        LARGER (coarser) number here than ``sigma_ref`` does, and a wide axis
+        gets a smaller (finer) one -- the grid itself doesn't change, only
+        how fine it is relative to that axis's own spread.
+        """
+        return (self.grid_width / self.n_bins) / axis_sigma
+
+    def extent_in_sigma(self, axis_sigma):
+        """Grid half-extent in units of an axis's own intrinsic dispersion."""
+        return (self.grid_width / 2.0) / axis_sigma
+
     def report(self):
         """One-line-per-fact summary, for printing in test output."""
+        aniso = truths_for(self.sigma_ref)["anisotropic"]
+        sx, sy = aniso["sx"], aniso["sy"]
         return (
             f"{self.name}: sigma_ref={self.sigma_ref:g} km/s, "
             f"{self.n_stars} stars/bin, err median={self.err_median:g} km/s "
@@ -198,7 +217,13 @@ class ObservingProfile2D:
             f"  grid {self.grid_width:.0f} km/s, n_bins={self.n_bins} per axis "
             f"({self.n_bins**2} cells), cell "
             f"{self.grid_width / self.n_bins:.1f} km/s "
-            f"({self.grid_width / self.n_bins / self.sigma_ref:.2f} sigma)"
+            f"({self.grid_width / self.n_bins / self.sigma_ref:.2f} sigma)\n"
+            f"  anisotropic truth: x-axis (sx={sx:.2f}) "
+            f"{self.cells_per_sigma(sx):.2f} sigma/cell, "
+            f"+/-{self.extent_in_sigma(sx):.2f} sigma extent\n"
+            f"  anisotropic truth: y-axis (sy={sy:.2f}) "
+            f"{self.cells_per_sigma(sy):.2f} sigma/cell, "
+            f"+/-{self.extent_in_sigma(sy):.2f} sigma extent"
         )
 
 
@@ -404,6 +429,84 @@ class RecoveryCurve2D:
                 )
         return "\n".join(lines)
 
+    def mcnemar(self, other, metric, n_stars):
+        """Paired comparison of this curve against *other* at one metric and
+        star count, valid only when both were produced at the same seed and
+        n_stars (so the mock datasets are identical).
+
+        ``recovery_curve_2d`` reseeds its RNG from the same base ``seed`` at
+        the start of every ``n_stars`` sweep point, so two curves built with
+        the same ``seed`` and the same ``n_stars`` see byte-identical mock
+        datasets realisation-for-realisation. That pairing is what makes a
+        McNemar test meaningful here: it isolates the effect of whatever
+        differs between the two curves (e.g. grid settings) from
+        realisation-to-realisation noise. If the two curves were built with
+        different seeds -- or if one of them just happens to share a coverage
+        number with the other by coincidence -- the discordant counts
+        returned here mean nothing, and this method has no way to detect
+        that mismatch on its own; the caller is responsible for only
+        comparing curves that share a seed and n_stars.
+
+        Parameters
+        ----------
+        other : RecoveryCurve2D
+            The curve to compare against.
+        metric : str
+            One of the five 2D moment names.
+        n_stars : float or int
+            The swept star count to compare at.
+
+        Returns
+        -------
+        b, c : int
+            Discordant counts: ``b`` is the count where this curve hit and
+            ``other`` missed; ``c`` is the reverse.
+        pvalue : float
+            Two-sided exact binomial p-value for ``b`` vs ``b + c`` trials
+            at p=0.5 (``scipy.stats.binomtest``).
+
+        Raises
+        ------
+        ValueError
+            If either curve lacks a row for ``metric``/``n_stars``, or if
+            the two rows' hit vectors differ in length.
+        """
+        from scipy.stats import binomtest
+
+        def _row(curve, label):
+            matches = [
+                r for r in curve.rows
+                if r["metric"] == metric and r["n_stars"] == float(n_stars)
+            ]
+            if not matches:
+                msg = (
+                    f"{label} curve has no row for metric={metric!r}, "
+                    f"n_stars={n_stars!r}"
+                )
+                raise ValueError(msg)
+            return matches[0]
+
+        row_self = _row(self, "self")
+        row_other = _row(other, "other")
+
+        hits_self = row_self.get("hits")
+        hits_other = row_other.get("hits")
+        if hits_self is None or hits_other is None:
+            msg = "both rows must carry a 'hits' vector (produced by recovery_curve_2d)"
+            raise ValueError(msg)
+        if len(hits_self) != len(hits_other):
+            msg = (
+                f"hit vector length mismatch: self has {len(hits_self)}, "
+                f"other has {len(hits_other)} -- curves are not paired"
+            )
+            raise ValueError(msg)
+
+        b = sum(1 for hs, ho in zip(hits_self, hits_other) if hs and not ho)
+        c = sum(1 for hs, ho in zip(hits_self, hits_other) if ho and not hs)
+        result = binomtest(b, b + c, 0.5) if (b + c) > 0 else None
+        pvalue = 1.0 if result is None else result.pvalue
+        return b, c, pvalue
+
 
 def recovery_curve_2d(
     profile,
@@ -479,6 +582,8 @@ def recovery_curve_2d(
         widths = {m: [] for m in metrics}
         rng = np.random.default_rng(seed)
 
+        hit_vectors = {m: [] for m in metrics}
+
         for i in range(n_real):
             obs_x, obs_y, cov = _draw_stars(rng, truth, n_stars, profile)
 
@@ -497,7 +602,9 @@ def recovery_curve_2d(
                 half68 = 0.5 * (np.percentile(draws[m], 84) - np.percentile(draws[m], 16))
                 meds[m].append(median)
                 widths[m].append(half68)
-                if abs(median - true_moments[m]) <= half68:
+                hit = abs(median - true_moments[m]) <= half68
+                hit_vectors[m].append(bool(hit))
+                if hit:
                     hits[m] += 1
 
         # Cramer-Rao-style bounds at this n_stars. See RecoveryCurve2D's
@@ -521,6 +628,7 @@ def recovery_curve_2d(
                     "coverage": hits[m] / n_real,
                     "ci_width": float(np.mean(widths[m])),
                     "cr_bound": float(cr[m]),
+                    "hits": list(hit_vectors[m]),
                 }
             )
 
