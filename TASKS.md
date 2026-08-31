@@ -706,6 +706,17 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   fixed stale `histLOSVD`/`BayesLOSVD` naming, `docs/conf.py` version
   hardcoding, `.readthedocs.yaml` redundant install step, `.gitignore` beads
   leftovers
+- 2D tilt/rho recovery — see `docs/handoff-2d-tilt-recovery.md` for full context:
+  - Phase 1: rerun `recovery_curve_2d` at n_real=100, n_stars={435,1600} to get
+    a coverage estimate tight enough to call (P1)
+  - Phase 2: model correlated measurement errors — `_draw_stars` builds a
+    diagonal per-star covariance, but real Gaia has `pmxy_cov` (P1)
+  - Phase 3: per-bin trust rule, `RecoveryCurve2D.trustworthy(metric, n_stars)` (P2)
+  - Phase 4: 2D skew/kurtosis analogs for HST data (start with standardised
+    third/fourth cumulants, not full 2D Gauss-Hermite) (P2)
+  - Investigate why sigma_y intervals run ~1.8x the CR bound while sigma_x sits
+    at ~1.3x; suspect a `cell_per_sigma` grid-resolution effect on the narrower
+    truth axis (P2, bug)
 - Fix NNLS with multiple kinematic datasets: figure out correct stacking (P1)
 - Apply perspective rotation correction to all Gaia PM data (P1)
 - SDSS-V data integration and prep pipeline (P1)
