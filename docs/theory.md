@@ -44,6 +44,38 @@ width, and number of bins.  The bin width $\Delta v$ is chosen to be
 comparable to the typical measurement uncertainty, so that the data can
 resolve individual bins.
 
+**Mass, not density — and every component must agree.** $w_j$ is the
+*integral* of the LOSVD over bin $j$, not the density evaluated at the bin
+centre. The two differ at second order,
+
+$$\int_{\text{bin}} f(v)\,\mathrm{d}v \;=\; h\,f(v_j) \;+\; \frac{h^3}{24}f''(v_j) \;+\; O(h^5),$$
+
+and since $f''>0$ in the tails and $f''<0$ near the peak, centre-sampling
+under-weights the tails and *narrows* whatever it represents.
+
+This is a modelling invariant, not a convention: three separate components
+consume $w_j$, and each must interpret it the same way.
+
+1. The **likelihood** integrates each star's error kernel over the bin
+   (§ *Pre-computing the design matrix*), which pulls $p(v)\approx w_j/h$ out
+   of the per-bin integral. That is a *piecewise-constant* reconstruction, so
+   the density the likelihood actually fits has
+   $\operatorname{Var}(q) = \sum_j w_j (v_j-\mu)^2 + h^2/12$.
+2. The **prior's Gaussian core** must therefore be a Gaussian's bin *mass*.
+   Writing it as $\mathrm{softmax}(-\tfrac12 Q)$ gives the density at bin
+   centres instead, making the free core narrower than the Gaussian it
+   claims to be. It is integrated over the bin instead.
+3. The **reported moments** must add the same $h^2/12$ back, so that what is
+   reported estimates the continuous dispersion rather than a point-mass sum
+   over bin centres.
+
+Getting any one of these wrong produces a bias that scales as $h^2$, affects
+only second and higher moments, and survives every normalisation check —
+so it reads as a resolution problem that more bins would fix. Both errors
+existed in this code and were found only via a resolution sweep; see
+`docs/handoff-2d-tilt-recovery.md` and the mass-vs-density invariant in
+`CLAUDE.md`.
+
 ### Smoothing prior
 
 A flat histogram is not a useful prior for stellar kinematics: real LOSVDs
@@ -162,6 +194,11 @@ This is the discrete, generative analogue of the roughness penalty
 $\int \left[\mathrm{d}^3/\mathrm{d}v^3 \log N(v)\right]^2\,\mathrm{d}v$ used
 by Merritt (1997, AJ, 114, 228): a Gaussian's log-density is exactly
 quadratic, so its third derivative, and the penalty, vanish identically.
+(On the grid the core is the Gaussian's bin *mass*, whose log departs from
+an exact parabola at $O(h^4)$ — see § *Histogram representation*. That
+departure is far below the deviation's own scale and does not disturb the
+null-space argument, but it is why the core is integrated rather than
+point-sampled.)
 **The infinite-smoothing limit is therefore a Gaussian with the data's own
 mean and dispersion**, not a flat histogram. That matters in the wings of
 every bin and in any low-$N$ bin: where the likelihood is uninformative,
