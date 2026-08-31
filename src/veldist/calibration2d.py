@@ -29,6 +29,7 @@ __all__ = [
     "CLUSTER_DISTANCE_PC",
     "KMS_PER_MASYR",
     "PM_QUALITY_CUT_KMS",
+    "truths_for",
 ]
 
 #: Adopted cluster distance (Peter, 2026-08-06).
@@ -194,6 +195,103 @@ class ObservingProfile2D:
             f"{self.grid_width / self.n_bins:.1f} km/s "
             f"({self.grid_width / self.n_bins / self.sigma_ref:.2f} sigma)"
         )
+
+
+def truths_for(sigma):
+    """Scale the two test truths (isotropic, anisotropic) to a profile's
+    sigma_ref rather than hardcoding absolute km/s values.
+
+    Shared by ``test_coverage_2d.py`` and :func:`recovery_curve_2d` so the
+    two never drift apart -- previously duplicated in the test module only.
+    """
+    return {
+        "isotropic": dict(mux=0.0, muy=0.0, sx=sigma, sy=sigma, rho=0.0),
+        "anisotropic": dict(
+            mux=0.18 * sigma, muy=-0.12 * sigma,
+            sx=1.18 * sigma, sy=0.76 * sigma, rho=0.4,
+        ),
+    }
+
+
+def _draw_stars(rng, truth, n_stars, profile):
+    """Draw one mock bin's observed (x, y) proper motions and per-star
+    diagonal covariance for a given truth, star count, and profile's error
+    distribution."""
+    mean = [truth["mux"], truth["muy"]]
+    cov_true = [
+        [truth["sx"] ** 2, truth["rho"] * truth["sx"] * truth["sy"]],
+        [truth["rho"] * truth["sx"] * truth["sy"], truth["sy"] ** 2],
+    ]
+    true_xy = rng.multivariate_normal(mean, cov_true, size=n_stars)
+
+    err_x = profile.draw_errors(n_stars, rng)
+    err_y = profile.draw_errors(n_stars, rng)
+    obs_x = true_xy[:, 0] + rng.normal(0.0, err_x)
+    obs_y = true_xy[:, 1] + rng.normal(0.0, err_y)
+
+    cov = np.zeros((n_stars, 2, 2))
+    cov[:, 0, 0] = err_x**2
+    cov[:, 1, 1] = err_y**2
+    return obs_x, obs_y, cov
+
+
+def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
+    """Moments of the TRUE per-cell probability mass, taken at cell centres.
+
+    This is the fair comparison and it is also exactly what DYNAMITE
+    chi-squares. Comparing a cell-centre moment against a continuous truth
+    charges the model for grid discretisation: binning inflates a variance by
+    ~h^2/12 (Sheppard), which at cell_per_sigma=0.78 is +0.42 km/s on
+    sigma=17 -- over half the posterior interval at N=250, enough on its own
+    to destroy coverage.
+    """
+    from scipy.stats import multivariate_normal
+
+    cov = [[t["sx"] ** 2, t["rho"] * t["sx"] * t["sy"]],
+           [t["rho"] * t["sx"] * t["sy"], t["sy"] ** 2]]
+    mvn = multivariate_normal(mean=[t["mux"], t["muy"]], cov=cov)
+    k = len(edges_x) - 1
+    mass = np.empty(k * k)
+    for ix in range(k):
+        for iy in range(k):
+            mass[ix * k + iy] = (
+                mvn.cdf([edges_x[ix + 1], edges_y[iy + 1]])
+                - mvn.cdf([edges_x[ix], edges_y[iy + 1]])
+                - mvn.cdf([edges_x[ix + 1], edges_y[iy]])
+                + mvn.cdf([edges_x[ix], edges_y[iy]])
+            )
+    mass /= mass.sum()
+    cx, cy = centers_2d[:, 0], centers_2d[:, 1]
+    mx, my = mass @ cx, mass @ cy
+    vx = mass @ (cx - mx) ** 2
+    vy = mass @ (cy - my) ** 2
+    cxy = mass @ ((cx - mx) * (cy - my))
+    sx, sy = np.sqrt(vx), np.sqrt(vy)
+    return (dict(mean_x=mx, mean_y=my, sigma_x=sx, sigma_y=sy,
+                 rho=cxy / (sx * sy)), mass)
+
+
+def _moments_from_pdf_samples_2d(pdf_samples, centers_2d):
+    """Per-sample mean_x, mean_y, sigma_x, sigma_y, rho from 2D pdf draws."""
+    pdf_samples = np.asarray(pdf_samples, dtype=float)
+    cx = centers_2d[:, 0]
+    cy = centers_2d[:, 1]
+
+    mean_x = pdf_samples @ cx
+    mean_y = pdf_samples @ cy
+    dx = cx[None, :] - mean_x[:, None]
+    dy = cy[None, :] - mean_y[:, None]
+
+    var_x = np.einsum("ij,ij->i", pdf_samples, dx**2)
+    var_y = np.einsum("ij,ij->i", pdf_samples, dy**2)
+    cov_xy = np.einsum("ij,ij->i", pdf_samples, dx * dy)
+
+    sigma_x = np.sqrt(var_x)
+    sigma_y = np.sqrt(var_y)
+    safe_denom = np.where((sigma_x > 0) & (sigma_y > 0), sigma_x * sigma_y, 1.0)
+    rho = np.where((sigma_x > 0) & (sigma_y > 0), cov_xy / safe_denom, 0.0)
+
+    return mean_x, mean_y, sigma_x, sigma_y, rho
 
 
 #: HST, inner region, bright stars (m_F625W ~ 18). Median 1D PM error

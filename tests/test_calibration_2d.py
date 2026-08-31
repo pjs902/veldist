@@ -35,6 +35,7 @@ import pytest
 from numpyro.infer import MCMC, NUTS, Predictive
 from scipy import stats
 
+from veldist.calibration2d import _moments_from_pdf_samples_2d
 from veldist.veldist2d import (
     build_gmrf_precision,
     model_2d,
@@ -80,29 +81,6 @@ QUANTITY_NAMES = [
 ]
 
 MAX_FAILURE_FRACTION = 0.02
-
-
-def _moments_from_pdf_samples_2d(pdf_samples, centers_2d):
-    """Per-sample mean_x, mean_y, sigma_x, sigma_y, rho from 2D pdf draws."""
-    pdf_samples = np.asarray(pdf_samples, dtype=float)
-    cx = centers_2d[:, 0]
-    cy = centers_2d[:, 1]
-
-    mean_x = pdf_samples @ cx
-    mean_y = pdf_samples @ cy
-    dx = cx[None, :] - mean_x[:, None]
-    dy = cy[None, :] - mean_y[:, None]
-
-    var_x = np.einsum("ij,ij->i", pdf_samples, dx**2)
-    var_y = np.einsum("ij,ij->i", pdf_samples, dy**2)
-    cov_xy = np.einsum("ij,ij->i", pdf_samples, dx * dy)
-
-    sigma_x = np.sqrt(var_x)
-    sigma_y = np.sqrt(var_y)
-    safe_denom = np.where((sigma_x > 0) & (sigma_y > 0), sigma_x * sigma_y, 1.0)
-    rho = np.where((sigma_x > 0) & (sigma_y > 0), cov_xy / safe_denom, 0.0)
-
-    return mean_x, mean_y, sigma_x, sigma_y, rho
 
 
 def _draw_prior(rng_key, n_stars_dummy, model_fn=model_2d, extra_kwargs=None):

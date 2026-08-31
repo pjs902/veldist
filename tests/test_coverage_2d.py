@@ -30,27 +30,19 @@ import numpy as np
 import pytest
 from scipy import stats
 
-from veldist.calibration2d import PROFILES_2D
+from veldist.calibration2d import (
+    PROFILES_2D,
+    truths_for,
+    _draw_stars,
+    _discretised_truth_moments,
+    _moments_from_pdf_samples_2d,
+)
 from veldist.veldist2d import KinematicSolver2D
-from tests.test_calibration_2d import _moments_from_pdf_samples_2d
 
 N_REAL = 25
 
 HARD_METRICS = ["mean_x", "mean_y", "sigma_x", "sigma_y", "rho"]
 SOFT_METRICS = []
-
-
-def truths_for(sigma):
-    """Scale the two test truths (isotropic, anisotropic) to a profile's
-    sigma_ref rather than hardcoding absolute km/s values."""
-    return {
-        "isotropic": dict(mux=0.0, muy=0.0, sx=sigma, sy=sigma, rho=0.0),
-        "anisotropic": dict(
-            mux=0.18 * sigma, muy=-0.12 * sigma,
-            sx=1.18 * sigma, sy=0.76 * sigma, rho=0.4,
-        ),
-    }
-
 
 TRUTHS = truths_for(1.0)  # names only ("isotropic", "anisotropic"); values built per-profile
 
@@ -59,61 +51,6 @@ def _binom_band(n, p=0.68, alpha=0.01):
     lo = stats.binom.ppf(alpha / 2, n, p) / n
     hi = stats.binom.ppf(1 - alpha / 2, n, p) / n
     return float(lo), float(hi)
-
-
-def _draw_stars(rng, truth, n_stars, profile):
-    mean = [truth["mux"], truth["muy"]]
-    cov_true = [
-        [truth["sx"] ** 2, truth["rho"] * truth["sx"] * truth["sy"]],
-        [truth["rho"] * truth["sx"] * truth["sy"], truth["sy"] ** 2],
-    ]
-    true_xy = rng.multivariate_normal(mean, cov_true, size=n_stars)
-
-    err_x = profile.draw_errors(n_stars, rng)
-    err_y = profile.draw_errors(n_stars, rng)
-    obs_x = true_xy[:, 0] + rng.normal(0.0, err_x)
-    obs_y = true_xy[:, 1] + rng.normal(0.0, err_y)
-
-    cov = np.zeros((n_stars, 2, 2))
-    cov[:, 0, 0] = err_x**2
-    cov[:, 1, 1] = err_y**2
-    return obs_x, obs_y, cov
-
-
-def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
-    """Moments of the TRUE per-cell probability mass, taken at cell centres.
-
-    This is the fair comparison and it is also exactly what DYNAMITE
-    chi-squares. Comparing a cell-centre moment against a continuous truth
-    charges the model for grid discretisation: binning inflates a variance by
-    ~h^2/12 (Sheppard), which at cell_per_sigma=0.78 is +0.42 km/s on
-    sigma=17 -- over half the posterior interval at N=250, enough on its own
-    to destroy coverage.
-    """
-    from scipy.stats import multivariate_normal
-
-    cov = [[t["sx"] ** 2, t["rho"] * t["sx"] * t["sy"]],
-           [t["rho"] * t["sx"] * t["sy"], t["sy"] ** 2]]
-    mvn = multivariate_normal(mean=[t["mux"], t["muy"]], cov=cov)
-    k = len(edges_x) - 1
-    mass = np.empty(k * k)
-    for ix in range(k):
-        for iy in range(k):
-            mass[ix * k + iy] = (
-                mvn.cdf([edges_x[ix + 1], edges_y[iy + 1]])
-                - mvn.cdf([edges_x[ix], edges_y[iy + 1]])
-                - mvn.cdf([edges_x[ix + 1], edges_y[iy]])
-                + mvn.cdf([edges_x[ix], edges_y[iy]])
-            )
-    mass /= mass.sum()
-    cx, cy = centers_2d[:, 0], centers_2d[:, 1]
-    mx, my = mass @ cx, mass @ cy
-    vx = mass @ (cx - mx) ** 2
-    vy = mass @ (cy - my) ** 2
-    cxy = mass @ ((cx - mx) * (cy - my))
-    sx, sy = np.sqrt(vx), np.sqrt(vy)
-    return (dict(mean_x=mx, mean_y=my, sigma_x=sx, sigma_y=sy,
-                 rho=cxy / (sx * sy)), mass)
 
 
 _GMRF_SCALING_XFAIL_REASON = (
