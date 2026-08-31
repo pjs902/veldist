@@ -7,6 +7,7 @@ from scipy import optimize
 
 __all__ = [
     "compute_moments",
+    "within_cell_variance",
     "cdf_percentile",
     "tail_weight",
     "bimodality_score",
@@ -20,11 +21,89 @@ __all__ = [
 ]
 
 # ---------------------------------------------------------------------------
+# Within-cell (Sheppard) correction
+# ---------------------------------------------------------------------------
+
+
+def within_cell_variance(grid_centers, bin_width=None):
+    """
+    ``h**2 / 12``, the exact variance of a Uniform(cell) distribution.
+
+    The velocity distribution the model actually infers is per-cell
+    probability MASS ``p_m`` on a grid of cell width ``h``. The likelihood's
+    design matrix (see ``precompute_design_matrix`` in ``veldist.py``)
+    INTEGRATES each star's error kernel over the cell -- a piecewise-constant
+    assumption for the density, ``p(v) ~= p_m / h`` within cell ``m``. The
+    density the model actually fits therefore has
+
+        ``Var(q) = sum_m p_m * (v_m - mu)**2 + h**2 / 12``
+
+    Treating ``p_m`` as a point mass at the cell centre (``sum_m p_m *
+    (v_m - mu)**2`` alone, with no within-cell term) omits the ``h**2/12``
+    piece and is biased low by approximately ``h**2 / (12 * sigma)`` in
+    sigma. This is the 1D counterpart of the fix already applied in
+    ``calibration2d.py::_moments_from_pdf_samples_2d`` (commit 2e2cbf8); see
+    that function's docstring for the full three-way derivation (likelihood
+    vs. point-mass estimator vs. discretised-truth target) and the
+    confirming numbers (predicted vs. measured sigma bias within 4% at
+    every tested resolution).
+
+    Parameters
+    ----------
+    grid_centers : array-like, shape (n_bins,)
+        Bin-centre velocities, in ascending order. Used only to derive the
+        cell width when *bin_width* is not given; the grid must be uniformly
+        spaced for that derivation to be valid (checked to a relative
+        tolerance of ``1e-6``).
+    bin_width : float or None, optional
+        Cell width ``h``. If ``None`` (default), derived as
+        ``grid_centers[1] - grid_centers[0]``. Passing it explicitly is
+        preferable whenever the caller already has the grid dict (e.g.
+        ``solver.grid["width"]``), since that is exact regardless of grid
+        uniformity; the derived value assumes -- and checks -- uniform
+        spacing.
+
+    Returns
+    -------
+    float
+        ``bin_width**2 / 12``.
+
+    Raises
+    ------
+    ValueError
+        If *bin_width* is ``None`` and *grid_centers* has fewer than 2
+        points, or is not uniformly spaced.
+    """
+    if bin_width is not None:
+        return float(bin_width) ** 2 / 12.0
+
+    grid_centers = np.asarray(grid_centers, dtype=float)
+    if grid_centers.size < 2:
+        msg = (
+            "cannot derive bin_width from grid_centers with fewer than 2 "
+            "points; pass bin_width explicitly"
+        )
+        raise ValueError(msg)
+
+    diffs = np.diff(grid_centers)
+    h = diffs[0]
+    if not np.allclose(diffs, h, rtol=1e-6, atol=1e-9):
+        msg = (
+            "grid_centers is not uniformly spaced, so bin_width cannot be "
+            "safely derived from grid_centers[1] - grid_centers[0]; pass "
+            "bin_width explicitly (e.g. solver.grid['width'] for a uniform "
+            "cell size, or a per-cell value)"
+        )
+        raise ValueError(msg)
+    return float(h) ** 2 / 12.0
+
+
+# ---------------------------------------------------------------------------
 # Legacy API (kept for backward compatibility)
 # ---------------------------------------------------------------------------
 
 
-def compute_moments(pdf_samples, grid_centers):
+def compute_moments(pdf_samples, grid_centers, bin_width=None):
     """
     Compute statistical moments from posterior LOSVD samples.
 
@@ -41,6 +120,13 @@ def compute_moments(pdf_samples, grid_centers):
         MCMC samples of the probability mass function.  Each row must sum to 1.
     grid_centers : array-like, shape (n_bins,)
         Centres of the velocity bins (km/s or consistent velocity unit).
+    bin_width : float or None, optional
+        Grid cell width ``h``, used to add the within-cell variance
+        ``h**2/12`` (see :func:`within_cell_variance`) so ``std`` estimates
+        the same continuous quantity the likelihood fits rather than being
+        biased low by ``~h**2/(12*sigma)``. Defaults to ``None``, which
+        derives ``h`` from *grid_centers* (requires uniform spacing); pass
+        it explicitly for a non-uniform grid or to avoid the derivation.
 
     Returns
     -------
@@ -59,13 +145,14 @@ def compute_moments(pdf_samples, grid_centers):
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
+    cell_var = within_cell_variance(grid_centers, bin_width)
 
     # Mean (1st moment)
     means = pdf_samples @ grid_centers  # (n_samples,)
 
     # Central moments (vectorised)
     delta = grid_centers[np.newaxis, :] - means[:, np.newaxis]  # (n_s, n_bins)
-    variance = np.einsum("ij,ij->i", pdf_samples, delta**2)  # (n_samples,)
+    variance = np.einsum("ij,ij->i", pdf_samples, delta**2) + cell_var  # (n_samples,)
     stds = np.sqrt(variance)  # (n_samples,)
 
     # Skewness and excess kurtosis; guard against zero-dispersion samples
@@ -123,6 +210,10 @@ def cdf_percentile(pdf_samples, grid_centers, p):
 
     >>> q25_q75 = cdf_percentile(pdf_samples, grid_centers, [0.25, 0.75])
     >>> iqr_samples = q25_q75[:, 1] - q25_q75[:, 0]
+
+    No within-cell (``h**2/12``) correction is applied here; see
+    :func:`compute_percentile_summary`'s docstring for why that correction
+    -- specific to variances -- does not apply to percentiles at all.
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
@@ -156,6 +247,14 @@ def tail_weight(pdf_samples, grid_centers, means, stds):
         ``pdf_samples @ grid_centers`` if not already available.
     stds : array-like, shape (n_samples,)
         Per-sample velocity dispersions (standard deviations of the LOSVD).
+        This function performs no second-moment computation itself -- it
+        only thresholds against whatever *stds* the caller passes in. Pass
+        the within-cell-corrected sigma (e.g. from :func:`compute_summary`,
+        which is what it is called with internally) so "outside +/-1 sigma"
+        means the same physical sigma that ``compute_summary`` reports; the
+        threshold shifts outward accordingly (fractionally by
+        ``~h**2/(24*sigma**2)``), which is the correct, if small,
+        consequence of using the corrected sigma, not a separate bug.
 
     Returns
     -------
@@ -230,6 +329,10 @@ def bimodality_score(pdf_samples):
     future improvement; the posterior-mean approach suffices to identify bins
     that require visual inspection.
 
+    Unaffected by the within-cell (``h**2/12``) variance correction
+    elsewhere in this module: this is a peak count on the raw PMF shape, not
+    a second moment, and takes no dispersion estimate as input.
+
     Examples
     --------
     >>> score = bimodality_score(solver.samples["intrinsic_pdf"])
@@ -275,6 +378,12 @@ def half_68ci(samples):
     For skewed or heavy-tailed posteriors it can differ substantially, but
     it always has the interpretation "the true value lies within +/-half_68ci
     of the median with approximately 68% posterior probability."
+
+    Unaffected by the within-cell (``h**2/12``) variance correction
+    elsewhere in this module: it is a generic percentile-spread operator on
+    whatever scalar *samples* it is handed (already-corrected sigma
+    samples, GH parameters, anything), not a second-moment computation
+    itself.
 
     Examples
     --------
@@ -367,7 +476,7 @@ def truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0):
 # ---------------------------------------------------------------------------
 
 
-def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
+def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None, bin_width=None):
     """
     Compute spatially mappable scalar summaries from posterior LOSVD samples.
 
@@ -417,6 +526,19 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
         Use ``n_sigma_truncate`` when you have reason to believe your true
         LOSVD is close to Gaussian or mildly skewed; it is not a general cure
         for kurtosis bias on heavy-tailed or multimodal truths.
+    bin_width : float or None, optional
+        Grid cell width ``h``, passed to :func:`within_cell_variance` and
+        added to the point-mass ``sigma**2`` so ``sigma`` (and the
+        ``skewness``/``kurtosis`` normalisation) estimates the continuous
+        quantity the likelihood actually fits rather than being biased low
+        by ``~h**2/(12*sigma)`` (see that function's docstring). Defaults to
+        ``None``, which derives ``h`` from *grid_centers* assuming uniform
+        spacing (validated; raises if the grid is not uniform). Prefer
+        passing ``solver.grid["width"]`` explicitly when available -- it is
+        exact regardless of grid uniformity. This correction is **not**
+        applied to ``iqr``/``sigma_iqr`` (percentile-based; see
+        :func:`compute_percentile_summary`'s docstring for why a within-cell
+        term is not the right correction for order statistics).
 
     Returns
     -------
@@ -530,6 +652,7 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)  # (n_samples, n_bins)
     grid_centers = np.asarray(grid_centers, dtype=float)  # (n_bins,)
+    cell_var = within_cell_variance(grid_centers, bin_width)
 
     if n_sigma_truncate is not None:
         pdf_samples = truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=n_sigma_truncate)
@@ -540,10 +663,25 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None):
     means = pdf_samples @ grid_centers  # (n_samples,)
     delta = grid_centers[np.newaxis, :] - means[:, np.newaxis]  # (n_s, n_bins)
 
-    variance = np.einsum("ij,ij->i", pdf_samples, delta**2)  # (n_samples,)
+    # Point-mass second moment, plus the within-cell (Sheppard) term so this
+    # estimates Var(q) of the continuous piecewise-constant density the
+    # likelihood actually fits, not the point-mass-at-centres quantity.
+    variance = np.einsum("ij,ij->i", pdf_samples, delta**2) + cell_var  # (n_samples,)
     stds = np.sqrt(variance)  # (n_samples,)
     safe_stds = np.where(stds > 0, stds, 1.0)
 
+    # skewness/kurtosis: the 3rd/4th central-moment *numerators* are left as
+    # plain point-mass sums. A rigorous within-cell (Sheppard) correction
+    # exists for these too, but by symmetry of the uniform-within-cell
+    # kernel the 3rd-moment correction is exactly zero, and the 4th-moment
+    # correction is a distribution-shape-dependent term this codebase has
+    # not derived or validated anywhere (the reference fix in
+    # calibration2d.py only covers 2nd moments/covariance). We do use the
+    # corrected `stds` (which includes h**2/12) as the normalising sigma in
+    # the denominator, since skewness/kurtosis are defined relative to *the*
+    # sigma of the distribution, and reporting them against the biased-low
+    # point-mass sigma would be inconsistent with the `sigma` this function
+    # now returns.
     skews = np.einsum("ij,ij->i", pdf_samples, delta**3) / safe_stds**3
     skews = np.where(stds > 0, skews, 0.0)
 
@@ -633,7 +771,9 @@ def compute_summary_maps(solvers):
     metrics = None
     for s in solvers:
         if s is not None:
-            summary = compute_summary(s.samples["intrinsic_pdf"], s.grid["centers"])
+            summary = compute_summary(
+                s.samples["intrinsic_pdf"], s.grid["centers"], bin_width=s.grid.get("width")
+            )
             metrics = list(summary.keys())
             break
 
@@ -647,7 +787,11 @@ def compute_summary_maps(solvers):
 
     for i, solver in enumerate(solvers):
         if solver is not None:
-            summary = compute_summary(solver.samples["intrinsic_pdf"], solver.grid["centers"])
+            summary = compute_summary(
+                solver.samples["intrinsic_pdf"],
+                solver.grid["centers"],
+                bin_width=solver.grid.get("width"),
+            )
             for m in metrics:
                 if isinstance(summary[m], tuple):
                     maps[m]["median"][i], maps[m]["uncertainty"][i] = summary[m]
@@ -678,6 +822,27 @@ def compute_percentile_summary(pdf_samples, grid_centers):
     robust *alternative* view of the same asymmetry/peakedness, evaluated
     per posterior sample so uncertainty propagates the same way as
     everywhere else in this module.
+
+    No within-cell (``h**2/12``) correction is applied anywhere in this
+    function, unlike :func:`compute_summary`. That correction is a Sheppard
+    correction to a *moment* -- it comes from the algebraic identity
+    ``Var(uniform-in-cell) = Var(point-mass-at-centre) + h**2/12``, which is
+    specific to variances (second moments) and has no analogue for a
+    percentile. A percentile of the piecewise-constant density the
+    likelihood fits is not "a percentile of point masses at centres plus a
+    correction term" -- it is a different computation entirely: the CDF of a
+    piecewise-constant density is piecewise-*linear* between cell edges, so
+    its exact percentile requires interpolating against the cell *edges*
+    with the within-cell mass spread uniformly, not against centres. This
+    function (and :func:`cdf_percentile`, which it's built on) already
+    approximates that by linearly interpolating the cumulative point mass
+    between adjacent *centres*, which is a distinct, smaller bias (bounded
+    by one grid cell, per :func:`cdf_percentile`'s docstring/tests) from the
+    variance bias this fix addresses, and is out of scope here: fixing it
+    would mean reworking ``cdf_percentile`` to interpolate against edges,
+    not adding an ``h**2/12`` term. Adding ``h**2/12`` to a percentile
+    output would not even be dimensionally sensible on its own (a percentile
+    is a location, not a squared-deviation).
 
     Parameters
     ----------
@@ -806,6 +971,23 @@ def gauss_hermite_fit(pdf_samples, grid_centers, n_draws=500, seed=0):
     Fitting is per draw rather than to the posterior mean because the mean of
     a set of LOSVDs is smoother than any of them, which would bias ``h4``
     low and understate the uncertainty on both coefficients.
+
+    No within-cell (``h**2/12``) correction is applied here, deliberately.
+    Unlike :func:`compute_summary`, this function never sums point masses
+    against ``(v - mu)**2`` to get a variance -- ``sigma_gh`` is a *fitted
+    shape parameter* of a continuous analytic curve, obtained by
+    least-squares matching ``_gh_model``'s normalised density samples
+    against the (normalised) target masses at each grid centre. For a
+    reasonably well-resolved grid, midpoint-rule integration means
+    ``p_m ~= q(v_m) * h`` to ``O(h**3)`` for smooth ``q``, so both sides of
+    the fit -- the model's sampled density and the target's per-cell mass --
+    carry the *same* discretisation to leading order, and that error
+    cancels rather than propagating one-sidedly into the fit the way it does
+    in a raw point-mass moment sum. Adding ``h**2/12`` to ``sigma_gh`` post
+    hoc would double-count an effect the fit is not making in the first
+    place (verified by :func:`gauss_hermite_fit`'s own tests: it recovers
+    planted ``sigma`` to within a few percent from GH-shaped grids without
+    any such correction).
 
     Parameters
     ----------
