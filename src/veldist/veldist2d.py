@@ -65,15 +65,39 @@ SIGMA3_RATE_2D = 0.35
 # ==============================================================================
 
 
+def _as_kx_ky(n_bins):
+    """Normalise a per-axis bin count to ``(kx, ky)``.
+
+    Accepts either a scalar (square grid, ``kx == ky``) or a 2-tuple
+    ``(kx, ky)`` (rectangular grid). This is the single place that
+    interprets ``n_bins``; every function below that needs the per-axis
+    counts goes through here (or receives ``(kx, ky)`` directly).
+    """
+    if np.isscalar(n_bins):
+        kx = ky = int(n_bins)
+    else:
+        kx, ky = n_bins
+        kx, ky = int(kx), int(ky)
+    return kx, ky
+
+
 def setup_grid_2d(center, width, n_bins):
     """
-    Define a square K x K velocity grid over a bivariate velocity space.
+    Define a velocity grid over a bivariate velocity space.
+
+    ``n_bins`` may be a scalar ``K`` (square ``K x K`` grid, the original
+    behaviour) or a 2-tuple ``(kx, ky)`` (rectangular grid) -- see
+    ``TASKS.md`` / the 2026-08-31 rectangular-grid change for why: a square
+    grid forces both axes to share one resolution and one extent-in-sigma,
+    which under-resolves or truncates whichever axis has the smaller
+    intrinsic dispersion.
 
     The grid is flattened row-major (C order) using ``np.ravel_multi_index`` /
     ``np.unravel_index`` for every index conversion, never hand-written
     arithmetic, to avoid the row-major/column-major transposition bug
     flagged in ``PLAN.md`` §3.1: cell ``(ix, iy)`` maps to flat index
-    ``m = ix * K + iy``.
+    ``m = ix * ky + iy`` (``ky`` is the per-axis count of the *second* axis;
+    for a square grid this is the same ``m = ix * K + iy`` as before).
 
     Parameters
     ----------
@@ -81,38 +105,49 @@ def setup_grid_2d(center, width, n_bins):
         Center of the grid, ``(cx, cy)``.
     width : (float, float)
         Total width of the grid, ``(wx, wy)``.
-    n_bins : int
-        Number of bins per axis, ``K``. Total number of 2D cells is ``K**2``.
+    n_bins : int or (int, int)
+        Number of bins per axis. Either a scalar ``K`` (square grid, total
+        cells ``K**2``) or ``(kx, ky)`` (rectangular grid, total cells
+        ``kx * ky``).
 
     Returns
     -------
     grid : dict
-        Keys: ``centers_x`` (K,), ``centers_y`` (K,), ``edges_x`` (K+1,),
-        ``edges_y`` (K+1,), ``centers_2d`` (K**2, 2) [row-major flattened],
+        Keys: ``centers_x`` (kx,), ``centers_y`` (ky,), ``edges_x`` (kx+1,),
+        ``edges_y`` (ky+1,), ``centers_2d`` (kx*ky, 2) [row-major flattened],
         ``width_x``, ``width_y``, ``area`` (= width_x * width_y),
-        ``n_bins`` (= K, i.e. per-axis), ``n_cells`` (= K**2), ``shape`` (K, K).
+        ``n_bins_x``, ``n_bins_y`` (per-axis counts), ``n_cells``
+        (= kx * ky), ``shape`` (kx, ky).
+
+        ``n_bins`` is set to the common per-axis count ``K`` **only when the
+        grid is square** (``kx == ky``); it is intentionally *absent* from
+        the dict for a rectangular grid, so any code that still assumes a
+        single scalar bin count fails with a clear ``KeyError`` rather than
+        silently using the wrong axis's count. New code should read
+        ``n_bins_x`` / ``n_bins_y`` (or ``shape``) instead.
     """
     cx, cy = center
     wx, wy = width
-    k = int(n_bins)
+    kx, ky = _as_kx_ky(n_bins)
 
-    edges_x = np.linspace(cx - wx / 2, cx + wx / 2, k + 1)
-    edges_y = np.linspace(cy - wy / 2, cy + wy / 2, k + 1)
+    edges_x = np.linspace(cx - wx / 2, cx + wx / 2, kx + 1)
+    edges_y = np.linspace(cy - wy / 2, cy + wy / 2, ky + 1)
     centers_x = 0.5 * (edges_x[:-1] + edges_x[1:])
     centers_y = 0.5 * (edges_y[:-1] + edges_y[1:])
 
     width_x = edges_x[1] - edges_x[0]
     width_y = edges_y[1] - edges_y[0]
 
-    # Row-major (C order) meshgrid: flat index m = ix*K + iy.
-    ix_grid, iy_grid = np.meshgrid(np.arange(k), np.arange(k), indexing="ij")
-    flat = np.ravel_multi_index((ix_grid.ravel(), iy_grid.ravel()), (k, k), order="C")
-    # flat should just be 0..K**2-1 in this order; assemble centers_2d to match.
-    centers_2d = np.empty((k * k, 2))
+    n_cells = kx * ky
+    # Row-major (C order) meshgrid: flat index m = ix*ky + iy.
+    ix_grid, iy_grid = np.meshgrid(np.arange(kx), np.arange(ky), indexing="ij")
+    flat = np.ravel_multi_index((ix_grid.ravel(), iy_grid.ravel()), (kx, ky), order="C")
+    # flat should just be 0..n_cells-1 in this order; assemble centers_2d to match.
+    centers_2d = np.empty((n_cells, 2))
     centers_2d[flat, 0] = centers_x[ix_grid.ravel()]
     centers_2d[flat, 1] = centers_y[iy_grid.ravel()]
 
-    return {
+    grid = {
         "centers_x": centers_x,
         "centers_y": centers_y,
         "edges_x": edges_x,
@@ -121,10 +156,14 @@ def setup_grid_2d(center, width, n_bins):
         "width_x": float(width_x),
         "width_y": float(width_y),
         "area": float(width_x * width_y),
-        "n_bins": k,
-        "n_cells": k * k,
-        "shape": (k, k),
+        "n_bins_x": kx,
+        "n_bins_y": ky,
+        "n_cells": n_cells,
+        "shape": (kx, ky),
     }
+    if kx == ky:
+        grid["n_bins"] = kx
+    return grid
 
 
 # ==============================================================================
@@ -181,7 +220,7 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
     pm2 = np.asarray(pm2, dtype=np.float64)
     cov = np.asarray(cov, dtype=np.float64)
     n_stars = len(pm1)
-    k = grid["n_bins"]
+    kx, ky = grid["n_bins_x"], grid["n_bins_y"]
     n_cells = grid["n_cells"]
 
     ex = grid["edges_x"]
@@ -223,7 +262,7 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
         if np.any(~is_diag):
             idx = np.where(~is_diag)[0]
             chunk_M[idx, :] = _design_matrix_gl_quadrature(
-                p1[idx], p2[idx], c[idx], ex, ey, k
+                p1[idx], p2[idx], c[idx], ex, ey, kx, ky
             )
 
         out_chunks.append(chunk_M.astype(np.float32))
@@ -258,39 +297,39 @@ def _bivariate_gaussian_pdf(x, y, mu1, mu2, cov):
     return norm * np.exp(-0.5 * quad)
 
 
-def _design_matrix_gl_quadrature(p1, p2, cov, edges_x, edges_y, k):
+def _design_matrix_gl_quadrature(p1, p2, cov, edges_x, edges_y, kx, ky):
     """
     2x2 Gauss-Legendre sub-cell quadrature for a chunk of (correlated) stars.
 
-    Returns an (n, K**2) array (float64) of cell probability masses.
+    Returns an (n, kx*ky) array (float64) of cell probability masses.
     """
     n = len(p1)
-    n_cells = k * k
+    n_cells = kx * ky
 
     cx0 = edges_x[:-1]
     cx1 = edges_x[1:]
     cy0 = edges_y[:-1]
     cy1 = edges_y[1:]
-    hx = 0.5 * (cx1 - cx0)  # half-width per x cell, (K,)
+    hx = 0.5 * (cx1 - cx0)  # half-width per x cell, (kx,)
     hy = 0.5 * (cy1 - cy0)
-    mx = 0.5 * (cx1 + cx0)  # mid per x cell, (K,)
+    mx = 0.5 * (cx1 + cx0)  # mid per x cell, (kx,)
     my = 0.5 * (cy1 + cy0)
 
     nodes, gweights = _gauss_legendre_2x2_nodes()  # 2 nodes each axis
 
-    # Evaluation points: for each cell, 2x2=4 points. Build full (K, K, 4) grid
-    # of (x, y) coordinates and weights, then evaluate per star.
+    # Evaluation points: for each cell, 2x2=4 points. Build full (kx, ky, 4)
+    # grid of (x, y) coordinates and weights, then evaluate per star.
     # x_pts[ix, jnode] = mx[ix] + hx[ix]*node[jnode]
-    x_pts = mx[:, None] + hx[:, None] * nodes[None, :]  # (K, 2)
-    y_pts = my[:, None] + hy[:, None] * nodes[None, :]  # (K, 2)
-    wx_pts = hx[:, None] * gweights[None, :]  # (K, 2); half-width already in Jacobian
-    wy_pts = hy[:, None] * gweights[None, :]
+    x_pts = mx[:, None] + hx[:, None] * nodes[None, :]  # (kx, 2)
+    y_pts = my[:, None] + hy[:, None] * nodes[None, :]  # (ky, 2)
+    wx_pts = hx[:, None] * gweights[None, :]  # (kx, 2); half-width already in Jacobian
+    wy_pts = hy[:, None] * gweights[None, :]  # (ky, 2)
 
-    # Combine into (K, K, 4) grid of points & weights (2 nodes per axis -> 4 combos)
+    # Combine into (kx, ky, 4) grid of points & weights (2 nodes per axis -> 4 combos)
     # point index p in [0,4): (a,b) = divmod(p, 2)
-    xs = np.empty((k, k, 4))
-    ys = np.empty((k, k, 4))
-    ws = np.empty((k, k, 4))
+    xs = np.empty((kx, ky, 4))
+    ys = np.empty((kx, ky, 4))
+    ws = np.empty((kx, ky, 4))
     for p in range(4):
         a, b = divmod(p, 2)
         xs[:, :, p] = x_pts[:, a][:, None]
@@ -323,7 +362,7 @@ def _design_matrix_gl_quadrature(p1, p2, cov, edges_x, edges_y, k):
 
 def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6):
     """
-    Build an 8-connectivity intrinsic GMRF precision matrix Q for a K x K grid.
+    Build an 8-connectivity intrinsic GMRF precision matrix Q for a kx x ky grid.
 
     ``Q = D - W`` where ``W`` is the (symmetric) adjacency-weight matrix:
     weight ``edge_weight`` (default 1) for the 4 edge-neighbours and
@@ -341,10 +380,22 @@ def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6)
     absolute value) so its meaning does not change if the connectivity
     weights change:  ``eps = ridge_scale * mean(diag(Q))``.
 
+    NOTE (open question, deliberately not addressed here): on a rectangular
+    grid where the *cells themselves* are non-square (``width_x/kx !=
+    width_y/ky``), the geometric justification for ``diag_weight =
+    1/sqrt(2)`` -- the Euclidean distance to a corner-touching neighbour on a
+    square lattice -- no longer strictly applies (a diagonal step covers a
+    different physical distance than sqrt(2) cells). This function keeps the
+    weights exactly as they were for the square case and does not attempt a
+    cell-aspect-ratio correction; changing that is a separate, deliberate
+    decision this task does not make.
+
     Parameters
     ----------
-    k : int
-        Grid size per axis (total cells = k**2).
+    k : int or (int, int)
+        Grid size per axis. Either a scalar ``K`` (square grid, total cells
+        ``K**2``) or ``(kx, ky)`` (rectangular grid, total cells
+        ``kx * ky``).
     diag_weight : float
         Weight for diagonal (corner-touching) neighbours. Default
         ``1/sqrt(2)`` is the natural distance weighting; pass 1.0 for equal
@@ -357,17 +408,18 @@ def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6)
 
     Returns
     -------
-    Q : np.ndarray (K**2, K**2)
-    Q_reg : np.ndarray (K**2, K**2)
+    Q : np.ndarray (n_cells, n_cells)
+    Q_reg : np.ndarray (n_cells, n_cells)
         Q with the ridge added.
     """
     if diag_weight is None:
         diag_weight = 1.0 / np.sqrt(2.0)
 
-    n_cells = k * k
+    kx, ky = _as_kx_ky(k)
+    n_cells = kx * ky
     W = np.zeros((n_cells, n_cells))
 
-    ix_grid, iy_grid = np.meshgrid(np.arange(k), np.arange(k), indexing="ij")
+    ix_grid, iy_grid = np.meshgrid(np.arange(kx), np.arange(ky), indexing="ij")
     ix_flat = ix_grid.ravel()
     iy_flat = iy_grid.ravel()
 
@@ -379,9 +431,9 @@ def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6)
         for dx, dy in offsets:
             nx = ix_flat + dx
             ny = iy_flat + dy
-            valid = (nx >= 0) & (nx < k) & (ny >= 0) & (ny < k)
-            src = np.ravel_multi_index((ix_flat[valid], iy_flat[valid]), (k, k), order="C")
-            dst = np.ravel_multi_index((nx[valid], ny[valid]), (k, k), order="C")
+            valid = (nx >= 0) & (nx < kx) & (ny >= 0) & (ny < ky)
+            src = np.ravel_multi_index((ix_flat[valid], iy_flat[valid]), (kx, ky), order="C")
+            dst = np.ravel_multi_index((nx[valid], ny[valid]), (kx, ky), order="C")
             W[src, dst] += weight
 
     add_offsets(edge_offsets, edge_weight)
@@ -398,7 +450,9 @@ def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6)
 
 @cache
 def _null_space_basis_2d(k):
-    """Orthonormal basis of the bivariate-quadratic null space, (k*k, 6).
+    """Orthonormal basis of the bivariate-quadratic null space, (n_cells, 6).
+
+    ``k`` is a scalar (square grid) or ``(kx, ky)`` (rectangular grid).
 
     Spans ``{1, x, y, x^2, xy, y^2}`` -- exactly the log-densities of
     bivariate Gaussians, which is what the prior must leave free so that the
@@ -416,27 +470,31 @@ def _null_space_basis_2d(k):
     physical coordinates differ only by an affine map. ``setup_grid_2d`` only
     produces uniform grids.
 
-    Row-major flattened (``m = ix*k + iy``) to match ``setup_grid_2d``'s
-    ``centers_2d``. Cached: costs an O(k^2) QR, depends only on ``k``, and is
-    evaluated at JAX trace time where the result is constant-folded.
+    Row-major flattened (``m = ix*ky + iy``) to match ``setup_grid_2d``'s
+    ``centers_2d``. Cached: costs an O(n_cells^2) QR, depends only on ``k``,
+    and is evaluated at JAX trace time where the result is constant-folded.
     """
-    idx = np.arange(k, dtype=float)
-    u = 2.0 * (idx - idx.mean()) / (k - 1)  # -> [-1, 1]
-    p0 = np.ones_like(u)
-    p1 = u
-    p2 = 0.5 * (3.0 * u**2 - 1.0)
+    kx, ky = _as_kx_ky(k)
 
-    ix, iy = np.meshgrid(np.arange(k), np.arange(k), indexing="ij")
+    idx_x = np.arange(kx, dtype=float)
+    ux = 2.0 * (idx_x - idx_x.mean()) / (kx - 1)  # -> [-1, 1]
+    idx_y = np.arange(ky, dtype=float)
+    uy = 2.0 * (idx_y - idx_y.mean()) / (ky - 1)  # -> [-1, 1]
+
+    p0x, p1x, p2x = np.ones_like(ux), ux, 0.5 * (3.0 * ux**2 - 1.0)
+    p0y, p1y, p2y = np.ones_like(uy), uy, 0.5 * (3.0 * uy**2 - 1.0)
+
+    ix, iy = np.meshgrid(np.arange(kx), np.arange(ky), indexing="ij")
     ix, iy = ix.ravel(), iy.ravel()
 
     # Tensor products with total degree <= 2.
     cols = [
-        p0[ix] * p0[iy],   # 1
-        p1[ix] * p0[iy],   # x
-        p0[ix] * p1[iy],   # y
-        p2[ix] * p0[iy],   # x^2
-        p1[ix] * p1[iy],   # xy
-        p0[ix] * p2[iy],   # y^2
+        p0x[ix] * p0y[iy],   # 1
+        p1x[ix] * p0y[iy],   # x
+        p0x[ix] * p1y[iy],   # y
+        p2x[ix] * p0y[iy],   # x^2
+        p1x[ix] * p1y[iy],   # xy
+        p0x[ix] * p2y[iy],   # y^2
     ]
     q, _ = np.linalg.qr(np.stack(cols, axis=1))
     return q
@@ -460,7 +518,8 @@ def _gmrf_deviation_scale_2d(k):
     Cached: O(k^6) pinv, depends only on ``k``.
     """
     q_ns = _null_space_basis_2d(k)
-    proj = np.eye(k * k) - q_ns @ q_ns.T
+    kx, ky = _as_kx_ky(k)
+    proj = np.eye(kx * ky) - q_ns @ q_ns.T
     q_mat, _ = build_gmrf_precision(k)
     sigma = proj @ np.linalg.pinv(q_mat) @ proj.T
     var = np.clip(np.diag(sigma), 1e-300, None)
@@ -518,7 +577,7 @@ def model_2d(matrix, n_cells, L):
     numpyro.factor("obs_log_lik", log_prob)
 
 
-def generate_gaussian_core_field_2d(k, centers_2d, L):
+def generate_gaussian_core_field_2d(shape, centers_2d, L):
     """Latent log-density field: free bivariate-Gaussian core + penalised deviation.
 
     The infinite-smoothing limit of this prior is a bivariate Gaussian, not a
@@ -537,19 +596,24 @@ def generate_gaussian_core_field_2d(k, centers_2d, L):
 
     Parameters
     ----------
-    k : int
-        Grid size per axis. Total cells ``k**2``.
-    centers_2d : array-like, shape (k**2, 2)
+    shape : int or (int, int)
+        Grid size per axis: a scalar ``K`` (square grid) or ``(kx, ky)``
+        (rectangular grid). Total cells ``kx * ky``. Passed explicitly
+        (never inferred from ``n_cells`` via ``sqrt``) because
+        ``round(sqrt(n_cells))`` silently recovers the wrong per-axis
+        counts on a rectangular grid with no error raised.
+    centers_2d : array-like, shape (kx*ky, 2)
         Physical cell centres from :func:`setup_grid_2d`. Required because the
         core is quadratic in *velocity*, not in cell index.
-    L : jnp.ndarray, shape (k**2, k**2)
+    L : jnp.ndarray, shape (kx*ky, kx*ky)
         Cholesky factor of the ridge-regularised GMRF precision.
 
     Returns
     -------
-    field : jnp.ndarray, shape (k**2,)
+    field : jnp.ndarray, shape (kx*ky,)
         Latent log-density, to be passed through ``softmax``.
     """
+    kx, ky = _as_kx_ky(shape)
     centers_2d = jnp.asarray(centers_2d)
     cx = centers_2d[:, 0]
     cy = centers_2d[:, 1]
@@ -587,8 +651,8 @@ def generate_gaussian_core_field_2d(k, centers_2d, L):
     # --- penalised non-Gaussian deviation ---
     sigma3 = numpyro.sample(
         "sigma3", dist.Exponential(SIGMA3_RATE_2D)
-    ) * _gmrf_deviation_scale_2d(k)
-    z = numpyro.sample("z", dist.Normal(0.0, 1.0).expand([k * k]).to_event(1))
+    ) * _gmrf_deviation_scale_2d(shape)
+    z = numpyro.sample("z", dist.Normal(0.0, 1.0).expand([kx * ky]).to_event(1))
     # x = sigma * L^-T z, i.e. solve the UPPER triangular system L.T @ x = z.
     # Using L with lower=True would give L^-1 z, a different covariance; see
     # test_solve_triangular_direction.
@@ -596,28 +660,37 @@ def generate_gaussian_core_field_2d(k, centers_2d, L):
 
     # Project out the quadratic null space. Cached constant, so a matmul
     # rather than a QR per leapfrog step.
-    q_ns = jnp.asarray(_null_space_basis_2d(k))
+    q_ns = jnp.asarray(_null_space_basis_2d(shape))
     deviation = w - q_ns @ (q_ns.T @ w)
 
     return core + deviation
 
 
-def model_gaussian_core_2d(matrix, n_cells, L, centers_2d):
+def model_gaussian_core_2d(matrix, n_cells, L, centers_2d, shape):
     """The 2D NumPyro model with the Gaussian-core prior.
 
     Parameters
     ----------
-    matrix : jnp.ndarray, shape (N_stars, k**2)
+    matrix : jnp.ndarray, shape (N_stars, kx*ky)
         Pre-computed 2D design matrix.
     n_cells : int
-        Number of grid cells, ``k**2``.
-    L : jnp.ndarray, shape (k**2, k**2)
+        Number of grid cells, ``kx * ky``. Kept as an explicit argument
+        (rather than derived from ``shape``) so the model signature matches
+        :func:`model_2d`'s, but note it is *not* used to recover the
+        per-axis counts -- see ``shape`` below.
+    L : jnp.ndarray, shape (n_cells, n_cells)
         Cholesky factor of the ridge-regularised GMRF precision.
-    centers_2d : jnp.ndarray, shape (k**2, 2)
+    centers_2d : jnp.ndarray, shape (n_cells, 2)
         Physical cell centres.
+    shape : int or (int, int)
+        Per-axis grid size: a scalar ``K`` (square grid) or ``(kx, ky)``
+        (rectangular grid). Must be passed explicitly -- ``n_cells`` alone
+        cannot be un-ambiguously factored back into ``(kx, ky)`` for a
+        rectangular grid (``round(sqrt(n_cells))`` silently gives the wrong
+        answer with no error), which is exactly the bug this parameter
+        exists to avoid.
     """
-    k = int(round(float(n_cells) ** 0.5))
-    field = generate_gaussian_core_field_2d(k, centers_2d, L)
+    field = generate_gaussian_core_field_2d(shape, centers_2d, L)
 
     intrinsic_pdf = jax.nn.softmax(field)
     numpyro.deterministic("intrinsic_pdf", intrinsic_pdf)
@@ -674,8 +747,10 @@ class KinematicSolver2D:
         ----------
         center : (float, float)
         width : (float, float)
-        n_bins : int
-            Per-axis bin count K (total cells K**2).
+        n_bins : int or (int, int)
+            Per-axis bin count. Either a scalar ``K`` (square grid, total
+            cells ``K**2``) or ``(kx, ky)`` (rectangular grid, total cells
+            ``kx * ky``).
         diag_weight, edge_weight, ridge_scale : float
             Forwarded to :func:`build_gmrf_precision`.
 
@@ -685,10 +760,10 @@ class KinematicSolver2D:
             Sets ``self.grid``, ``self.Q``, ``self.Q_reg``, ``self.L``.
         """
         self.grid = setup_grid_2d(center, width, n_bins)
-        k = self.grid["n_bins"]
+        shape = self.grid["shape"]
 
         Q, Q_reg = build_gmrf_precision(
-            k, diag_weight=diag_weight, edge_weight=edge_weight, ridge_scale=ridge_scale
+            shape, diag_weight=diag_weight, edge_weight=edge_weight, ridge_scale=ridge_scale
         )
         self.Q = Q
         self.Q_reg = Q_reg
@@ -838,6 +913,7 @@ class KinematicSolver2D:
         if prior == "gaussian_core":
             model_fn = model_gaussian_core_2d
             model_kwargs["centers_2d"] = jnp.asarray(self.grid["centers_2d"])
+            model_kwargs["shape"] = self.grid["shape"]
         else:
             model_fn = model_2d
 
