@@ -480,7 +480,10 @@ over three properly calibrated observing profiles (``HST_BRIGHT``,
 
 Parameters: ``num_warmup=300``, ``num_samples=600``, ``prior="gaussian_core"``,
 ``n_real=25``, `99%` binomial band `[0.44, 0.92]` on `mean_x/mean_y/sigma_x/
-sigma_y`; ``rho`` reported but not gating.
+sigma_y`. ``rho`` is now a gated metric on the same band for `gaussian_core`
+on `HST_BRIGHT`/`HST_FAINT` (both truths); it is excluded only via the same
+`GAIA_OUTER`/`gmrf` exclusions noted in the table above and in
+`test_coverage_2d.py`, not treated as optional the way 1D's h3/h4 are.
 
 Scored against the **discretised truth** (true per-cell probability mass):
 using the continuous truth would charge the model for the `~h²/12` Sheppard

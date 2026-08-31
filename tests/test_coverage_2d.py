@@ -4,14 +4,20 @@ Frequentist coverage over mock realisations for veldist2d.
 2D analogue of ``test_coverage.py::test_coverage_over_mock_realisations``.
 SBC (``test_calibration_2d.py``) validates the sampler against the model;
 this validates the *model against reality* -- whether the posterior's
-median +/- half-68CI for mean_x, mean_y, sigma_x, sigma_y means what we'd
-tell downstream consumers it means, for physically plausible bivariate
-truths drawn against real proper-motion observing regimes.
+median +/- half-68CI for mean_x, mean_y, sigma_x, sigma_y, and rho means
+what we'd tell downstream consumers it means, for physically plausible
+bivariate truths drawn against real proper-motion observing regimes.
 
 Per the veldist acceptance criterion (mirrored from 1D, see CLAUDE.md /
 PLAN.md): mean and dispersion recovery with calibrated uncertainties is the
-bar for "minimally working". Correlation (``rho``) recovery is the 2D
-equivalent of 1D's optional h3/h4 -- tracked and printed, not gating.
+bar for "minimally working". Correlation (``rho``) is a gated ``HARD_METRICS``
+entry here, not the tracked-but-optional role 1D's h3/h4 play -- it gates
+for ``prior="gaussian_core"`` on ``hst_bright``/``hst_faint``, under both
+truths. It is excluded only via the existing broad ``xfail`` markers on
+``gaia_outer`` (its err/sigma exceeds 1D's structural-failure threshold) and
+``prior="gmrf"`` (no Sorbye-Rue scaling on that legacy path) -- the same
+markers that exclude the other four metrics in those cases, not a
+rho-specific carve-out.
 
 ``KinematicSolver2D`` has no ``clip_uncertainties()`` (unlike 1D's
 ``KinematicSolver``), so the summary here is computed directly from

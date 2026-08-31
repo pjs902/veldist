@@ -315,7 +315,11 @@ class RecoveryCurve2D:
     ``(1 - rho**2) / sqrt(n)`` as a CI-width-like quantity. Like 1D's
     skewness/kurtosis Cramer-Rao bounds, this is only exact for homogeneous
     per-star errors; with the heterogeneous errors this package actually
-    fits, treat the CI/CR ratio for ``rho`` as indicative, not exact.
+    fits, this approximation is not reliable for ``rho``. Because of that,
+    :meth:`threshold` does not gate ``rho`` on the CI/CR efficiency check --
+    only on coverage. The ratio is still computed and printed by
+    :meth:`report` for every metric, ``rho`` included, but it is advisory
+    only there.
     """
 
     profile: object
@@ -329,6 +333,14 @@ class RecoveryCurve2D:
         Same two-condition, walk-down-from-the-top logic as
         :meth:`RecoveryCurve.threshold`, keyed on ``n_stars`` instead of
         ``ivar``. See that method's docstring for the full rationale.
+
+        The ``ci_width <= max_ci_ratio * cr_bound`` efficiency check does
+        NOT gate ``metric == "rho"`` -- only the coverage floor does. This is
+        because ``rho``'s ``cr_bound`` uses the bivariate-normal MLE
+        approximation, which (see the class docstring) is only exact for
+        homogeneous per-star errors; under this package's heterogeneous
+        errors it is not a reliable efficiency yardstick, so ``max_ci_ratio``
+        is advisory-only for ``rho``. Every other metric keeps both checks.
         """
         sel = [r for r in self.rows if r["metric"] == metric]
         if not sel:
@@ -342,7 +354,12 @@ class RecoveryCurve2D:
             by_n.setdefault(r["n_stars"], []).append(r)
 
         def ok(rows):
-            return all(r["coverage"] >= floor and r["ci_width"] <= max_ci_ratio * r["cr_bound"] for r in rows)
+            for r in rows:
+                if r["coverage"] < floor:
+                    return False
+                if metric != "rho" and r["ci_width"] > max_ci_ratio * r["cr_bound"]:
+                    return False
+            return True
 
         n_values = sorted(by_n)
         best = None

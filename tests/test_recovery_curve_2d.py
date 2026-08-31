@@ -44,11 +44,31 @@ def test_threshold_is_none_when_never_calibrated():
 
 
 def test_threshold_rejects_inefficient_points():
-    rows = _rows([(800, 0.70)])
+    rows = _rows([(800, 0.70)], metric="sigma_x")
     rows[0]["ci_width"] = 10.0
     rows[0]["cr_bound"] = 1.0
     curve = RecoveryCurve2D(profile=GAIA_OUTER, truth_name="anisotropic", rows=rows)
-    assert curve.threshold("rho", max_ci_ratio=1.5) is None
+    assert curve.threshold("sigma_x", max_ci_ratio=1.5) is None
+
+
+def test_threshold_rho_is_advisory_only_on_efficiency():
+    """rho should pass threshold() on coverage alone, even when its CI/CR
+    ratio is far worse than max_ci_ratio would tolerate -- because the
+    bivariate-normal CR-bound approximation is not exact under this
+    package's heterogeneous per-star errors (see RecoveryCurve2D's
+    docstring). The same row shape for another metric must still fail on
+    efficiency."""
+    rho_rows = _rows([(800, 0.70)], metric="rho")
+    rho_rows[0]["ci_width"] = 10.0
+    rho_rows[0]["cr_bound"] = 1.0
+    rho_curve = RecoveryCurve2D(profile=GAIA_OUTER, truth_name="anisotropic", rows=rho_rows)
+    assert rho_curve.threshold("rho", max_ci_ratio=1.5) == pytest.approx(800)
+
+    other_rows = _rows([(800, 0.70)], metric="sigma_x")
+    other_rows[0]["ci_width"] = 10.0
+    other_rows[0]["cr_bound"] = 1.0
+    other_curve = RecoveryCurve2D(profile=GAIA_OUTER, truth_name="anisotropic", rows=other_rows)
+    assert other_curve.threshold("sigma_x", max_ci_ratio=1.5) is None
 
 
 def test_threshold_is_none_when_top_n_stars_fails():
