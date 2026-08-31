@@ -66,6 +66,71 @@ and fine; only `sigma_y` exceeds the 1.5 gate.
 So there is exactly one real signal in this run: **`sigma_y` posterior
 intervals are ~1.8x the Cramer-Rao bound.**
 
+## Phase 1 result (n_real=100)
+
+Rerun at `n_real=100`, `n_stars` in {435, 1600}, same measured profile and
+`anisotropic` truth. Floor 0.56; each estimate now carries +/-0.047, tight
+enough to call. Script: `scratchpad/run_phase1_power.py`.
+
+| metric | 435 | 1600 | CI/CR | bias | verdict |
+|---|---|---|---|---|---|
+| mean_x | 0.74 | 0.63 | 1.14 | +0.05 | passes |
+| mean_y | 0.70 | 0.63 | 1.32 | +0.06 | passes |
+| rho | 0.60 | 0.52 | 1.65 | +0.03 | **fails at 1600** |
+| sigma_x | 0.67 | 0.63 | 1.28 | +0.09 | passes |
+| sigma_y | 0.58 | 0.47 | 1.78 | -0.25 | **fails at 1600** |
+
+Three findings:
+
+**Coverage falls as star count rises, on every metric.** 435 -> 1600 loses
+6-11 points across the board. More data making calibration worse is the
+signature of a fixed bias with a shrinking interval around it: at 435 the
+intervals are wide enough to cover the offset, at 1600 they are not. A pure
+identifiability limit would flatten out rather than degrade. This is the
+most important thing in the run and it was invisible at `n_real=25`, where
++/-0.19 per estimate hid the trend (and happened to scatter upward at small
+n, making `rho` look centred on nominal).
+
+**`sigma_y` carries a real, persistent bias of -0.25**, essentially
+unchanged between 435 and 1600, while every other metric's bias is +0.02 to
++0.10 and shrinking. `sigma_y` is the narrow truth axis (`sy = 0.76*sigma`)
+and the bias is negative -- the fit under-disperses the axis that is most
+coarsely resolved relative to its own width.
+
+**`rho`'s failure is an interval-width problem, not a centring one.** Its
+bias (+0.03, shrinking) is among the smallest in the table, but CI/CR =
+1.65 is the second widest. `rho` and `sigma_y` are the only two metrics
+above the 1.5 efficiency gate, and `rho = cov_xy / (sigma_x * sigma_y)` is
+mechanically coupled to `sigma_y`. These are plausibly one defect, not two.
+
+This demotes Phase 2 as originally written. Correlated measurement errors
+would show up as a `rho` *bias*, and `rho`'s bias is the smallest thing in
+the table. The grid-resolution question, filed as a P2 sideline, is now the
+leading hypothesis for both failing metrics.
+
+## Phase 2 (revised): grid resolution
+
+`cell_per_sigma = 0.47` is defined against `sigma_ref`, but the anisotropic
+truth's narrow axis is `sy = 0.76 * sigma_ref` -- so the narrow axis
+actually gets 0.47/0.76 = 0.62 cells per its own sigma, well coarser than
+the value chosen by measurement. Test at fixed `n_stars=1600` (clearest
+failure) over `cell_per_sigma` in {0.47 (K=15, Phase 1 baseline), 0.37
+(K=19), 0.33 (K=21)}. Script: `scratchpad/run_phase2_grid.py`.
+
+**Caveat that could sink this hypothesis:** Sheppard's correction says
+binning *inflates* a variance by ~h^2/12, so a too-coarse grid should
+over-disperse `sigma_y`, and the observed bias is negative. This is not
+fatal -- `_discretised_truth_moments` computes the truth on the same grid,
+so the leading-order inflation cancels and the residual can go either way
+-- but if the bias does not move with resolution, the hypothesis is dead
+and Phase 2-as-originally-written (correlated errors via `pmxy_cov`) comes
+back off the shelf.
+
+Note also that `ObservingProfile2D`'s docstring records K=19 "breaks on
+anisotropic truths" at N=400 (1.1 stars/cell). This test runs at N=1600,
+so K=19 sees 4.4 stars/cell and K=21 sees 3.6 -- the regime where finer
+cells should be affordable.
+
 ## Ruled out
 
 The `gaussian_core` 2D prior does not enforce axis-alignment or isotropy
@@ -86,15 +151,18 @@ The model is already rotation-invariant.
 
 ## Plan
 
-### Phase 1 — power
+### Phase 1 — power — DONE
 
-Rerun `recovery_curve_2d` at `n_real=100`, only `n_stars` in {435, 1600},
-`truth=anisotropic`. 200 fits, roughly the cost of the 125 already run. At
-`n_real=100` the 99% band around 0.68 narrows to about [0.56, 0.79] —
-tight enough to actually call. This is the only experiment that can
-distinguish the live hypotheses; run it before anything else.
+See "Phase 1 result" above.
 
-### Phase 2 — correlated measurement errors
+### Phase 2 — grid resolution — RUNNING
+
+See "Phase 2 (revised)" above. Supersedes the correlated-error work below
+as the next thing to run, on the Phase 1 evidence.
+
+### Phase 2b — correlated measurement errors (deferred)
+
+Run this only if the grid test comes back null.
 
 `_draw_stars` (`calibration2d.py:221-240`) builds a **diagonal** per-star
 covariance: `err_x` and `err_y` drawn independently, zero off-diagonal.
@@ -133,12 +201,10 @@ non-Gaussianity" before we invest in "what is its h3/h4."
 
 ### Also open
 
-Why are `sigma_y` intervals ~1.8x the CR bound while `sigma_x` sits at
-~1.3x? The truth is anisotropic (`sx=1.18*sigma`, `sy=0.76*sigma`), so the
-narrower axis is the one with the inefficient posterior. Worth checking
-whether this is a grid-resolution effect — `cell_per_sigma` is defined
-against `sigma_ref`, so the `sy` axis is sampled more coarsely in units of
-its own width.
+Every metric loses coverage from 435 to 1600 stars, not just the two that
+fail outright. If Phase 2 explains `sigma_y` and `rho`, check whether the
+same fix lifts `mean_x`/`mean_y`/`sigma_x` at 1600 too — their small
+positive biases (+0.05 to +0.09) may share the mechanism.
 
 ## Reproducing
 
