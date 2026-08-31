@@ -36,8 +36,8 @@ from tests.test_calibration_2d import _moments_from_pdf_samples_2d
 
 N_REAL = 25
 
-HARD_METRICS = ["mean_x", "mean_y", "sigma_x", "sigma_y"]
-SOFT_METRICS = ["rho"]
+HARD_METRICS = ["mean_x", "mean_y", "sigma_x", "sigma_y", "rho"]
+SOFT_METRICS = []
 
 
 def truths_for(sigma):
