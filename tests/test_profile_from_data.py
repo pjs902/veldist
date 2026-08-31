@@ -3,7 +3,7 @@ import json
 import numpy as np
 import pytest
 
-from veldist.calibration import OMEGACAT, ObservingProfile
+from veldist.calibration import OMEGACAT, ObservingProfile, recommend_cuts, recommend_grid
 
 
 def _synthetic_field(rng, n_bins=40, n_per_bin=150, err_median=2.5, err_log_sigma=0.4):
@@ -116,3 +116,36 @@ def test_draw_sample_rejects_nonpositive_target():
     rng = np.random.default_rng(2)
     with pytest.raises(ValueError, match="positive"):
         OMEGACAT.draw_sample(0.0, sigma=20.0, rng=rng)
+
+
+def test_recommend_grid_matches_profile_properties():
+    grid = recommend_grid(OMEGACAT, v_systemic=5.0)
+    assert grid == {"center": 5.0, "width": OMEGACAT.grid_width, "n_bins": OMEGACAT.n_bins}
+
+
+def test_recommend_cuts_without_recovery_curve_leaves_min_ivar_none():
+    cuts = recommend_cuts(OMEGACAT)
+    assert cuts == {"min_stars": 10, "min_ivar": None, "sigma_ref": OMEGACAT.sigma_ref}
+
+
+def test_recommend_cuts_uses_recovery_curve_threshold():
+    class _StubCurve:
+        sigma = OMEGACAT.sigma_min
+
+        def threshold(self, metric, **kwargs):
+            assert metric == "sigma"
+            return 0.42
+
+    cuts = recommend_cuts(OMEGACAT, recovery=_StubCurve())
+    assert cuts["min_ivar"] == 0.42
+
+
+def test_recommend_cuts_rejects_recovery_curve_built_at_wrong_sigma():
+    class _StubCurve:
+        sigma = OMEGACAT.sigma_max  # wrong: must be sigma_min
+
+        def threshold(self, metric, **kwargs):
+            raise AssertionError("should not be reached")
+
+    with pytest.raises(ValueError, match="sigma_min"):
+        recommend_cuts(OMEGACAT, recovery=_StubCurve())

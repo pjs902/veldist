@@ -29,6 +29,8 @@ from veldist.analysis import half_68ci
 __all__ = [
     "ObservingProfile",
     "OMEGACAT",
+    "recommend_grid",
+    "recommend_cuts",
     "Truth",
     "make_truths",
     "true_moments",
@@ -358,6 +360,82 @@ OMEGACAT = ObservingProfile(
     sigma_min=7.0,
     rotation_span=10.0,
 )
+
+
+def recommend_grid(profile: ObservingProfile, v_systemic: float = 0.0) -> dict:
+    """``KinematicSolver.setup_grid`` / ``fit_all_bins(grid_kwargs=...)`` from
+    a measured :class:`ObservingProfile`, instead of hand-picking ``n_bins``.
+
+    Just exposes ``profile.grid_width``/``n_bins`` (already derived from the
+    error and dispersion scale, see the class docstring) in the shape those
+    callers expect.
+
+    Parameters
+    ----------
+    profile : ObservingProfile
+        Typically ``ObservingProfile.from_data(...)`` on the real catalogue.
+    v_systemic : float
+        Grid centre, km/s. Default 0.0 (velocities already systemic-subtracted).
+    """
+    return {"center": v_systemic, "width": profile.grid_width, "n_bins": profile.n_bins}
+
+
+def recommend_cuts(profile: ObservingProfile, recovery=None, metric="sigma", min_stars=10, **threshold_kwargs) -> dict:
+    """``fit_all_bins(min_stars=, min_ivar=, sigma_ref=)`` from a measured
+    :class:`ObservingProfile`.
+
+    ``min_ivar`` cannot be derived from the profile alone: it is a coverage
+    threshold, which requires actually running recovery sims (see
+    ``RecoveryCurve.threshold``, the mechanism ``fit_all_bins``'s own
+    ``min_ivar`` docstring points to). That sweep is expensive (~hours), so
+    it is opt-in here rather than run implicitly.
+
+    Parameters
+    ----------
+    profile : ObservingProfile
+    recovery : RecoveryCurve, optional
+        Output of ``recovery_curve(profile, ..., sigma=profile.sigma_min)`` --
+        must be built at ``sigma_min``, the hardest case in the field, so the
+        threshold is conservative rather than optimistic; a curve built at a
+        higher dispersion would pass bins that actually fail at low
+        dispersion. Checked: raises if ``recovery.sigma != profile.sigma_min``.
+        If omitted, the returned ``min_ivar`` is ``None`` and only the
+        ``min_stars`` cut applies -- the same default ``fit_all_bins`` already
+        uses on its own.
+    metric : str
+        Passed to ``recovery.threshold``. Default ``"sigma"``, since ``v_mean``
+        is not the binding constraint for a dispersion-map data product.
+    min_stars : int
+        Floor applied regardless of ``recovery`` (avoids degenerate fits
+        below this even where ``min_ivar`` alone would pass). Default 10,
+        matching ``fit_all_bins``'s own default.
+    **threshold_kwargs
+        Forwarded to ``recovery.threshold`` (``min_coverage``, ``max_ci_ratio``,
+        ``band``).
+
+    Returns
+    -------
+    dict
+        ``min_stars``, ``min_ivar`` (``None`` if ``recovery`` was not given),
+        ``sigma_ref`` -- unpack straight into ``fit_all_bins(**recommend_cuts(...))``.
+
+    Raises
+    ------
+    ValueError
+        If ``recovery`` is given but was built at a ``sigma`` other than
+        ``profile.sigma_min``.
+    """
+    min_ivar = None
+    if recovery is not None:
+        if recovery.sigma != profile.sigma_min:
+            msg = (
+                f"recovery was built at sigma={recovery.sigma}, but recommend_cuts "
+                f"requires sigma_min={profile.sigma_min} (the hardest case in the "
+                "field) so the threshold is conservative rather than optimistic."
+            )
+            raise ValueError(msg)
+        min_ivar = recovery.threshold(metric, **threshold_kwargs)
+    return {"min_stars": min_stars, "min_ivar": min_ivar, "sigma_ref": profile.sigma_ref}
 
 
 @dataclass

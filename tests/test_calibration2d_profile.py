@@ -65,3 +65,60 @@ def test_report_mentions_the_numbers_that_matter():
     r = HST_BRIGHT.report()
     for token in ["hst_bright", "err/sigma", "n_bins", "stars"]:
         assert token in r
+
+
+def _synthetic_pm_field(rng, n_bins=30, n_per_bin=400, sigma_ref=17.0, err_median=1.0, err_cut=6.4):
+    pm1, pm2, err1, err2, bin_ids = [], [], [], [], []
+    for i in range(n_bins):
+        e = np.clip(rng.lognormal(np.log(err_median), 0.3, n_per_bin), 1e-3, err_cut)
+        p1 = rng.normal(0.0, sigma_ref, n_per_bin) + rng.normal(0.0, e)
+        p2 = rng.normal(0.0, sigma_ref, n_per_bin) + rng.normal(0.0, e)
+        pm1.append(p1)
+        pm2.append(p2)
+        err1.append(e)
+        err2.append(e)
+        bin_ids.append(np.full(n_per_bin, i))
+    return (
+        np.concatenate(pm1),
+        np.concatenate(pm2),
+        np.concatenate(err1),
+        np.concatenate(err2),
+        np.concatenate(bin_ids),
+    )
+
+
+def test_from_data_recovers_known_profile():
+    rng = np.random.default_rng(20260831)
+    pm1, pm2, err1, err2, bin_ids = _synthetic_pm_field(rng)
+
+    p = ObservingProfile2D.from_data(pm1, pm2, err1, err2, bin_ids, err_cut=6.4, name="synthetic")
+
+    assert p.sigma_ref == pytest.approx(17.0, rel=0.1)
+    assert p.err_median == pytest.approx(1.0, rel=0.3)
+    assert p.n_stars == 400
+    assert p.err_cut == 6.4
+    assert p.name == "synthetic"
+
+
+def test_from_data_excludes_bins_below_min_stars_consistently():
+    rng = np.random.default_rng(1)
+    pm1, pm2, err1, err2, bin_ids = _synthetic_pm_field(rng, n_bins=5, n_per_bin=400)
+    # Add one undersized bin that should be excluded from every statistic.
+    small = np.full(3, 1000.0)
+    pm1 = np.concatenate([pm1, small])
+    pm2 = np.concatenate([pm2, small])
+    err1 = np.concatenate([err1, np.full(3, 1.0)])
+    err2 = np.concatenate([err2, np.full(3, 1.0)])
+    bin_ids = np.concatenate([bin_ids, np.full(3, 99)])
+
+    p = ObservingProfile2D.from_data(pm1, pm2, err1, err2, bin_ids, err_cut=6.4, min_stars=10)
+
+    # The undersized bin's wildly offset values must not leak into sigma_ref.
+    assert p.sigma_ref == pytest.approx(17.0, rel=0.1)
+
+
+def test_from_data_rejects_too_few_surviving_bins():
+    rng = np.random.default_rng(2)
+    pm1, pm2, err1, err2, bin_ids = _synthetic_pm_field(rng, n_bins=1, n_per_bin=400)
+    with pytest.raises(ValueError, match="at least 2 bins"):
+        ObservingProfile2D.from_data(pm1, pm2, err1, err2, bin_ids, err_cut=6.4)

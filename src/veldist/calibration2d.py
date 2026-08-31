@@ -110,6 +110,79 @@ class ObservingProfile2D:
         e = rng.lognormal(np.log(self.err_median), sigma_log, n)
         return np.clip(e, 1e-3, self.err_cut)
 
+    @classmethod
+    def from_data(cls, pm1, pm2, err1, err2, bin_ids, err_cut, name="measured", min_stars=10):
+        """Measure a profile from a real proper-motion catalogue.
+
+        Mirrors :meth:`ObservingProfile.from_data`: both HST and Gaia
+        dataprep notebooks independently hand-rolled this exact per-bin
+        estimator, so it belongs here instead of duplicated per notebook.
+
+        ``err_cut`` is a quality cut applied upstream (Gaia's is ~4x HST's),
+        not something measurable from post-cut data, so it is a required
+        argument rather than derived.
+
+        Parameters
+        ----------
+        pm1, pm2 : array-like, shape (n_stars,)
+            Proper-motion components, km/s, in the frame the grid is defined
+            in.
+        err1, err2 : array-like, shape (n_stars,)
+            Per-star measurement errors on ``pm1``/``pm2``, km/s.
+        bin_ids : array-like, shape (n_stars,)
+            Spatial bin index for each star. Values need not be contiguous.
+        err_cut : float
+            Upper truncation on the error distribution, km/s.
+        name : str
+            Label carried into the returned profile.
+        min_stars : int
+            Bins with fewer stars are excluded from every measured
+            statistic (``sigma_ref``, ``err_median``, ``n_stars``), applied
+            consistently rather than per-statistic.
+
+        Returns
+        -------
+        ObservingProfile2D
+
+        Raises
+        ------
+        ValueError
+            If fewer than 2 bins survive the *min_stars* cut.
+        """
+        pm1 = np.asarray(pm1, dtype=float)
+        pm2 = np.asarray(pm2, dtype=float)
+        err1 = np.asarray(err1, dtype=float)
+        err2 = np.asarray(err2, dtype=float)
+        bin_ids = np.asarray(bin_ids)
+
+        per_bin_n, per_bin_sigma, per_bin_err_med = [], [], []
+        for b in np.unique(bin_ids):
+            sel = bin_ids == b
+            n = int(np.sum(sel))
+            if n < min_stars:
+                continue
+            e1, e2 = err1[sel], err2[sel]
+            err_mag = np.hypot(e1, e2) / np.sqrt(2)
+            err_med = np.median(err_mag)
+            var1 = np.var(pm1[sel]) - np.mean(e1**2)
+            var2 = np.var(pm2[sel]) - np.mean(e2**2)
+            sigma = np.sqrt(max(0.5 * (var1 + var2), err_med**2))
+            per_bin_n.append(n)
+            per_bin_sigma.append(sigma)
+            per_bin_err_med.append(err_med)
+
+        if len(per_bin_sigma) < 2:
+            msg = f"at least 2 bins with >= {min_stars} stars are required, got {len(per_bin_sigma)}"
+            raise ValueError(msg)
+
+        return cls(
+            name=name,
+            sigma_ref=float(np.median(per_bin_sigma)),
+            err_median=float(np.median(per_bin_err_med)),
+            err_cut=float(err_cut),
+            n_stars=int(round(float(np.median(per_bin_n)))),
+        )
+
     def report(self):
         """One-line-per-fact summary, for printing in test output."""
         return (
