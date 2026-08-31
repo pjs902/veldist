@@ -15,12 +15,14 @@ from scipy import stats
 from veldist.analysis import (
     bimodality_score,
     cdf_percentile,
+    compute_moments,
     compute_percentile_summary,
     compute_summary,
     compute_summary_maps,
     gauss_hermite_fit,
     half_68ci,
     truncate_pdf_samples,
+    within_cell_variance,
 )
 
 from types import SimpleNamespace
@@ -148,6 +150,163 @@ def test_kurtosis_student_t():
     # per the plan's own caveat.
     assert kurt > 0
     assert kurt == pytest.approx(true_kurt, rel=0.5)
+
+
+# ---------------------------------------------------------------------------
+# Within-cell (Sheppard) variance correction
+# ---------------------------------------------------------------------------
+
+
+def test_within_cell_variance_formula():
+    assert within_cell_variance(None, bin_width=6.0) == pytest.approx(3.0)  # 36/12
+    centers = np.array([0.0, 2.0, 4.0, 6.0])
+    assert within_cell_variance(centers) == pytest.approx(4.0 / 12.0)
+
+
+def test_within_cell_variance_rejects_nonuniform_grid():
+    centers = np.array([0.0, 1.0, 3.0, 6.0])
+    with pytest.raises(ValueError):
+        within_cell_variance(centers)
+
+
+def test_within_cell_variance_rejects_too_few_points():
+    with pytest.raises(ValueError):
+        within_cell_variance(np.array([0.0]))
+
+
+def test_compute_summary_sigma_correction_is_exactly_h2_over_12():
+    """
+    Pins the exact (not approximate) identity the fix implements: the
+    LOSVD the likelihood fits has mass p_m spread UNIFORMLY across each
+    cell (see ``precompute_design_matrix``), so its variance decomposes,
+    by the law of total variance, as EXACTLY
+
+        Var = sum_m p_m*(v_m - mu)**2 + h**2/12
+
+    for *any* set of per-cell masses p_m, because ``Var(v | cell) = h**2/12``
+    exactly for a Uniform(cell) variable and ``E[v | cell] = v_m`` exactly
+    (the cell centre). This holds independent of what smooth "truth" the
+    p_m happen to approximate, so it can be checked to machine precision
+    rather than approximately -- a stronger, construction-independent
+    pin on the fix than any percent-level tolerance could give, and the
+    one that actually catches the correction being silently dropped,
+    halved, or doubled.
+    """
+    rng = np.random.default_rng(0)
+    centers, width = make_grid(-40, 40, 37)  # odd n_bins, deliberately not a "nice" grid
+    raw = rng.exponential(size=(5, 37)) + 0.01  # arbitrary positive masses, several rows
+    pmf = raw / raw.sum(axis=1, keepdims=True)
+
+    means = pmf @ centers
+    delta = centers[np.newaxis, :] - means[:, np.newaxis]
+    point_mass_var = np.einsum("ij,ij->i", pmf, delta**2)
+    expected_var = point_mass_var + width**2 / 12.0
+
+    summary = compute_summary(pmf, centers)
+    corrected_sigma = summary["sigma"][0]
+    corrected_dispersion = summary["sigma"][1]
+
+    # Median/half-68CI of sqrt(expected_var) across the 5 synthetic rows.
+    expected_sigma_samples = np.sqrt(expected_var)
+    p16, p50, p84 = np.percentile(expected_sigma_samples, [16, 50, 84])
+    assert corrected_sigma == pytest.approx(p50, abs=1e-12)
+    assert corrected_dispersion == pytest.approx((p84 - p16) / 2.0, abs=1e-12)
+
+
+def test_compute_summary_sigma_biased_low_without_correction_magnitude():
+    """
+    On a well-resolved grid (h**2/(12*sigma) small relative to sigma), the
+    corrected sigma recovers the continuous Gaussian truth to a couple of
+    percent; on a deliberately coarser grid the correction shifts sigma up
+    by measurably more, in the direction and rough magnitude predicted by
+    h**2/12 (via the exact identity pinned in the test above), rather than
+    doing nothing.
+    """
+    true_sigma = 8.0
+    dist = stats.norm(loc=0, scale=true_sigma)
+
+    fine_centers, fine_width = make_grid(-64, 64, 4000)
+    fine_pmf = analytic_pmf(dist, fine_centers, fine_width)
+    fine_sigma = compute_summary(fine_pmf, fine_centers)["sigma"][0]
+    assert fine_sigma == pytest.approx(true_sigma, rel=0.02)
+
+    coarse_centers, coarse_width = make_grid(-64, 64, 40)
+    coarse_pmf = analytic_pmf(dist, coarse_centers, coarse_width)
+
+    coarse_means = coarse_pmf @ coarse_centers
+    coarse_delta = coarse_centers[np.newaxis, :] - coarse_means[:, np.newaxis]
+    uncorrected_sigma = float(
+        np.sqrt(np.einsum("ij,ij->i", coarse_pmf, coarse_delta**2))[0]
+    )
+    corrected_sigma = compute_summary(coarse_pmf, coarse_centers)["sigma"][0]
+
+    # The correction must actually move sigma, and it must move it UP (adding
+    # a variance term can only increase sigma). d(sigma)/d(variance) = 1/(2
+    # sigma), so a variance shift of h**2/12 moves sigma by
+    # ~h**2/(24*sigma) -- not zero, and not off by an order of magnitude.
+    predicted_shift = coarse_width**2 / (24.0 * true_sigma)
+    shift = corrected_sigma - uncorrected_sigma
+    assert shift > 0
+    assert shift == pytest.approx(predicted_shift, rel=0.5)
+
+
+def test_compute_summary_bin_width_explicit_matches_derived():
+    dist = stats.norm(loc=0, scale=8)
+    centers, width = make_grid(-40, 40, 40)
+    pmf = analytic_pmf(dist, centers, width)
+
+    summary_derived = compute_summary(pmf, centers)
+    summary_explicit = compute_summary(pmf, centers, bin_width=width)
+
+    assert summary_derived["sigma"][0] == pytest.approx(summary_explicit["sigma"][0])
+
+
+def test_compute_moments_applies_correction():
+    true_sigma = 8.0
+    dist = stats.norm(loc=0, scale=true_sigma)
+    centers, width = make_grid(-40, 40, 40)
+    pmf = analytic_pmf(dist, centers, width)
+
+    result = compute_moments(pmf, centers)
+    assert result["std"][0] == pytest.approx(true_sigma, rel=0.02)
+
+
+def test_compute_percentile_summary_not_shifted_by_correction():
+    """
+    Percentile-based sigma_pct is a distinct estimator (order statistics,
+    not moments) and must NOT receive the h**2/12 moment correction --
+    confirms the decision documented in compute_percentile_summary's
+    docstring. On the same coarse grid used above, sigma_pct should track
+    the *uncorrected* discretisation behaviour (bounded-by-one-cell
+    interpolation bias), not the moment-sigma correction.
+    """
+    true_sigma = 8.0
+    dist = stats.norm(loc=0, scale=true_sigma)
+    centers, width = make_grid(-40, 40, 40)
+    pmf = analytic_pmf(dist, centers, width)
+
+    summary = compute_percentile_summary(pmf, centers)
+    sigma_pct = summary["sigma_pct"][0]
+
+    # sigma_pct should already be close to truth via percentile
+    # interpolation, without needing +h**2/12 added -- unlike the moment
+    # sigma, which needed the explicit correction to reach the same
+    # accuracy (see test_compute_summary_sigma_biased_low...).
+    assert sigma_pct == pytest.approx(true_sigma, rel=0.02)
+
+
+def test_gauss_hermite_fit_sigma_uncorrected_by_design():
+    """
+    Pins the documented decision that gauss_hermite_fit's sigma_gh gets no
+    h**2/12 correction: on a modestly coarse GH-shaped grid, the fit alone
+    (no added term) already recovers the planted sigma to a few percent.
+    """
+    centers = np.linspace(-100.0, 100.0, 41)  # h = 5.0
+    pmf = _gh_pmf(centers, v=0.0, sigma=20.0, h3=0.0, h4=0.0)
+    pdf_samples = np.tile(pmf, (10, 1))
+
+    fit = gauss_hermite_fit(pdf_samples, centers, n_draws=10)
+    assert fit["sigma_gh"][0] == pytest.approx(20.0, rel=0.03)
 
 
 # ---------------------------------------------------------------------------
