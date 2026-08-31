@@ -35,6 +35,7 @@ __all__ = [
     "truths_for",
     "coverage_floor",
     "recovery_curve_2d",
+    "recommend_grid_2d",
 ]
 
 #: Adopted cluster distance (Peter, 2026-08-06).
@@ -85,17 +86,61 @@ class ObservingProfile2D:
     n_stars: int
     n_sigma_grid: float = 3.5
     cell_per_sigma: float = 0.47
+    sigma_min: float | None = None
+    sigma_max: float | None = None
+    rotation_span: float = 0.0
+    bins_per_error: float = 2.0
+
+    @property
+    def sigma_lo(self):
+        """Narrowest per-bin dispersion; sets the resolution requirement."""
+        return self.sigma_ref if self.sigma_min is None else self.sigma_min
+
+    @property
+    def sigma_hi(self):
+        """Widest per-bin dispersion; sets the extent requirement."""
+        return self.sigma_ref if self.sigma_max is None else self.sigma_max
 
     @property
     def grid_width(self):
-        """Total width of the (square) velocity grid, km/s."""
-        return 2.0 * self.n_sigma_grid * self.sigma_ref
+        """Total width of the (square) velocity grid, km/s.
+
+        DYNAMITE takes one scalar ``vxrange``/``vyrange`` per map, so a single
+        grid must serve every spatial bin: it has to hold the widest LOSVD in
+        the field plus the mean-velocity offset of the bins furthest from
+        systemic. Mirrors :attr:`ObservingProfile.grid_width` in 1D.
+        """
+        return 2.0 * self.n_sigma_grid * self.sigma_hi + self.rotation_span
+
+    @property
+    def cell_width(self):
+        """Target cell width, km/s: resolve the narrowest LOSVD in the field.
+
+        Uses ``sigma_lo``, not ``sigma_ref`` -- one shared grid must resolve
+        every bin, and the narrowest one is the binding case.
+        """
+        return self.cell_per_sigma * self.sigma_lo
+
+    @property
+    def error_floor_width(self):
+        """Cell width below which refining buys nothing, km/s.
+
+        1D sets its bin width to exactly this (``bins_per_error *
+        err_median``): the measurement errors have already smeared the signal
+        at that scale. It is reported rather than imposed here because in 2D
+        cells cost quadratically, and because when it EXCEEDS
+        :attr:`cell_width` the two rules genuinely conflict -- the errors
+        dominate and no grid resolves the narrowest bins. That is the Gaia
+        regime (err/sigma approaches 1) and it is a fact about the data, not
+        a tuning choice. :func:`recommend_grid_2d` flags it.
+        """
+        return self.bins_per_error * self.err_median
 
     @property
     def n_bins(self):
         """Cells per axis. Always odd: DYNAMITE's ProperMotions reader
         (``set_default_hist_bins``) raises ValueError on even counts."""
-        n = int(round(self.grid_width / (self.cell_per_sigma * self.sigma_ref)))
+        n = int(round(self.grid_width / self.cell_width))
         n = max(n, 5)
         return n if n % 2 == 1 else n + 1
 
@@ -162,6 +207,7 @@ class ObservingProfile2D:
         bin_ids = np.asarray(bin_ids)
 
         per_bin_n, per_bin_sigma, per_bin_err_med = [], [], []
+        per_bin_mean1, per_bin_mean2 = [], []
         for b in np.unique(bin_ids):
             sel = bin_ids == b
             n = int(np.sum(sel))
@@ -176,6 +222,8 @@ class ObservingProfile2D:
             per_bin_n.append(n)
             per_bin_sigma.append(sigma)
             per_bin_err_med.append(err_med)
+            per_bin_mean1.append(np.mean(pm1[sel]))
+            per_bin_mean2.append(np.mean(pm2[sel]))
 
         if len(per_bin_sigma) < 2:
             msg = f"at least 2 bins with >= {min_stars} stars are required, got {len(per_bin_sigma)}"
@@ -187,6 +235,11 @@ class ObservingProfile2D:
             err_median=float(np.median(per_bin_err_med)),
             err_cut=float(err_cut),
             n_stars=int(round(float(np.median(per_bin_n)))),
+            sigma_min=float(np.min(per_bin_sigma)),
+            sigma_max=float(np.max(per_bin_sigma)),
+            rotation_span=float(
+                max(np.ptp(per_bin_mean1), np.ptp(per_bin_mean2))
+            ),
         )
 
     def cells_per_sigma(self, axis_sigma):
@@ -925,6 +978,60 @@ def recovery_curve_2d(
     return RecoveryCurve2D(profile=profile, truth_name=truth_name, rows=rows, n_real=n_real)
 
 
+def recommend_grid_2d(profile, v_systemic=(0.0, 0.0)):
+    """``KinematicSolver2D.setup_grid`` / ``fit_all_bins_2d(grid_kwargs=...)``
+    from a measured :class:`ObservingProfile2D`, instead of hand-picking a
+    grid. The 2D counterpart of :func:`veldist.calibration.recommend_grid`.
+
+    The returned ``warnings`` list is the part worth reading: it names the
+    cases where the profile's own numbers say no grid will do, rather than
+    silently returning one that looks fine.
+
+    Parameters
+    ----------
+    profile : ObservingProfile2D
+        Typically ``ObservingProfile2D.from_data(...)`` on the real catalogue.
+    v_systemic : tuple of float
+        Grid centre ``(v1, v2)``, km/s. Default ``(0, 0)``: DYNAMITE requires
+        a zero-centred PM grid, so this is here for diagnostics, not for
+        production use.
+
+    Returns
+    -------
+    dict
+        ``center``, ``width``, ``n_bins`` (as ``setup_grid`` wants them), plus
+        ``cell_width``, ``stars_per_cell`` and ``warnings``.
+    """
+    n = profile.n_bins
+    width = profile.grid_width
+    cell = width / n
+    warnings = []
+
+    if profile.error_floor_width > cell:
+        warnings.append(
+            f"errors dominate: cells are {cell:.2f} km/s but the measurement "
+            f"errors only support {profile.error_floor_width:.2f} km/s "
+            f"(err/sigma_min = {profile.err_median / profile.sigma_lo:.2f}). "
+            "The narrowest bins are smeared beyond what any grid recovers."
+        )
+
+    stars_per_cell = profile.n_stars / n**2
+    if stars_per_cell < 1.0:
+        warnings.append(
+            f"{stars_per_cell:.2f} stars/cell at {profile.n_stars} stars/bin; "
+            "calibrated down to ~1.8, so this is extrapolation."
+        )
+
+    return {
+        "center": tuple(v_systemic),
+        "width": width,
+        "n_bins": n,
+        "cell_width": cell,
+        "stars_per_cell": stars_per_cell,
+        "warnings": warnings,
+    }
+
+
 #: HST, inner region, bright stars (m_F625W ~ 18). Median 1D PM error
 #: 0.011 mas/yr = 0.24 km/s. err/sigma ~ 0.014: the errors are about 1% of the
 #: signal, so there is very little left to deconvolve.
@@ -961,4 +1068,41 @@ GAIA_OUTER = ObservingProfile2D(
     n_sigma_grid=4.0,
 )
 
-PROFILES_2D = {p.name: p for p in (HST_BRIGHT, HST_FAINT, GAIA_OUTER)}
+#: The three profiles above are hand-picked regimes, kept because the whole
+#: calibration campaign was run against them. The two below are what the
+#: production dataprep notebooks actually produce, measured 2026-08-31 by
+#: replaying each notebook's own binning call on the real catalogues
+#: (``omegaCen/dynamite_dataprep/{gaia,hst}_veldist.ipynb``). Where they
+#: disagree with the hand-picked versions, these are right.
+#:
+#: Gaia: ``do_powerbin(target_capacity=400)``, 300-1500 arcsec, 148 bins.
+#: n_stars=2000 in ``GAIA_OUTER`` was a guess and is 4.6x the truth.
+GAIA_OUTER_MEASURED = ObservingProfile2D(
+    name="gaia_outer_measured",
+    sigma_ref=11.1,
+    err_median=8.60,
+    err_cut=PM_QUALITY_CUT_KMS,
+    n_stars=435,
+    n_sigma_grid=4.0,
+    sigma_min=8.2,
+    sigma_max=14.5,
+)
+
+#: HST: ``do_powerbin(target_capacity=400)``, cell_width=5, 1415 bins. The
+#: err_median measured here is 6x the 0.24 km/s ``HST_BRIGHT`` assumes.
+#: n_stars is the MEDIAN; the minimum bin holds 174, which is the case the
+#: calibration has never been run at.
+HST_MEASURED = ObservingProfile2D(
+    name="hst_measured",
+    sigma_ref=16.08,
+    err_median=1.51,
+    err_cut=PM_QUALITY_CUT_KMS,
+    n_stars=426,
+    sigma_min=12.7,
+    sigma_max=21.3,
+)
+
+PROFILES_2D = {
+    p.name: p
+    for p in (HST_BRIGHT, HST_FAINT, GAIA_OUTER, GAIA_OUTER_MEASURED, HST_MEASURED)
+}

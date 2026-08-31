@@ -56,7 +56,13 @@ def test_draw_errors_respects_the_quality_cut(profile):
 
 
 def test_profiles_2d_registry_is_consistent():
-    assert set(PROFILES_2D) == {"hst_bright", "hst_faint", "gaia_outer"}
+    assert set(PROFILES_2D) == {
+        "hst_bright",
+        "hst_faint",
+        "gaia_outer",
+        "gaia_outer_measured",
+        "hst_measured",
+    }
     for key, p in PROFILES_2D.items():
         assert p.name == key
 
