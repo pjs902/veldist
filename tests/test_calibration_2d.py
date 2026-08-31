@@ -233,7 +233,7 @@ def _run_one_sbc_iteration(
     hyper_thin = hyper_samples[idx]
 
     mean_x, mean_y, sigma_x, sigma_y, rho = _moments_from_pdf_samples_2d(
-        pdf_thin, CENTERS_2D
+        pdf_thin, CENTERS_2D, GRID
     )
     (
         true_mean_x,
@@ -241,7 +241,7 @@ def _run_one_sbc_iteration(
         true_sigma_x,
         true_sigma_y,
         true_rho,
-    ) = _moments_from_pdf_samples_2d(true_intrinsic_pdf[None, :], CENTERS_2D)
+    ) = _moments_from_pdf_samples_2d(true_intrinsic_pdf[None, :], CENTERS_2D, GRID)
     true_mean_x = float(true_mean_x[0])
     true_mean_y = float(true_mean_y[0])
     true_sigma_x = float(true_sigma_x[0])
