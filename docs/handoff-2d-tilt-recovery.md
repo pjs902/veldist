@@ -412,6 +412,46 @@ that centre-discretised truth is "the fair comparison" because a continuous
 truth "charges the model for grid discretisation". That was correct for the
 UNCORRECTED estimator. With the correction it would double-count.
 
+### Confirmed by measurement
+
+K=15, anisotropic, 1600 stars, `n_real=25` (the configuration with the
+largest bias, so the signal is unambiguous):
+
+| metric | original | after core fix | after within-cell fix | rms_z now |
+|---|---|---|---|---|
+| sigma_y | -0.250 | -0.248 | **+0.077** | 1.02 (was 1.40) |
+| sigma_x | +0.099 | +0.061 | +0.162 | 0.93 |
+| rho | +0.045 | +0.027 | **-0.003** | 0.88 |
+| mean_x | -- | +0.049 | -0.024 | 0.82 |
+| mean_y | -- | +0.058 | -0.017 | 0.95 |
+
+`sigma_y` moved by +0.325 against a predicted `h^2/(12*sigma)` = +0.265. At
+`n_real=25` the SE on bias is ~0.06, so the residual +0.077 sits ~1.3 sigma
+from zero -- consistent with the bias being removed, not merely reduced.
+`rms_z` fell 1.40 -> 1.02, so the intervals are honest too, which the core
+fix never achieved.
+
+The residual `sigma_x` +0.162 is NOT this bug: it is the truncation term
+(the wide axis gets only 2.97 `sx` of extent at this grid), diagnosed and
+fixed separately by per-axis extent sizing, which took it to +0.043 in grid
+D. The two fixes are orthogonal and compose.
+
+### Still to do
+
+- Re-run the K series (15/19/21/29) at `n_real=100` to confirm the fix
+  removes the h-dependence across resolutions, not just at K=15.
+- `analysis.py` has the SAME deficit and is NOT fixed. `compute_moments`,
+  `compute_summary` and their `_maps` variants all use
+  `sum_m p_m (v_m - mean)^2` at bin centres with no `h^2/12` term, so every
+  reported dispersion is biased low by about `h^2/(12*sigma)`. This is the
+  user-facing science API, so correcting it changes published numbers
+  (including `docs/validation.md` and anything written to DYNAMITE) --
+  a deliberate scope decision, not a patch. Note the 1D coverage tests call
+  `compute_summary` directly, so the 1D exposure IS this one; there is no
+  separate 1D calibration helper to fix.
+- `calibration.py::true_moments` is already correct (integrates the
+  continuous truth on a 400001-point grid).
+
 ### Why this hid for so long
 
 It biases only SECOND moments (means are untouched), it scales away as
