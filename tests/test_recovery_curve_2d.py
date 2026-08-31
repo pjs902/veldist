@@ -1,3 +1,4 @@
+import numpy as np
 import pytest
 
 from veldist.calibration2d import GAIA_OUTER, RecoveryCurve2D, coverage_floor
@@ -91,3 +92,32 @@ def test_report_mentions_profile_and_truth_name():
     assert GAIA_OUTER.name in r
     assert "anisotropic" in r
     assert "rho" in r
+
+
+@pytest.mark.slow
+def test_recovery_curve_2d_smoke():
+    """Tiny, fast-as-possible real run: confirms the function executes end
+    to end and returns a well-formed RecoveryCurve2D, not that any
+    particular n_stars threshold holds (that requires a real campaign)."""
+    from veldist.calibration2d import GAIA_OUTER, recovery_curve_2d
+
+    curve = recovery_curve_2d(
+        profile=GAIA_OUTER,
+        truth_name="isotropic",
+        n_stars_values=[100],
+        n_real=2,
+        num_warmup=50,
+        num_samples=100,
+    )
+
+    assert curve.profile is GAIA_OUTER
+    assert curve.truth_name == "isotropic"
+    assert curve.n_real == 2
+    metrics = {r["metric"] for r in curve.rows}
+    assert metrics == {"mean_x", "mean_y", "sigma_x", "sigma_y", "rho"}
+    for r in curve.rows:
+        assert r["n_stars"] == 100
+        assert np.isfinite(r["coverage"])
+        assert np.isfinite(r["ci_width"])
+        assert np.isfinite(r["cr_bound"])
+        assert np.isfinite(r["bias"])

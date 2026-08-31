@@ -34,6 +34,7 @@ __all__ = [
     "PM_QUALITY_CUT_KMS",
     "truths_for",
     "coverage_floor",
+    "recovery_curve_2d",
 ]
 
 #: Adopted cluster distance (Peter, 2026-08-06).
@@ -385,6 +386,128 @@ class RecoveryCurve2D:
                     f"    {r['n_stars']:<8.4g} {r['coverage']:5.2f}  {ratio:5.2f}  {r['bias']:+.3f}"
                 )
         return "\n".join(lines)
+
+
+def recovery_curve_2d(
+    profile,
+    truth_name,
+    n_stars_values,
+    n_real=25,
+    prior="gaussian_core",
+    num_warmup=300,
+    num_samples=600,
+    seed=20260805,
+):
+    """Sweep raw star count and measure bias, coverage, and efficiency for
+    all five 2D moments, including tilt (``rho``).
+
+    2D counterpart of :func:`veldist.calibration.recovery_curve`. Swept over
+    ``n_stars`` directly rather than an information-content proxy -- there is
+    no 2D ``ivar`` equivalent yet (a correlation coefficient's information
+    content is not a simple sum of per-star terms the way a mean's is), so
+    this only answers "does it calibrate at this star count", not "does it
+    transfer to a dataset with different errors". Build that generalisation
+    only if a second regime beyond Gaia's actually needs it.
+
+    ``profile.n_stars`` is ignored; only its error-drawing behaviour
+    (``profile.draw_errors``) and grid (``profile.grid_width``/``n_bins``)
+    are used, with the swept ``n_stars_values`` substituted per cell.
+
+    Cost is ``len(n_stars_values) * n_real`` NUTS runs. Reduce ``n_real`` for
+    a smoke test; do not reduce it for a result meant to set a threshold.
+
+    Parameters
+    ----------
+    profile : ObservingProfile2D
+        Error distribution and grid come from here; ``n_stars`` is
+        overridden per sweep point.
+    truth_name : str
+        ``"isotropic"`` or ``"anisotropic"`` (see :func:`truths_for`).
+    n_stars_values : sequence of int
+        Star counts to sweep.
+    n_real : int
+        Mock realisations per ``n_stars`` value.
+    prior, num_warmup, num_samples
+        Passed through to ``KinematicSolver2D.run``.
+    seed : int
+        Base RNG seed; realisation ``i`` at a given ``n_stars`` uses
+        ``seed + i``, matching :func:`veldist.calibration.recovery_curve`'s
+        convention.
+
+    Returns
+    -------
+    RecoveryCurve2D
+    """
+    from veldist.veldist2d import KinematicSolver2D
+
+    truth = truths_for(profile.sigma_ref)[truth_name]
+    rows = []
+    metrics = ["mean_x", "mean_y", "sigma_x", "sigma_y", "rho"]
+
+    grid_center = (0.0, 0.0)
+    grid_width = (profile.grid_width, profile.grid_width)
+    n_bins = profile.n_bins
+
+    solver0 = KinematicSolver2D()
+    solver0.setup_grid(center=grid_center, width=grid_width, n_bins=n_bins)
+    centers_2d = solver0.grid["centers_2d"]
+    edges_x = solver0.grid["edges_x"]
+    edges_y = solver0.grid["edges_y"]
+
+    true_moments, _ = _discretised_truth_moments(truth, edges_x, edges_y, centers_2d)
+
+    for n_stars in n_stars_values:
+        hits = {m: 0 for m in metrics}
+        meds = {m: [] for m in metrics}
+        widths = {m: [] for m in metrics}
+        rng = np.random.default_rng(seed)
+
+        for i in range(n_real):
+            obs_x, obs_y, cov = _draw_stars(rng, truth, n_stars, profile)
+
+            solver = KinematicSolver2D()
+            solver.setup_grid(center=grid_center, width=grid_width, n_bins=n_bins)
+            solver.add_data(obs_x, obs_y, cov)
+            samples = solver.run(
+                num_warmup=num_warmup, num_samples=num_samples, seed=seed + i, prior=prior
+            )
+            pdf_samples = np.asarray(samples["intrinsic_pdf"])
+            mean_x, mean_y, sigma_x, sigma_y, rho = _moments_from_pdf_samples_2d(pdf_samples, centers_2d)
+            draws = {"mean_x": mean_x, "mean_y": mean_y, "sigma_x": sigma_x, "sigma_y": sigma_y, "rho": rho}
+
+            for m in metrics:
+                median = float(np.median(draws[m]))
+                half68 = 0.5 * (np.percentile(draws[m], 84) - np.percentile(draws[m], 16))
+                meds[m].append(median)
+                widths[m].append(half68)
+                if abs(median - true_moments[m]) <= half68:
+                    hits[m] += 1
+
+        # Cramer-Rao-style bounds at this n_stars. See RecoveryCurve2D's
+        # docstring for the rho approximation's caveat.
+        sx, sy, rho_t = truth["sx"], truth["sy"], truth["rho"]
+        cr = {
+            "mean_x": sx / np.sqrt(n_stars),
+            "mean_y": sy / np.sqrt(n_stars),
+            "sigma_x": sx / np.sqrt(2 * n_stars),
+            "sigma_y": sy / np.sqrt(2 * n_stars),
+            "rho": (1.0 - rho_t**2) / np.sqrt(n_stars),
+        }
+
+        for m in metrics:
+            rows.append(
+                {
+                    "n_stars": float(n_stars),
+                    "truth": truth_name,
+                    "metric": m,
+                    "bias": float(np.median(meds[m]) - true_moments[m]),
+                    "coverage": hits[m] / n_real,
+                    "ci_width": float(np.mean(widths[m])),
+                    "cr_bound": float(cr[m]),
+                }
+            )
+
+    return RecoveryCurve2D(profile=profile, truth_name=truth_name, rows=rows, n_real=n_real)
 
 
 #: HST, inner region, bright stars (m_F625W ~ 18). Median 1D PM error
