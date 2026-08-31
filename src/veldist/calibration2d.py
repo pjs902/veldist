@@ -274,17 +274,22 @@ def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
     ~h^2/12 (Sheppard), which at cell_per_sigma=0.78 is +0.42 km/s on
     sigma=17 -- over half the posterior interval at N=250, enough on its own
     to destroy coverage.
+
+    ``edges_x``/``edges_y`` need not have the same length -- a rectangular
+    grid (``kx != ky``) is fine. The flat index follows the same row-major
+    convention as ``setup_grid_2d``: ``m = ix * ky + iy``.
     """
     from scipy.stats import multivariate_normal
 
     cov = [[t["sx"] ** 2, t["rho"] * t["sx"] * t["sy"]],
            [t["rho"] * t["sx"] * t["sy"], t["sy"] ** 2]]
     mvn = multivariate_normal(mean=[t["mux"], t["muy"]], cov=cov)
-    k = len(edges_x) - 1
-    mass = np.empty(k * k)
-    for ix in range(k):
-        for iy in range(k):
-            mass[ix * k + iy] = (
+    kx = len(edges_x) - 1
+    ky = len(edges_y) - 1
+    mass = np.empty(kx * ky)
+    for ix in range(kx):
+        for iy in range(ky):
+            mass[ix * ky + iy] = (
                 mvn.cdf([edges_x[ix + 1], edges_y[iy + 1]])
                 - mvn.cdf([edges_x[ix], edges_y[iy + 1]])
                 - mvn.cdf([edges_x[ix + 1], edges_y[iy]])
