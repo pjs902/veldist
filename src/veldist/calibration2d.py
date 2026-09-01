@@ -1166,12 +1166,18 @@ def recommend_grid_2d(profile, v_systemic=(0.0, 0.0)):
             "The narrowest bins are smeared beyond what any grid recovers."
         )
 
+    # Lowest occupancy any sweep has actually validated. The Gaia re-anchor
+    # (2026-09-01 pm, cps 0.70-1.15 at 435 stars) passed at 0.52 stars/cell,
+    # superseding the earlier 0.70 floor -- which was tripping on Gaia's own
+    # adopted grid at 0.696, i.e. by 0.004, and reading as if the ADOPTED
+    # setting were unvalidated when it sits between two measured points.
+    MEASURED_OCCUPANCY_FLOOR = 0.52
     stars_per_cell = profile.n_stars / n**2
-    if stars_per_cell < 0.70:
+    if stars_per_cell < MEASURED_OCCUPANCY_FLOOR:
         warnings.append(
             f"{stars_per_cell:.2f} stars/cell at {profile.n_stars} stars/bin; "
-            "below the 0.70 measured on the 2026-09-01 sweep, so this is "
-            "extrapolation."
+            f"below the {MEASURED_OCCUPANCY_FLOOR:.2f} measured on the "
+            "2026-09-01 sweeps, so this is extrapolation."
         )
 
     return {
