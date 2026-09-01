@@ -672,3 +672,96 @@ that sets how fine HST's grid has to be.
 
 Sweep in progress at cps {0.42, 0.58, 0.70} on HST's measured profile to
 locate where it calibrates. Gaia's 0.85 stands.
+
+---
+
+## 2026-09-01 (afternoon): observing-profile audit
+
+Read-only replay of both production notebooks' own selections and PowerBin
+calls, to close the three open profile questions. Scripts:
+`scratchpad/phase_a_gaia.py`, `scratchpad/phase_a_hst.py`.
+
+### The mock error distributions were wrong in BOTH measured profiles
+
+`draw_errors` back-derived its log-normal width from `err_cut`, assuming the
+quality cut sits at p95. That assumption failed in opposite directions.
+
+| profile | real median | real p95 | mock p95 (before) | after |
+|---|---|---|---|---|
+| `gaia_outer_measured` | 8.33 | 27.54 | **7.81** (65% pinned at the cut) | 28.55 |
+| `hst_measured` | 1.535 | 3.14 | **7.78** | 3.08 |
+
+**Gaia** declared `err_cut = PM_QUALITY_CUT_KMS` = 7.81 km/s, *below* its own
+`err_median` of 8.60. `sigma_log` clamped to its 0.25 floor, then the clip
+collapsed the rest: 65% of every mock's per-star errors came out at exactly
+7.81. Gaia's notebook applies no meaningful error cut at all -- its filter is
+`pmrae/pmdece < 10 mas/yr` = 260 km/s, and `PM_QUALITY_CUT_KMS` appears there
+only as a reference line on a plot. Measured over the 64537 stars in
+[300, 1500) arcsec: median 8.33, p95 27.54, p99 40.35 -> `err_log_sigma` 0.727.
+
+**HST**'s `err_cut` is genuinely right (the 0.3 mas/yr cut is applied; the
+largest error in 610846 selected stars is 7.741 against the 7.81 cut) -- but
+it sits at ~p100, not p95, so the back-derivation returned 0.999 against a
+measured 0.434.
+
+**The directions are not equivalent.** `rms_z` is bias over interval width.
+Gaia's errors were too SMALL, which understates interval width and makes its
+anchor conservative. HST's were too LARGE, which inflates the intervals and
+made coarse cells look more acceptable than they are -- so **HST's 0.58 may
+be too coarse**. Both `_CPS_ANCHORS` entries were measured with these errors
+and are unearned until re-measured; only HST's can be wrong in a harmful way.
+
+Fixes: `err_log_sigma` is now an explicit field (as 1D has always had), a
+construction-time guard rejects `err_cut <= err_median`, and `from_data`
+measures the spread instead of assuming. The estimator is p95/median, not
+`std(log)`: the real distributions are heavier-tailed than log-normal and
+`std(log)` fits the body while understating the tail (HST 0.287 vs 0.434,
+giving a mock p95 of 2.42 against 3.14). The tail is what sets interval
+inflation, so it is the part that must be reproduced.
+
+### HST's minor-axis mean-velocity excess is the re-added rotation (CLOSED)
+
+Linear gradient fit to the 1415 bin means, in the PA-aligned frame:
+
+```
+m1 (major axis):  dx=-0.0072  dy=+0.0296 km/s/arcsec   resid sd=1.26
+m2 (minor axis):  dx=-0.0302  dy=-0.0080 km/s/arcsec   resid sd=1.23
+```
+
+Equal magnitude, orthogonal directions: a pure curl at ~0.030 km/s/arcsec,
+with the divergence term ~10x smaller. The notebook re-adds rotation as
+`d_pmra`/`d_pmdec` from the 1D **tangential** rotation curve, and a tangential
+field has equal RMS in any two orthogonal Cartesian components by
+construction. So `ptp2 ~= ptp1` (16.72 vs 16.05) is required, not anomalous.
+
+The earlier framing -- "rigid rotation cannot produce that" -- was wrong. It
+cannot for rotation about an in-plane axis; the re-added field is tangential
+about the line of sight, which can and must. Alternatives ruled out: not edge
+bins (inner 90% by radius: 15.95 / 16.72, essentially unchanged), not a bulk
+residual (both axis means within 0.15 km/s of zero, and mean-subtraction
+leaves the spread identical). `rotation_span = 16.7` stands. No action.
+
+### Per-axis resolution (#6) is much smaller than projected
+
+|  | axis ratio (median) | narrowest axis | declared `sigma_min` | ratio |
+|---|---|---|---|---|
+| HST | 0.894 (min 0.713) | 11.87 (p1) | 11.50 | **1.03** |
+| Gaia | 0.767 (p16 0.586) | 5.67 (p5) | 7.03 | **0.81** |
+
+`sigma_min` was already measured per-component across both axes, so it
+already sits at or below the narrowest principal axis. **HST needs no
+correction at all**; Gaia needs ~0.81, i.e. ~1.23x finer cells, not the 1.54x
+projected from the assumed 0.65.
+
+That 0.65 came from `truths_for`'s synthetic anisotropic truth (sy/sx = 0.65),
+not from omega Cen -- real bins are much rounder. The test truth is *harder*
+than the data, which is the right way round, and means the per-axis
+correction is largely already paid for by validating against something more
+anisotropic than reality.
+
+**Estimator caveat**: Gaia's raw minimum minor axis is 0.91 km/s (ratio 0.13),
+which would demand an absurd grid. It is noise -- Gaia's `err/sigma` is ~0.9,
+so `cyy - <e_y^2>` is a difference of comparable numbers and a few bins
+deconvolve to near zero. Use p5 (5.67). The same reasoning that makes full
+`ptp` correct for `rotation_span` makes the raw min wrong here: that tail is
+physical, this one is the estimator's.
