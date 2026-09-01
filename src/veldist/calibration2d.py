@@ -69,14 +69,42 @@ class ObservingProfile2D:
     n_sigma_grid : float
         Half-width of the velocity grid in units of ``sigma_ref``.
     cell_per_sigma : float
-        Target cell width in units of ``sigma_ref``. **Set by measurement:**
-        sweeping cell_per_sigma ∈ {0.78, 0.64, 0.54, 0.47, 0.41, 0.37} under
-        the ``gaussian_core`` prior at N=400, cell_per_sigma=0.47 (→K=15, 225 cells, 1.8
-        stars/cell) was the effective limit for the HST regimes. Finer cells
-        (K=17) buys marginal improvement at +28% compute; K=19 (1.1 stars/cell)
-        breaks on anisotropic truths. The GMRF-era numbers (+2.34 bias at K=9)
-        are obsolete: the null-space fix removed them, so this was re-chosen
-        post-gaussian_core as the spec required.
+        Target cell width in units of ``sigma_lo``. **Re-measured 2026-09-01**
+        against the real Gaia profile (435 stars, the measured dispersion
+        range and rotation span), post-h^2/12-fix, sweeping
+        {0.85, 1.10, 1.40, 1.80} on both truths, 40 realisations each:
+
+            cps    K   stars/cell   sigma_y bias   sigma_y rms_z   rho rms_z
+            0.85  25      0.70      +0.150 (2.8%)      0.97          1.18
+            1.10  19      1.20      +0.238 (4.5%)      1.01          1.16
+            1.40  15      1.93      +0.439 (8.2%)      1.17          1.05
+            1.80  13      2.57      +0.670 (12.5%)     1.53          1.50
+
+        (bias on the ANISOTROPIC truth's narrow axis; percentages are of that
+        axis's own sy=5.34. The isotropic truth stays flat across the whole
+        range -- the failure only appears on an anisotropic velocity
+        ellipsoid, so an isotropic-only check does not see it.)
+
+        0.85 is chosen for <3% bias with both rms_z near 1. 1.10 is
+        defensible if compute forces it; 1.40 and beyond are not -- rms_z 1.5
+        at 1.80 means the reported intervals are half the width they should
+        be, on both sigma_y and rho.
+
+        Note the scale mismatch this exposes: cell_per_sigma is defined
+        against ``sigma_lo``, but the narrow axis of an anisotropic ellipsoid
+        is smaller still (0.65x here), so the cells are ~1.3x that axis's own
+        sigma even at 0.85. Resolution has the same per-axis character extent
+        does; defining it against the narrowest AXIS rather than the
+        narrowest BIN would be the cleaner fix, and is not done yet.
+
+        The previous value (0.47) came from a sweep run BEFORE the h^2/12
+        correction, when refining the grid shrank a bias the estimator itself
+        was manufacturing -- that sweep measured the bug's
+        resolution-dependence and read it as a resolution requirement. (That
+        sweep ran cell_per_sigma in {0.78 ... 0.37} at N=400 under the
+        gaussian_core prior; its conclusion that "K=19 breaks on anisotropic
+        truths" is superseded -- the breakage was the estimator's, not the
+        grid's.)
     """
 
     name: str
@@ -85,7 +113,7 @@ class ObservingProfile2D:
     err_cut: float
     n_stars: int
     n_sigma_grid: float = 3.5
-    cell_per_sigma: float = 0.47
+    cell_per_sigma: float = 0.85
     sigma_min: float | None = None
     sigma_max: float | None = None
     rotation_span: float = 0.0
@@ -1016,10 +1044,11 @@ def recommend_grid_2d(profile, v_systemic=(0.0, 0.0)):
         )
 
     stars_per_cell = profile.n_stars / n**2
-    if stars_per_cell < 1.0:
+    if stars_per_cell < 0.70:
         warnings.append(
             f"{stars_per_cell:.2f} stars/cell at {profile.n_stars} stars/bin; "
-            "calibrated down to ~1.8, so this is extrapolation."
+            "below the 0.70 measured on the 2026-09-01 sweep, so this is "
+            "extrapolation."
         )
 
     return {
