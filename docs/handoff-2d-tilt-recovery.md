@@ -934,8 +934,9 @@ the grid alone (`scratchpad/run_muse_skew_grid.py`, 30 realisations each):
 | 22 | 0.780 | -0.335 | 0.27 |
 | 32 | 0.536 | -0.331 | 0.33 |
 | 44 | 0.390 | -0.332 | 0.30 |
+| 64 | 0.268 | -0.327 | 0.30 |
 
-Doubling the resolution moves the bias by 0.003. **Flat.** The grid is not the
+Refining 2.9x (h/sigma 0.78 -> 0.27) moves the bias by 0.008. **Flat.** The grid is not the
 constraint; the prior is. MUSE recovers ~25% of a true skewness of 0.454 at
 its operating point and no achievable regridding changes that. The
 `sigma_max`/`sigma_min` gap is the error regime (`err/sigma` 0.20 vs 0.386),
