@@ -634,3 +634,41 @@ the metric LEAST sensitive to resolution, since the h^2/12 term biases
 second moments and leaves means untouched. A sweep read that way looks
 reassuringly flat while saying nothing about `sigma_x`/`sigma_y`/`rho`.
 This voided one 400-fit run here.
+
+### cell_per_sigma cannot be one global constant (2026-09-01)
+
+Re-measured at Gaia's real numbers post-h^2/12-fix, `cell_per_sigma=0.85`
+is right for Gaia (sigma_y bias 2.8% of the narrow axis, both rms_z near 1).
+**It fails for HST**, and the failure is not about star count:
+
+| N | stars/cell | sigma_y bias | sigma_y rms_z |
+|---|---|---|---|
+| 174 | 0.48 | +0.438 | 1.34 |
+| 250 | 0.69 | +0.414 | 1.29 |
+| 426 | 1.18 | +0.359 | 1.36 |
+
+Flat in N. HST's sigma_y intervals are ~30% too narrow at the MEDIAN bin,
+so the 174-star minimum is not the problem -- the whole dataset is
+mis-calibrated on sigma_y at this resolution.
+
+**Why**: `rms_z` is bias over interval width, and HST's intervals are tiny.
+Its `err/sigma` is 0.094 against Gaia's 1.05 -- the measurement errors are
+~1% of the signal, so the posterior is sharp and there is nothing to hide a
+residual discretisation bias behind. Gaia tolerates 0.85 not because its
+grid is better but because its large errors inflate the intervals enough to
+swallow the same absolute error.
+
+**Consequence for the tuning rule**: the resolution requirement scales with
+how PRECISE the data is, not just how wide the LOSVD is. Discretisation
+error must stay below the statistical floor, and that floor falls as
+`err/sqrt(N)`. Precise datasets need FINER grids -- the opposite of the
+intuition that good data is easier to fit. A single `cell_per_sigma` shared
+across regimes is the wrong shape; it should be a function of
+`err_median/sigma` (and weakly of `n_stars`).
+
+This is why `HST_BRIGHT`'s original hand-picked `err_median=0.24` mattered
+so much: it is 6x below the measured 1.51, and it is exactly the parameter
+that sets how fine HST's grid has to be.
+
+Sweep in progress at cps {0.42, 0.58, 0.70} on HST's measured profile to
+locate where it calibrates. Gaia's 0.85 stands.
