@@ -22,21 +22,46 @@ h3/h4 limitation honestly rather than engineering around it.
 
 ### 2026-09-01 profile audit and verification campaign
 
+**Shape (h3/h4) policy is now settled per dataset** --
+`docs/shape-policy-decisions.md`, resting on the Fisher analysis in
+`docs/shape-information-limits.md`:
+
+- **MUSE: h3/h4 not measured. ACCEPTED, not deferred** (Peter, 2026-09-01):
+  bigger spatial bins are declined, spatial resolution is worth more. Do not
+  open further tuning items against MUSE shape recovery -- no grid, prior or
+  `SIGMA3_RATE` change closes a ~10x information deficit.
+- **Gaia: `cell_per_sigma = 0.85` CONFIRMED** by re-anchor after the
+  `err_cut` fix; flat across cps 0.70-1.15 because errors dominate
+  (`err/sigma = 1.22`). `cps = 1.00` is an equally valid, 1.4x cheaper option.
+  Shape work out of reach by ~2 orders of magnitude.
+- **HST: the one dataset that can do shape work** (`err/sigma = 0.131`).
+  Occupancy scan in progress, `scratchpad/run_hst_shape.py`.
+
+**Convention trap, recorded because it already caused one error:** the field
+quotes h3/h4 (van der Marel & Franx), `compute_summary` reports standardised
+cumulants, and `gamma1 = 6.93*h3`, `gamma2 = 19.6*h4`. Always say which.
+
+
 Status of the six items carried out of the data-driven tuning session. See
 `docs/handoff-2d-tilt-recovery.md` (2026-09-01 afternoon section) for the
 measurements behind each.
 
 - **[RESOLVED 2026-09-01] MUSE 1D recovery curve.** PASSES on `v_mean` and
   `sigma` at every one of 18 sweep cells, both dispersion ends, CI/CR 0.98 and
-  1.12. `kurtosis` fails (bias -0.64 to -1.20, flat in ivar = prior shrinkage)
-  and `skewness` fails on the skewed truth; both are optional under the
-  acceptance criterion. Original scope: `OMEGACAT_MEASURED` had its grid
+  1.12. Shape metrics fail, and the reason is now understood analytically
+  rather than asserted: at `err/sigma = 0.386` and 152 stars/bin the smallest
+  3-sigma-detectable skewness is 0.73, so MUSE's own test truth (0.454) is a
+  **1.85 sigma signal**. See `docs/shape-information-limits.md`. The earlier
+  "flat in ivar = prior shrinkage" reading in this entry was wrong twice over:
+  part of the kurtosis bias was an estimator bug (fixed, `b734de6`), and the
+  ivar sweep spanned only sqrt(2) in signal-to-noise, entirely inside the
+  regime where any sensible prior dominates. Original scope: `OMEGACAT_MEASURED` had its grid
   derived (22 bins, 152 stars/bin) but no simulation verification at all.
   Sweeping ivar around the operating point at both dispersion ends
   (0.355 at `sigma_max`, 1.145 at `sigma_min`), 3 truths, 30 realisations:
   `scratchpad/run_muse_recovery.py`.
 
-- **[QUEUED] HST cps x n_stars sweep** (`scratchpad/run_cps_sweep.py`).
+- **[RESOLVED 2026-09-01] HST cps x n_stars sweep** (`scratchpad/run_cps_sweep.py`).
   Crosses two items onto one set of fits:
   - is HST calibrated at its 174-star minimum bin on the ADOPTED grid? The
     earlier min-occupancy run used cps=0.85 / K=19, since rejected.
