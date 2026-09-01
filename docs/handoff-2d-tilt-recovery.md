@@ -974,6 +974,47 @@ for.
 acceptance criterion allows. Do not quote the Gaussian-truth h4 numbers as
 evidence that h4 works.
 
+### Sign test: the bias points at the Gaussian, on both sides of zero
+
+Everything above is consistent with multiplicative shrinkage, but also with a
+fixed additive systematic that happens to be negative -- every skewed truth
+measured so far had POSITIVE skewness and came back low. The two split on a
+NEGATIVELY skewed truth: shrinkage pulls it up, an additive artifact pushes it
+down again. `rotating_tangential` (true h3 -0.418) is almost the mirror of
+`skew_normal_h3` (+0.454), so this is a sign check
+(`scratchpad/run_skew_sign.py`, operating point, 30 realisations):
+
+| truth | metric | true | bias | fitted | recovered | coverage |
+|---|---|---|---|---|---|---|
+| skew_normal_h3 | h3 | **+0.454** | **-0.335** | +0.118 | 0.26 | 0.27 |
+| rotating_tangential | h3 | **-0.418** | **+0.261** | -0.156 | 0.37 | 0.40 |
+| two_population | h3 | +0.174 | -0.154 | +0.020 | 0.12 | 0.33 |
+| skew_normal_h3 | h4 | +0.305 | -0.248 | +0.057 | 0.19 | 0.67 |
+| rotating_tangential | h4 | **-0.737** | **+0.733** | **-0.004** | 0.01 | 0.00 |
+| two_population | h4 | +0.335 | -0.300 | +0.035 | 0.11 | 0.30 |
+
+**The bias flips sign with the truth.** Additive systematic ruled out. In all
+six rows the bias points toward zero and never overshoots.
+
+The sharpest number in the campaign is `rotating_tangential`'s h4: true
+-0.737, bias +0.733, fitted **-0.004** with coverage 0.00 over 30
+realisations. Not shrunk, annihilated -- the Gaussian value returned to within
+0.5% of zero. This also rules out a residual discretisation artifact of the
+kind fixed on 2026-09-01: `kappa_4(U) = -h**4/120` has a FIXED sign and cannot
+push a negative-kurtosis truth upward.
+
+Three independent lines now agree that the limit is the prior:
+1. flat under a 2.9x refinement of the grid (not resolution);
+2. zero bias whenever the true cumulant is zero (not additive);
+3. sign-flipping bias always directed at the Gaussian, on both signs and both
+   cumulants (shrinkage).
+
+Fractional recovery is NOT a constant and does not order by amplitude
+(`two_population`'s small h3 of 0.174 recovers worst at 12%, while
+`rotating_tangential`'s larger -0.418 recovers best at 37%), so the shrinkage
+is not a simple linear operator on the cumulant -- it depends on where in the
+profile the deviation sits. Not chased; it changes nothing we report.
+
 ## HST at its 174-star minimum: passes (item #2 CLOSED)
 
 `scratchpad/run_cps_sweep.py`, 180 fits, anisotropic truth, 30 realisations,
