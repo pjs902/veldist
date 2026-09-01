@@ -818,3 +818,50 @@ non-Gaussianity work needs its own resolution anchor, measured the same way
 This also settles the estimator choice: use raw cumulants with the additive
 `kappa(U)` correction, then standardise from the corrected `k2`. Correcting
 standardised quantities directly mixes two corrections and has no clean form.
+
+## MUSE (oMEGACat) 1D verification — the gap closed
+
+`OMEGACAT_MEASURED` had its grid derived (22 bins, 152 stars/bin, 177.98 km/s
+wide) but had never been run through a single recovery curve. It has now been:
+`scratchpad/run_muse_recovery.py`, 540 NUTS fits, 3 truths (gaussian,
+skew_normal_h3, student_t_h4), 30 realisations, swept at BOTH dispersion ends
+because `err/sigma` differs 2x across them (0.39 at `sigma_min` = 10.37,
+0.20 at `sigma_max` = 20.01). Raw rows in `scratchpad/muse_recovery.json`.
+
+The operating point is `ivar` 0.355 at `sigma_max` and 1.145 at `sigma_min`;
+the sweep brackets both (0.25/0.355/0.60 and 0.80/1.145/1.60). Coverage floor
+is 0.467 (the `binom(30, 0.68)` 99% band, via `coverage_floor(30)`).
+
+**Verdict: passes on `v_mean` and `sigma`, fails on `kurtosis`, and on
+`skewness` for the skewed truth only.**
+
+| metric | worst coverage | median coverage | max abs(bias/CI) | median CI/CR |
+|---|---|---|---|---|
+| `v_mean` | 0.60 | 0.72 | 0.53 | 0.98 |
+| `sigma` | 0.53 | 0.68 | 0.42 | 1.12 |
+| `skewness` | 0.17 | 0.85 | 2.17 | 0.93 |
+| `kurtosis` | 0.17 | 0.37 | 2.12 | 0.98 |
+
+`v_mean` and `sigma` clear the floor at **every one of the 18 sweep cells**,
+on both truths and both dispersion ends, with median coverage at 0.72 and 0.68
+against a nominal 0.68 -- and they do it at CI/CR of 0.98 and 1.12, so the
+intervals are honest rather than bought by inflation. That is
+`docs/../TASKS.md`'s acceptance criterion in full: *minimally correct = recover
+`v_mean` and `sigma` well, with properly calibrated uncertainties* (Peter,
+2026-08-04), with h3/h4 explicitly optional.
+
+The failures are the expected shrinkage, not a grid problem:
+
+- `kurtosis` on `student_t_h4` is biased -0.64 (at `sigma_max`) to -1.20 (at
+  `sigma_min`), coverage 0.17-0.43. The heavy tail is pulled toward the prior.
+- `skewness` on `skew_normal_h3` is biased -0.26 to -0.40, coverage 0.27-0.47.
+- Both are FLAT in `ivar` -- 0.80, 1.145 and 1.600 give -1.223, -1.199, -1.197
+  on `student_t_h4` kurtosis. Adding information does not fix it, which is the
+  signature of prior shrinkage rather than insufficient data.
+- On the gaussian truth both are unbiased, as they must be: shrinkage toward a
+  Gaussian is invisible when the truth already is one.
+
+**No action.** MUSE is verified for the quantities the project commits to, at
+the star count and grid it will actually run at. Report the h3/h4 limitation
+rather than engineering around it -- the same conclusion the 1D campaign
+reached, now measured on MUSE's own profile instead of assumed to transfer.

@@ -26,7 +26,11 @@ Status of the six items carried out of the data-driven tuning session. See
 `docs/handoff-2d-tilt-recovery.md` (2026-09-01 afternoon section) for the
 measurements behind each.
 
-- **[IN PROGRESS] MUSE 1D recovery curve.** `OMEGACAT_MEASURED` had its grid
+- **[RESOLVED 2026-09-01] MUSE 1D recovery curve.** PASSES on `v_mean` and
+  `sigma` at every one of 18 sweep cells, both dispersion ends, CI/CR 0.98 and
+  1.12. `kurtosis` fails (bias -0.64 to -1.20, flat in ivar = prior shrinkage)
+  and `skewness` fails on the skewed truth; both are optional under the
+  acceptance criterion. Original scope: `OMEGACAT_MEASURED` had its grid
   derived (22 bins, 152 stars/bin) but no simulation verification at all.
   Sweeping ivar around the operating point at both dispersion ends
   (0.355 at `sigma_max`, 1.145 at `sigma_min`), 3 truths, 30 realisations:
