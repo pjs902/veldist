@@ -653,6 +653,8 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None, bin_width=
     pdf_samples = np.asarray(pdf_samples, dtype=float)  # (n_samples, n_bins)
     grid_centers = np.asarray(grid_centers, dtype=float)  # (n_bins,)
     cell_var = within_cell_variance(grid_centers, bin_width)
+    # kappa_4 of Uniform(cell) = -h**4/120, i.e. -(12*cell_var)**2/120
+    cell_var_kurt = -((12.0 * cell_var) ** 2) / 120.0
 
     if n_sigma_truncate is not None:
         pdf_samples = truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=n_sigma_truncate)
@@ -670,22 +672,32 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None, bin_width=
     stds = np.sqrt(variance)  # (n_samples,)
     safe_stds = np.where(stds > 0, stds, 1.0)
 
-    # skewness/kurtosis: the 3rd/4th central-moment *numerators* are left as
-    # plain point-mass sums. A rigorous within-cell (Sheppard) correction
-    # exists for these too, but by symmetry of the uniform-within-cell
-    # kernel the 3rd-moment correction is exactly zero, and the 4th-moment
-    # correction is a distribution-shape-dependent term this codebase has
-    # not derived or validated anywhere (the reference fix in
-    # calibration2d.py only covers 2nd moments/covariance). We do use the
-    # corrected `stds` (which includes h**2/12) as the normalising sigma in
-    # the denominator, since skewness/kurtosis are defined relative to *the*
-    # sigma of the distribution, and reporting them against the biased-low
-    # point-mass sigma would be inconsistent with the `sigma` this function
-    # now returns.
+    # skewness: the 3rd-cumulant within-cell correction is exactly zero by
+    # symmetry of the uniform kernel, so the point-mass numerator is already
+    # the right one. It is normalised by the CORRECTED sigma, since skewness
+    # is defined relative to *the* sigma of the distribution.
     skews = np.einsum("ij,ij->i", pdf_samples, delta**3) / safe_stds**3
     skews = np.where(stds > 0, skews, 0.0)
 
-    kurts = (np.einsum("ij,ij->i", pdf_samples, delta**4) / safe_stds**4) - 3.0
+    # kurtosis: correct the 4th CUMULANT, not the 4th moment. Binning to cell
+    # centres is a convolution with Uniform(cell), and cumulants add under
+    # convolution, so kappa_4(continuous) = kappa_4(point-mass) - h**4/120
+    # exactly -- the same additive structure as the h**2/12 term above, and
+    # NOT shape-dependent at leading order (the residual of the asymptotic
+    # expansion is, and is an order smaller; measured in
+    # docs/handoff-2d-tilt-recovery.md).
+    #
+    # This function previously divided an UNCORRECTED 4th moment by the
+    # CORRECTED sigma**4. Those two choices are inconsistent, and the
+    # inconsistency is not small: -6*k2*(h**2/12) in the numerator, i.e.
+    # roughly -0.5 * (h/sigma)**2 in excess kurtosis. On MUSE's grid at its
+    # narrowest bins (h/sigma = 0.78) it reported -0.272 excess kurtosis for
+    # an exact, noiseless Gaussian -- which matched the -0.268 "bias" the
+    # MUSE recovery curve was attributing to prior shrinkage.
+    m4 = np.einsum("ij,ij->i", pdf_samples, delta**4)
+    var_pm = variance - cell_var  # point-mass 2nd central moment
+    k4 = (m4 - 3.0 * var_pm**2) + cell_var_kurt
+    kurts = k4 / safe_stds**4
     kurts = np.where(stds > 0, kurts, 0.0)
 
     tw = tail_weight(pdf_samples, grid_centers, means, stds)  # (n_samples,)

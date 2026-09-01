@@ -832,8 +832,9 @@ The operating point is `ivar` 0.355 at `sigma_max` and 1.145 at `sigma_min`;
 the sweep brackets both (0.25/0.355/0.60 and 0.80/1.145/1.60). Coverage floor
 is 0.467 (the `binom(30, 0.68)` 99% band, via `coverage_floor(30)`).
 
-**Verdict: passes on `v_mean` and `sigma`, fails on `kurtosis`, and on
-`skewness` for the skewed truth only.**
+**Verdict: passes on `v_mean` and `sigma`. `kurtosis` initially appeared to
+fail; most of that was OUR estimator, not the fit -- see the revision below.
+`skewness` genuinely fails on the skewed truth.**
 
 | metric | worst coverage | median coverage | max abs(bias/CI) | median CI/CR |
 |---|---|---|---|---|
@@ -861,7 +862,115 @@ The failures are the expected shrinkage, not a grid problem:
 - On the gaussian truth both are unbiased, as they must be: shrinkage toward a
   Gaussian is invisible when the truth already is one.
 
-**No action.** MUSE is verified for the quantities the project commits to, at
-the star count and grid it will actually run at. Report the h3/h4 limitation
-rather than engineering around it -- the same conclusion the 1D campaign
-reached, now measured on MUSE's own profile instead of assumed to transfer.
+MUSE is verified for the quantities the project commits to, at the star count
+and grid it will actually run at.
+
+### Revision: most of the kurtosis "shrinkage" was an estimator bug
+
+The reading above -- that the kurtosis failure was prior shrinkage, evidenced
+by its flatness in `ivar` -- was wrong, and the evidence was misused.
+Flatness in `ivar` rules out a *statistical* limitation, but a deterministic
+estimator bias is equally flat (perfectly flat, in fact). The check that
+settles it is the **Gaussian truth**: shrinkage toward a Gaussian prior must
+vanish when the truth already is a Gaussian, so a non-zero bias there cannot
+be shrinkage under any prior.
+
+It was non-zero. `compute_summary` divided an UNCORRECTED 4th central moment
+by a CORRECTED `sigma**4`, an inconsistency worth about `-0.5*(h/sigma)**2` in
+excess kurtosis. Handed the exact, noiseless cell masses of a perfect
+Gaussian on MUSE's own grid, it returned -0.272 excess kurtosis at
+`sigma_min` -- against the -0.268/-0.269/-0.273 the recovery curve was
+reporting as "bias" at three different information levels.
+
+Fixed by correcting the fourth CUMULANT rather than the fourth moment. Binning
+to cell centres is a convolution with `Uniform(cell)` and cumulants add under
+convolution, so `kappa_4(f) = kappa_4(P) - h**4/120` -- the same additive
+structure as the `h**2/12` term, and NOT shape-dependent at this order (the
+old code comment claiming otherwise was wrong; the shape-dependence lives in
+the residual of the asymptotic expansion, an order smaller). The reference
+direction is the trap and it is the same one behind the `h**2/6` gap fixed
+earlier the same day: a FITTED pdf satisfies `P * U ~= f` so the terms are
+ADDED; a TRUTH's cell masses are the binned `f` so they are SUBTRACTED.
+`compute_summary` sees fitted pdfs.
+
+Verified exact (`tests/test_within_cell_kurtosis.py`): construct `P`, define
+`f = P * U` analytically, require the estimator to return `f`'s continuous
+cumulants. Error <= 4e-6 across five shapes, the residual being trapezoid
+error on a step density.
+
+Re-running MUSE's operating point with identical seeds -- every other metric
+came back bit-identical, so this isolates the estimator:
+
+| sigma | h/sigma | truth | kurtosis bias before | after | coverage before | after |
+|---|---|---|---|---|---|---|
+| 20.01 | 0.40 | gaussian | -0.056 | **+0.032** | 1.00 | 0.97 |
+| 20.01 | 0.40 | student_t_h4 | -0.640 | -0.552 | 0.43 | 0.47 |
+| 20.01 | 0.40 | skew_normal_h3 | -0.315 | -0.228 | 0.40 | 0.50 |
+| 10.37 | 0.78 | gaussian | -0.269 | **+0.026** | 0.40 | **1.00** |
+| 10.37 | 0.78 | student_t_h4 | -1.199 | -0.928 | 0.17 | 0.20 |
+| 10.37 | 0.78 | skew_normal_h3 | -0.524 | -0.248 | 0.23 | **0.67** |
+
+Shifts of +0.087 and +0.29 against a predicted 0.082 and 0.304. Gaussian-truth
+kurtosis is now unbiased at both dispersion ends, and the skewed truth's
+kurtosis went from failing to passing. Only the heavy-tailed truth still
+fails, which is the genuine limitation.
+
+### Skewness IS the prior, and that was tested rather than assumed
+
+Skewness needed no estimator fix -- the within-cell kernel is symmetric so its
+third cumulant is exactly zero, verified to ~1e-6 on a skewed case.
+
+The remaining question was whether MUSE's skewness shrinkage was the prior or
+an under-resolved grid, since the sweep confounded them: at `sigma_max`
+(h/sigma = 0.40) the fit recovered 87% of the true skewness at `ivar` 0.60,
+while at `sigma_min` (h/sigma = 0.78) it recovered 44% at `ivar` 1.60 -- more
+information, worse answer.
+
+Separated by holding information fixed at MUSE's operating point and refining
+the grid alone (`scratchpad/run_muse_skew_grid.py`, 30 realisations each):
+
+| n_bins | h/sigma | skewness bias | coverage |
+|---|---|---|---|
+| 22 | 0.780 | -0.335 | 0.27 |
+| 32 | 0.536 | -0.331 | 0.33 |
+| 44 | 0.390 | -0.332 | 0.30 |
+
+Doubling the resolution moves the bias by 0.003. **Flat.** The grid is not the
+constraint; the prior is. MUSE recovers ~25% of a true skewness of 0.454 at
+its operating point and no achievable regridding changes that. The
+`sigma_max`/`sigma_min` gap is the error regime (`err/sigma` 0.20 vs 0.386),
+not resolution.
+
+**Net:** report the h3 limitation honestly, as the acceptance criterion
+allows. h4 is in much better shape than the first pass claimed.
+
+## HST at its 174-star minimum: passes (item #2 CLOSED)
+
+`scratchpad/run_cps_sweep.py`, 180 fits, anisotropic truth, 30 realisations,
+crossing cps {0.42, 0.58, 0.70} with n_stars {174, 426} so that the occupancy
+question and the re-anchoring share one campaign. All 18 cells clear the 0.467
+coverage floor with `rms_z` below 1.3 on all three shape metrics.
+
+| cps | K | N | stars/cell | sigma_x rms_z | sigma_y rms_z | rho rms_z | worst coverage |
+|---|---|---|---|---|---|---|---|
+| 0.42 | 35 | 174 | 0.14 | 1.18 | 0.98 | 0.99 | 0.60 |
+| 0.58 | 25 | **174** | **0.28** | 1.15 | 1.02 | 1.00 | 0.53 |
+| 0.70 | 21 | 174 | 0.39 | 1.19 | 1.01 | 1.01 | 0.57 |
+| 0.42 | 35 | 426 | 0.35 | 0.77 | 0.85 | 0.85 | 0.80 |
+| 0.58 | 25 | 426 | 0.68 | 0.78 | 0.86 | 0.81 | 0.80 |
+| 0.70 | 21 | 426 | 0.97 | 0.83 | 0.87 | 0.84 | 0.77 |
+
+**No need to raise `target_capacity`.** The ~10% of bins near 174 stars are
+adequately fit as they are. The one residual is a +3% `sigma_x` bias at N=174
+(+0.61 km/s against a true 18.97) which is flat across cps (+0.59/+0.61/+0.68),
+so it is occupancy, not resolution -- and its intervals still cover.
+
+**cps = 0.58 is re-earned** with the corrected error distribution, and the
+fear that motivated the re-run was backwards. The argument was that over-broad
+mock errors inflate the intervals `rms_z` divides by, so 0.58 might be too
+coarse. With corrected (narrower) errors, `rms_z` at cps 0.70 went from 1.11
+to 0.83-0.87 -- BETTER, not worse. Narrower errors shrink the numerator too
+(less smearing, less discretisation bias), and empirically the bias falls
+faster than the interval. 0.58 is if anything conservative; 0.70 (K=21, 1.4x
+cheaper across 1415 bins) now also passes cleanly and is a defensible choice
+if compute matters.
