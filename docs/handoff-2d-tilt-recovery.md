@@ -942,8 +942,37 @@ its operating point and no achievable regridding changes that. The
 `sigma_max`/`sigma_min` gap is the error regime (`err/sigma` 0.20 vs 0.386),
 not resolution.
 
-**Net:** report the h3 limitation honestly, as the acceptance criterion
-allows. h4 is in much better shape than the first pass claimed.
+### h3 and h4 are the same limitation, not two different ones
+
+"h4 is in much better shape than h3" was a third misreading, and it came from
+judging each metric on the wrong truth. Attaching the TRUE standardised
+cumulants to the operating-point rows (`sigma_min`, post-fix):
+
+| truth | true h3 | h3 bias | recovered | true h4 | h4 bias | recovered |
+|---|---|---|---|---|---|---|
+| gaussian | 0.000 | -0.006 | -- | 0.000 | +0.026 | -- |
+| student_t_h4 | 0.000 | -0.001 | -- | **+1.000** | -0.928 | **7%** |
+| skew_normal_h3 | **+0.454** | -0.335 | **26%** | +0.305 | -0.248 | 19% |
+
+Kurtosis is shrunk HARDER than skewness, not less: 7% of a true excess
+kurtosis of 1.0 survives against 26% of a true skewness of 0.454. Same
+ordering at `sigma_max` (45% and 25% for kurtosis, 42% for skewness).
+
+The headline "Gaussian kurtosis +0.026, coverage 1.00" is measured on the one
+truth whose correct h4 is zero -- an estimator that always returned zero would
+score identically. Two of the three truths have zero excess kurtosis, so the
+suite flattered h4 and exercised h3.
+
+One rule covers the whole table: **whichever standardised cumulant is non-zero
+in the truth is pulled toward zero; whichever is already zero comes back
+clean.** student_t's skewness returns to -0.0006 because its true skewness is
+0. That is shrinkage toward the Gaussian, and it is symmetric in h3 and h4.
+Skewness is not a special failure -- it is the one we happen to have a truth
+for.
+
+**Net:** report the shape limitation honestly for BOTH h3 and h4, as the
+acceptance criterion allows. Do not quote the Gaussian-truth h4 numbers as
+evidence that h4 works.
 
 ## HST at its 174-star minimum: passes (item #2 CLOSED)
 
