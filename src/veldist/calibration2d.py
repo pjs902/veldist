@@ -107,6 +107,12 @@ def cell_per_sigma_for(err_over_sigma):
     return float(c_hi * (e / e_hi) ** p)
 
 
+def _log_sigma_from_p95(err):
+    """Log-normal width that reproduces an error sample's p95/median ratio."""
+    err = np.asarray(err, dtype=float)
+    return float(np.log(np.percentile(err, 95) / np.median(err)) / 1.645)
+
+
 @dataclass(frozen=True)
 class ObservingProfile2D:
     """A proper-motion observing regime, and the velocity grid it implies.
@@ -378,7 +384,13 @@ class ObservingProfile2D:
             rotation_span=float(
                 max(np.ptp(per_bin_mean1), np.ptp(per_bin_mean2))
             ),
-            err_log_sigma=float(np.std(np.log(np.concatenate(kept_err_mag)))),
+            # Anchored on p95/median, NOT std(log): the real error
+            # distributions are heavier-tailed than log-normal, and std(log)
+            # fits the body while understating the tail (HST: 0.287 vs 0.434,
+            # a p95 of 2.42 against a measured 3.14 km/s). The tail is the
+            # part that matters -- it sets how much the errors inflate the
+            # posterior intervals, which is the denominator of rms_z.
+            err_log_sigma=_log_sigma_from_p95(np.concatenate(kept_err_mag)),
         )
 
     def cells_per_sigma(self, axis_sigma):
@@ -1256,11 +1268,26 @@ GAIA_OUTER_MEASURED = ObservingProfile2D(
 #: err_median measured here is 6x the 0.24 km/s ``HST_BRIGHT`` assumes.
 #: n_stars is the MEDIAN; the minimum bin holds 174, which is the case the
 #: calibration has never been run at.
+#:
+#: **err_log_sigma added 2026-09-01**, same audit that caught Gaia's collapse
+#: but failing the other way. HST's ``err_cut`` is real -- the 0.3 mas/yr
+#: quality cut is applied upstream and the catalogue's largest error is
+#: 7.741 km/s against the 7.81 cut -- but it sits at ~p100, not the p95 the
+#: back-derivation assumes, so ``max(0.25, log(7.81/1.51)/1.645)`` returned
+#: 0.999 against a measured 0.434. Mocks drew p95 = 7.78 km/s where the
+#: 610846 selected stars give 3.14 (p99 4.44, max 7.74).
+#:
+#: This is the DANGEROUS direction: over-broad errors inflate the posterior
+#: intervals, which is what ``rms_z`` divides by, so coarse cells looked more
+#: acceptable than they are. HST's ``_CPS_ANCHORS`` entry (0.58) may
+#: therefore be too coarse and must be re-measured -- unlike Gaia's, its
+#: error does not point somewhere safe.
 HST_MEASURED = ObservingProfile2D(
     name="hst_measured",
     sigma_ref=16.08,
     err_median=1.51,
     err_cut=PM_QUALITY_CUT_KMS,
+    err_log_sigma=0.434,
     n_stars=426,
     sigma_min=11.50,
     sigma_max=21.54,

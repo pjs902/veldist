@@ -8,6 +8,7 @@ from veldist.calibration2d import (
     HST_BRIGHT,
     HST_FAINT,
     GAIA_OUTER_MEASURED,
+    HST_MEASURED,
     PROFILES_2D,
     ObservingProfile2D,
 )
@@ -157,6 +158,16 @@ def test_gaia_measured_error_tail_matches_the_catalogue():
     production notebook actually fits: median 8.33, p95 27.54 km/s."""
     e = GAIA_OUTER_MEASURED.draw_errors(50000, np.random.default_rng(0))
     assert np.percentile(e, 95) == pytest.approx(27.5, rel=0.15)
+
+
+def test_hst_measured_error_tail_matches_the_catalogue():
+    """Measured over the 610846 stars passing the HST HQ astrometry +
+    membership selection: median 1.535, p95 3.14, p99 4.44 km/s. The 0.3
+    mas/yr quality cut is real but sits at ~p100 (largest error 7.74), so
+    back-deriving the spread from it over-broadened the tail by ~2.5x."""
+    e = HST_MEASURED.draw_errors(50000, np.random.default_rng(0))
+    assert np.percentile(e, 95) == pytest.approx(3.14, rel=0.15)
+    assert np.percentile(e, 99) == pytest.approx(4.44, rel=0.20)
 
 
 def test_from_data_measures_err_log_sigma():
