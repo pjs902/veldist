@@ -89,3 +89,36 @@ def test_clean_profile_warns_about_nothing():
         rotation_span=10.0,
     )
     assert recommend_grid_2d(p)["warnings"] == []
+
+
+def test_precise_data_gets_finer_cells():
+    """The counter-intuitive direction, and the whole reason a single global
+    cell_per_sigma was wrong: HST's errors are ~1% of its signal, so its
+    posterior is sharp and a discretisation bias that Gaia's wide intervals
+    absorb breaks HST's calibration."""
+    from veldist.calibration2d import cell_per_sigma_for
+
+    assert cell_per_sigma_for(0.094) < cell_per_sigma_for(1.05)
+
+
+def test_cell_per_sigma_reproduces_its_anchors():
+    """Both anchors are measured points, not fitted guesses."""
+    from veldist.calibration2d import _CPS_ANCHORS, cell_per_sigma_for
+
+    for err_over_sigma, cps in _CPS_ANCHORS:
+        assert cell_per_sigma_for(err_over_sigma) == pytest.approx(cps, rel=1e-6)
+
+
+def test_cell_per_sigma_is_clipped_outside_the_measured_range():
+    """The exponent is fitted to two points and carries no theory, so
+    extrapolation is clamped rather than trusted."""
+    from veldist.calibration2d import _CPS_ANCHORS, cell_per_sigma_for
+
+    (e_lo, c_lo), (e_hi, c_hi) = _CPS_ANCHORS
+    assert cell_per_sigma_for(e_lo / 100) == pytest.approx(c_lo)
+    assert cell_per_sigma_for(e_hi * 100) == pytest.approx(c_hi)
+
+
+def test_explicit_cell_per_sigma_overrides_the_derived_one():
+    p = dataclasses.replace(GAIA_OUTER_MEASURED, cell_per_sigma=0.5)
+    assert p.cells_per_sigma_target == 0.5

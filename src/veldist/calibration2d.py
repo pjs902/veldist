@@ -36,6 +36,7 @@ __all__ = [
     "coverage_floor",
     "recovery_curve_2d",
     "recommend_grid_2d",
+    "cell_per_sigma_for",
 ]
 
 #: Adopted cluster distance (Peter, 2026-08-06).
@@ -46,6 +47,53 @@ KMS_PER_MASYR = 4.740470 * CLUSTER_DISTANCE_PC / 1000.0
 
 #: The 0.3 mas/yr proper-motion quality cut, in km/s.
 PM_QUALITY_CUT_KMS = 0.30 * KMS_PER_MASYR
+
+
+#: Measured (err/sigma, cell_per_sigma) anchors for :func:`cell_per_sigma_for`.
+#: Gaia: swept {0.85, 1.10, 1.40, 1.80} at 435 stars, 0.85 chosen (2.8% bias
+#: on the narrow axis, both rms_z near 1; 1.40+ degrades fast).
+#: HST: 0.85 FAILS (sigma_y rms_z 1.36); 0.42 gives bias +0.001, rms_z 0.81.
+_CPS_ANCHORS = ((0.094, 0.42), (1.05, 0.85))
+
+
+def cell_per_sigma_for(err_over_sigma):
+    """Target cell width in units of sigma, for a given measurement-error
+    regime.
+
+    A single global constant is the wrong shape. HST and Gaia disagree by
+    2x, and the reason is that ``rms_z`` is bias over interval width: HST's
+    err/sigma is 0.094 against Gaia's 1.05, so its posterior is sharp and
+    there is nothing to hide a residual discretisation bias behind. Gaia
+    tolerates coarse cells because its large errors inflate the intervals
+    enough to swallow the same absolute error. **Precise data needs FINER
+    grids** -- the opposite of the usual intuition.
+
+    This is an **empirical two-point power law**, not a derived result. The
+    obvious physical model -- keep the discretisation bias below the
+    statistical error, which scales as ``(1 + (err/sigma)^2)^(1/4)`` --
+    predicts a ratio of 1.20 between these two regimes, against 2.02
+    measured. Something else contributes, most plausibly that a weak
+    likelihood lets the roughness prior smooth the recovered pdf, so coarse
+    cells cost less than the error budget alone suggests. Until that is
+    understood, do not extrapolate this far outside the anchors; the
+    exponent is fitted to two points and carries no theory.
+
+    Parameters
+    ----------
+    err_over_sigma : float
+        Median per-star measurement error divided by the dispersion the grid
+        has to resolve (``profile.err_median / profile.sigma_lo``).
+
+    Returns
+    -------
+    float
+        Cell width in units of sigma, clipped to the measured range so a
+        wild input cannot silently produce an absurd grid.
+    """
+    (e_lo, c_lo), (e_hi, c_hi) = _CPS_ANCHORS
+    p = np.log(c_hi / c_lo) / np.log(e_hi / e_lo)
+    e = float(np.clip(err_over_sigma, e_lo, e_hi))
+    return float(c_hi * (e / e_hi) ** p)
 
 
 @dataclass(frozen=True)
@@ -68,11 +116,17 @@ class ObservingProfile2D:
         resolution choice and not a convenience value.
     n_sigma_grid : float
         Half-width of the velocity grid in units of ``sigma_ref``.
-    cell_per_sigma : float
-        Target cell width in units of ``sigma_lo``. **Re-measured 2026-09-01**
-        against the real Gaia profile (435 stars, the measured dispersion
-        range and rotation span), post-h^2/12-fix, sweeping
-        {0.85, 1.10, 1.40, 1.80} on both truths, 40 realisations each:
+    cell_per_sigma : float or None
+        Target cell width in units of ``sigma_lo``. ``None`` (the default)
+        derives it from this profile's own error regime via
+        :func:`cell_per_sigma_for` -- the right behaviour, since the
+        requirement is regime-dependent and a shared constant fails one of
+        the two measured datasets. Set it explicitly only to pin a grid.
+
+        **Re-measured 2026-09-01** against the real Gaia profile (435 stars,
+        the measured dispersion range and rotation span), post-h^2/12-fix,
+        sweeping {0.85, 1.10, 1.40, 1.80} on both truths, 40 realisations
+        each:
 
             cps    K   stars/cell   sigma_y bias   sigma_y rms_z   rho rms_z
             0.85  25      0.70      +0.150 (2.8%)      0.97          1.18
@@ -113,7 +167,7 @@ class ObservingProfile2D:
     err_cut: float
     n_stars: int
     n_sigma_grid: float = 3.5
-    cell_per_sigma: float = 0.85
+    cell_per_sigma: float | None = None
     sigma_min: float | None = None
     sigma_max: float | None = None
     rotation_span: float = 0.0
@@ -141,13 +195,21 @@ class ObservingProfile2D:
         return 2.0 * self.n_sigma_grid * self.sigma_hi + self.rotation_span
 
     @property
+    def cells_per_sigma_target(self):
+        """Cell width in units of sigma: explicit override, else derived from
+        this profile's own error regime via :func:`cell_per_sigma_for`."""
+        if self.cell_per_sigma is not None:
+            return self.cell_per_sigma
+        return cell_per_sigma_for(self.err_median / self.sigma_lo)
+
+    @property
     def cell_width(self):
         """Target cell width, km/s: resolve the narrowest LOSVD in the field.
 
         Uses ``sigma_lo``, not ``sigma_ref`` -- one shared grid must resolve
         every bin, and the narrowest one is the binding case.
         """
-        return self.cell_per_sigma * self.sigma_lo
+        return self.cells_per_sigma_target * self.sigma_lo
 
     @property
     def error_floor_width(self):

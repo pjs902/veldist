@@ -16,8 +16,13 @@ def test_cells_per_sigma_matches_sigma_ref_up_to_rounding():
     assert p.cells_per_sigma(p.sigma_ref) == pytest.approx(
         p.grid_width / p.n_bins / p.sigma_ref
     )
-    # Close to the nominal cell_per_sigma target, not exact due to rounding.
-    assert p.cells_per_sigma(p.sigma_ref) == pytest.approx(p.cell_per_sigma, rel=0.15)
+    # Close to the nominal target, not exact due to rounding. Read the target
+    # off cells_per_sigma_target, not the raw cell_per_sigma field: the latter
+    # is None whenever the profile derives its resolution from its own error
+    # regime, which is now the default.
+    assert p.cells_per_sigma(p.sigma_ref) == pytest.approx(
+        p.cells_per_sigma_target, rel=0.15
+    )
 
 
 def test_extent_in_sigma_matches_n_sigma_grid_at_sigma_ref():
