@@ -37,8 +37,10 @@ Slow tests (`@pytest.mark.slow`) run actual NUTS sampling. **CI does not run the
 
 ```bash
 # Make the 4 chains parallel; without this they serialise and it is ~4x slower.
-python -c "import veldist; veldist.set_host_devices(4)"
-pytest tests/ -v --tb=short -m slow
+# The flag must be set in pytest's OWN process: numpyro.set_host_device_count
+# mutates XLA_FLAGS in the calling interpreter, so setting it in a separate
+# `python -c` beforehand does nothing at all.
+XLA_FLAGS="--xla_force_host_platform_device_count=4" pytest tests/ -v --tb=short -m slow
 ```
 
 The gates that matter most there are `test_sbc_calibration` (both priors) and `test_per_bin_losvd_coverage`. Note the `rtk` pytest wrapper can report exit 0 on a failing run and has misreported collection, so read the summary line rather than trusting `$?`; `rtk proxy pytest ...` gives unfiltered output.
