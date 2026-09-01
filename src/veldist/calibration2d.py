@@ -49,11 +49,22 @@ KMS_PER_MASYR = 4.740470 * CLUSTER_DISTANCE_PC / 1000.0
 PM_QUALITY_CUT_KMS = 0.30 * KMS_PER_MASYR
 
 
-#: Measured (err/sigma, cell_per_sigma) anchors for :func:`cell_per_sigma_for`.
-#: Gaia: swept {0.85, 1.10, 1.40, 1.80} at 435 stars, 0.85 chosen (2.8% bias
-#: on the narrow axis, both rms_z near 1; 1.40+ degrades fast).
-#: HST: 0.85 FAILS (sigma_y rms_z 1.36); 0.42 gives bias +0.001, rms_z 0.81.
-_CPS_ANCHORS = ((0.094, 0.42), (1.05, 0.85))
+#: Measured (err_median/sigma_lo, cell_per_sigma) anchors for
+#: :func:`cell_per_sigma_for`. **The ratio is against ``sigma_lo``, matching
+#: how the function is called** -- an earlier revision anchored on
+#: ``sigma_ref`` while calling with ``sigma_lo``, which silently returned the
+#: wrong cell width for HST (0.463 instead of its measured 0.58) and was
+#: right for Gaia only because the value clipped at the top of the range.
+#:
+#: Gaia (err/sigma_lo = 8.60/7.03 = 1.22): swept {0.85, 1.10, 1.40, 1.80} at
+#: 435 stars; 0.85 chosen -- 2.8% bias on the narrow axis, both rms_z near 1,
+#: and 1.40+ degrades fast.
+#: HST (err/sigma_lo = 1.51/11.50 = 0.13): swept {0.42, 0.58, 0.70} at 426
+#: stars; 0.58 chosen -- 1.0% bias, sigma_y rms_z 0.87. 0.42 is cleaner still
+#: (0.0%, 0.81) but costs 1.7x the cells for no measured gain; 0.70 is
+#: borderline (2.2%, rms_z 1.11); 0.85 (Gaia's value) fails outright at
+#: rms_z 1.36.
+_CPS_ANCHORS = ((0.13, 0.58), (1.22, 0.85))
 
 
 def cell_per_sigma_for(err_over_sigma):
@@ -61,9 +72,9 @@ def cell_per_sigma_for(err_over_sigma):
     regime.
 
     A single global constant is the wrong shape. HST and Gaia disagree by
-    2x, and the reason is that ``rms_z`` is bias over interval width: HST's
-    err/sigma is 0.094 against Gaia's 1.05, so its posterior is sharp and
-    there is nothing to hide a residual discretisation bias behind. Gaia
+    ~1.5x, and the reason is that ``rms_z`` is bias over interval width:
+    HST's err/sigma_lo is 0.13 against Gaia's 1.22, so its posterior is sharp
+    and there is nothing to hide a residual discretisation bias behind. Gaia
     tolerates coarse cells because its large errors inflate the intervals
     enough to swallow the same absolute error. **Precise data needs FINER
     grids** -- the opposite of the usual intuition.
@@ -71,7 +82,7 @@ def cell_per_sigma_for(err_over_sigma):
     This is an **empirical two-point power law**, not a derived result. The
     obvious physical model -- keep the discretisation bias below the
     statistical error, which scales as ``(1 + (err/sigma)^2)^(1/4)`` --
-    predicts a ratio of 1.20 between these two regimes, against 2.02
+    predicts a ratio of 1.20 between these two regimes, against 1.47
     measured. Something else contributes, most plausibly that a weak
     likelihood lets the roughness prior smooth the recovered pdf, so coarse
     cells cost less than the error budget alone suggests. Until that is

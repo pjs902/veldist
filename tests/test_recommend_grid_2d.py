@@ -98,7 +98,7 @@ def test_precise_data_gets_finer_cells():
     absorb breaks HST's calibration."""
     from veldist.calibration2d import cell_per_sigma_for
 
-    assert cell_per_sigma_for(0.094) < cell_per_sigma_for(1.05)
+    assert cell_per_sigma_for(0.13) < cell_per_sigma_for(1.22)
 
 
 def test_cell_per_sigma_reproduces_its_anchors():
