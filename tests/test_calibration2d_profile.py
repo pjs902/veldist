@@ -7,6 +7,7 @@ from veldist.calibration2d import (
     GAIA_OUTER,
     HST_BRIGHT,
     HST_FAINT,
+    GAIA_OUTER_MEASURED,
     PROFILES_2D,
     ObservingProfile2D,
 )
@@ -128,3 +129,39 @@ def test_from_data_rejects_too_few_surviving_bins():
     pm1, pm2, err1, err2, bin_ids = _synthetic_pm_field(rng, n_bins=1, n_per_bin=400)
     with pytest.raises(ValueError, match="at least 2 bins"):
         ObservingProfile2D.from_data(pm1, pm2, err1, err2, bin_ids, err_cut=6.4)
+
+
+def test_err_cut_below_err_median_is_rejected():
+    """The 2026-09-01 Gaia bug: err_cut=7.81 under err_median=8.60 collapsed
+    65% of every mock's errors onto the cut while the profile kept reporting
+    the declared median. Nothing downstream could see it -- the types are
+    identical -- so the guard belongs at construction."""
+    with pytest.raises(ValueError, match="must exceed err_median"):
+        ObservingProfile2D(
+            name="collapsed", sigma_ref=11.1, err_median=8.60,
+            err_cut=7.81, n_stars=435,
+        )
+
+
+@pytest.mark.parametrize("profile", PROFILES_2D.values(), ids=list(PROFILES_2D))
+def test_drawn_errors_reproduce_the_declared_median(profile):
+    """A profile must generate the error distribution it advertises."""
+    e = profile.draw_errors(20000, np.random.default_rng(0))
+    assert np.median(e) == pytest.approx(profile.err_median, rel=0.05)
+    # and must not be a spike pinned at the truncation
+    assert np.mean(e >= profile.err_cut - 1e-9) < 0.10
+
+
+def test_gaia_measured_error_tail_matches_the_catalogue():
+    """Measured over the 64537 Gaia stars in [300, 1500) arcsec that the
+    production notebook actually fits: median 8.33, p95 27.54 km/s."""
+    e = GAIA_OUTER_MEASURED.draw_errors(50000, np.random.default_rng(0))
+    assert np.percentile(e, 95) == pytest.approx(27.5, rel=0.15)
+
+
+def test_from_data_measures_err_log_sigma():
+    rng = np.random.default_rng(5)
+    pm1, pm2, err1, err2, bin_ids = _synthetic_pm_field(rng, n_bins=5, n_per_bin=400)
+    p = ObservingProfile2D.from_data(pm1, pm2, err1, err2, bin_ids, err_cut=6.4)
+    assert p.err_log_sigma is not None
+    assert p.err_log_sigma > 0

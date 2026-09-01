@@ -121,6 +121,16 @@ class ObservingProfile2D:
         Sample-median per-star measurement error, km/s.
     err_cut : float
         Upper truncation on the error distribution, km/s (the quality cut).
+        Must exceed ``err_median``, since a truncation below the median of
+        the thing it truncates is not a cut but a collapse -- see
+        :meth:`draw_errors`.
+    err_log_sigma : float or None
+        Log-normal width of the per-star error distribution. ``None`` (the
+        default) back-derives it from ``err_cut`` on the assumption that the
+        cut sits at the 95th percentile. Set it explicitly whenever it has
+        been measured; ``from_data`` always does. Mirrors
+        :attr:`ObservingProfile.err_log_sigma` in 1D, which has always been
+        an independent field for exactly this reason.
     n_stars : int
         Stars per spatial (Voronoi) bin -- the science target. Fewer stars per
         bin means more bins, hence better spatial coverage, so this is a
@@ -183,6 +193,21 @@ class ObservingProfile2D:
     sigma_max: float | None = None
     rotation_span: float = 0.0
     bins_per_error: float = 2.0
+    err_log_sigma: float | None = None
+
+    def __post_init__(self):
+        # Trust boundary: err_cut below err_median silently turns draw_errors
+        # into a spike at the cut (65% of draws pinned there, for the Gaia
+        # profile this caught on 2026-09-01) while every reported summary
+        # keeps quoting the declared median. Types are identical either way,
+        # so nothing downstream can notice.
+        if self.err_cut <= self.err_median:
+            msg = (
+                f"{self.name}: err_cut ({self.err_cut:g}) must exceed err_median "
+                f"({self.err_median:g}) -- a cut below the median collapses the "
+                f"drawn error distribution onto the cut"
+            )
+            raise ValueError(msg)
 
     @property
     def sigma_lo(self):
@@ -254,11 +279,21 @@ class ObservingProfile2D:
         """Draw ``n`` per-star measurement errors, km/s.
 
         Log-normal about ``err_median``, truncated at ``err_cut``. The spread
-        is set so the cut sits at roughly the 95th percentile, which is what
-        the magnitude-dependent error distribution looks like once a quality
-        cut is applied.
+        is :attr:`err_log_sigma` when known; otherwise it is back-derived from
+        ``err_cut`` on the assumption that the cut sits at roughly the 95th
+        percentile, which is what the magnitude-dependent error distribution
+        looks like once a quality cut is applied.
+
+        That back-derivation is only as good as the assumption. Gaia's real
+        cut is 10 mas/yr = 260 km/s, i.e. no cut at all, so its spread is set
+        by the magnitude distribution (measured ``err_log_sigma`` 0.727) and
+        not by any truncation. Prefer measuring it.
         """
-        sigma_log = max(0.25, np.log(self.err_cut / self.err_median) / 1.645)
+        sigma_log = (
+            self.err_log_sigma
+            if self.err_log_sigma is not None
+            else max(0.25, np.log(self.err_cut / self.err_median) / 1.645)
+        )
         e = rng.lognormal(np.log(self.err_median), sigma_log, n)
         return np.clip(e, 1e-3, self.err_cut)
 
@@ -309,6 +344,7 @@ class ObservingProfile2D:
 
         per_bin_n, per_bin_sigma, per_bin_err_med = [], [], []
         per_bin_mean1, per_bin_mean2 = [], []
+        kept_err_mag = []
         for b in np.unique(bin_ids):
             sel = bin_ids == b
             n = int(np.sum(sel))
@@ -325,6 +361,7 @@ class ObservingProfile2D:
             per_bin_err_med.append(err_med)
             per_bin_mean1.append(np.mean(pm1[sel]))
             per_bin_mean2.append(np.mean(pm2[sel]))
+            kept_err_mag.append(err_mag)
 
         if len(per_bin_sigma) < 2:
             msg = f"at least 2 bins with >= {min_stars} stars are required, got {len(per_bin_sigma)}"
@@ -341,6 +378,7 @@ class ObservingProfile2D:
             rotation_span=float(
                 max(np.ptp(per_bin_mean1), np.ptp(per_bin_mean2))
             ),
+            err_log_sigma=float(np.std(np.log(np.concatenate(kept_err_mag)))),
         )
 
     def cells_per_sigma(self, axis_sigma):
@@ -1185,11 +1223,28 @@ GAIA_OUTER = ObservingProfile2D(
 #:
 #: Gaia: ``do_powerbin(target_capacity=400)``, 300-1500 arcsec, 148 bins.
 #: n_stars=2000 in ``GAIA_OUTER`` was a guess and is 4.6x the truth.
+#:
+#: **err_cut/err_log_sigma corrected 2026-09-01.** This profile was declared
+#: with ``err_cut=PM_QUALITY_CUT_KMS`` (7.81 km/s), which is BELOW its own
+#: ``err_median`` of 8.60: ``draw_errors`` clamped the spread to its 0.25
+#: floor and then clipped, so 65% of every mock's per-star errors came out
+#: pinned at exactly 7.81 km/s and the p95 was 7.81 against a real 27.5.
+#: Gaia's notebook applies no meaningful error cut at all -- its filter is
+#: ``pmrae/pmdece < 10 mas/yr`` = 260 km/s, and ``PM_QUALITY_CUT_KMS``
+#: appears there only as a reference line on a plot. The spread is therefore
+#: set by the magnitude distribution, measured over the 64537 stars in
+#: [300, 1500) arcsec: median 8.33, p95 27.54, p99 40.35 km/s, giving
+#: ``err_log_sigma`` 0.727. The Gaia entry in ``_CPS_ANCHORS`` was measured
+#: with the collapsed errors and needs re-measuring; its direction is the
+#: safe one (real errors are larger, which inflates intervals and makes
+#: coarse cells easier to justify), so 0.85 is more likely conservative than
+#: optimistic, but it is not yet earned.
 GAIA_OUTER_MEASURED = ObservingProfile2D(
     name="gaia_outer_measured",
     sigma_ref=11.1,
     err_median=8.60,
-    err_cut=PM_QUALITY_CUT_KMS,
+    err_cut=10.0 * KMS_PER_MASYR,
+    err_log_sigma=0.727,
     n_stars=435,
     n_sigma_grid=4.0,
     sigma_min=7.03,
