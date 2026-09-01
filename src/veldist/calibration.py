@@ -361,6 +361,32 @@ OMEGACAT = ObservingProfile(
     rotation_span=10.0,
 )
 
+#: What the production MUSE notebook actually produces, measured 2026-09-01
+#: by replaying ``muse_veldist.ipynb``'s own binning call
+#: (``do_powerbin(target_capacity=140)``, cell_width=15, 163 bins) on the real
+#: catalogue. ``OMEGACAT`` above is the hand-picked stand-in it replaces.
+#:
+#: Every scalar that differs, differs in the same direction -- the hand-picked
+#: profile understates the real spread:
+#:   rotation_span  10.0  -> 17.9  (1.8x; this one enters grid_width directly)
+#:   err_median      2.5  ->  4.0  (1.6x)
+#:   err_log_sigma   0.4  ->  0.62 (1.55x; the error tail is much heavier)
+#: The dispersion range is the exception: measured 10.4-20.0 is NARROWER than
+#: the assumed 7.0-22.0, so the assumed grid was wide enough there by luck.
+#:
+#: rotation_span is the full ptp of the per-bin mean velocity, not the 5-95
+#: span (13.8): the grid has to hold the worst bin, and a percentile range
+#: discards exactly the tail that defines it.
+OMEGACAT_MEASURED = ObservingProfile(
+    name="oMEGACat_measured",
+    n_stars=152,
+    err_median=4.0,
+    err_log_sigma=0.62,
+    sigma_max=20.01,
+    sigma_min=10.37,
+    rotation_span=17.9,
+)
+
 
 def recommend_grid(profile: ObservingProfile, v_systemic: float = 0.0) -> dict:
     """``KinematicSolver.setup_grid`` / ``fit_all_bins(grid_kwargs=...)`` from

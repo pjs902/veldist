@@ -1075,6 +1075,12 @@ GAIA_OUTER = ObservingProfile2D(
 #: (``omegaCen/dynamite_dataprep/{gaia,hst}_veldist.ipynb``). Where they
 #: disagree with the hand-picked versions, these are right.
 #:
+#: sigma_min/sigma_max are taken across BOTH axes (the narrowest bin on
+#: either component, and the widest), not from the isotropic-equivalent
+#: sigma: the grid must resolve and contain each axis separately. The two
+#: axes' medians differ by only ~5%, so the axis-to-axis asymmetry is minor;
+#: what matters is the ~2x min-to-max spread WITHIN an axis across bins.
+#:
 #: Gaia: ``do_powerbin(target_capacity=400)``, 300-1500 arcsec, 148 bins.
 #: n_stars=2000 in ``GAIA_OUTER`` was a guess and is 4.6x the truth.
 GAIA_OUTER_MEASURED = ObservingProfile2D(
@@ -1084,8 +1090,9 @@ GAIA_OUTER_MEASURED = ObservingProfile2D(
     err_cut=PM_QUALITY_CUT_KMS,
     n_stars=435,
     n_sigma_grid=4.0,
-    sigma_min=8.2,
-    sigma_max=14.5,
+    sigma_min=7.03,
+    sigma_max=16.02,
+    rotation_span=12.8,
 )
 
 #: HST: ``do_powerbin(target_capacity=400)``, cell_width=5, 1415 bins. The
@@ -1098,8 +1105,9 @@ HST_MEASURED = ObservingProfile2D(
     err_median=1.51,
     err_cut=PM_QUALITY_CUT_KMS,
     n_stars=426,
-    sigma_min=12.7,
-    sigma_max=21.3,
+    sigma_min=11.50,
+    sigma_max=21.54,
+    rotation_span=16.7,
 )
 
 PROFILES_2D = {
