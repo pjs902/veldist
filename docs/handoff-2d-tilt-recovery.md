@@ -551,3 +551,86 @@ pointing at this repo; loads the real Gaia catalogue from
 Full raw output (with per-fit NUTS progress) is not preserved — only the
 final `curve.report()` summary above was captured. Recreate the script
 from the pipeline in `gaia_veldist.ipynb` if it's no longer in scratchpad.
+
+---
+
+## Data-driven tuning (2026-09-01)
+
+The resolution bias is fixed (see above), so the open question became: what
+grid should each real dataset actually use? Every tuning constant in
+`calibration.py`/`calibration2d.py` was hand-picked. This section records
+what the production notebooks say those constants should be.
+
+### The profiles were measured, not guessed
+
+Measured by replaying each production notebook's own binning call on the
+real catalogue (`omegaCen/dynamite_dataprep/{gaia,hst,muse}_veldist.ipynb`),
+read-only, bins with <10 stars excluded. `NGC5139_config_production.yaml`
+consumes exactly these three notebooks' outputs, so these are the numbers
+the pipeline really runs on. The `core_supplement`/`hybrid_binning`/
+`sector_*` modules are exploratory and are NOT wired into production.
+
+| field | hand-picked | measured | error |
+|---|---|---|---|
+| `OMEGACAT.rotation_span` | 10.0 | 17.9 | 1.8x too small |
+| `OMEGACAT.err_median` | 2.5 | 4.0 | 1.6x too small |
+| `OMEGACAT.err_log_sigma` | 0.4 | 0.62 | 1.55x too small |
+| `HST_BRIGHT.err_median` | 0.24 | 1.51 | 6x too small |
+| `GAIA_OUTER.n_stars` | 2000 | 435 | 4.6x too large |
+| `rotation_span` (2D) | absent | 12.8-16.7 | field did not exist |
+
+**Every hand-picked scalar that differs from measurement understates the
+real spread**, with `n_stars` the sole exception (and it errs toward
+optimism too: fewer real stars than assumed). Treat this as the prior for
+any constant not yet checked.
+
+Per-bin star counts, which set what occupancy the calibration must cover:
+
+| | median | min | bins |
+|---|---|---|---|
+| Gaia | 435 | 320 | 148 |
+| HST | 426 | **174** | 1415 |
+| MUSE | 152 | 69 | 163 |
+
+HST's minimum is the case never tested -- the whole campaign ran at N~400.
+
+### The shared-grid constraint is what binds
+
+DYNAMITE takes one scalar `vxrange`/`vyrange` per map, so ONE grid serves
+every spatial bin. Extent must hold `sigma_max` plus `rotation_span`;
+resolution must serve `sigma_min`. Since sigma spans ~2x across bins within
+a single axis (Gaia pm1 8.4-16.0, HST pm1 12.0-21.5), those two pull apart,
+and in 2D the cost squares. `ObservingProfile2D` previously had only a
+scalar `sigma_ref` and so could not express this at all.
+
+Applying the rule with `cell_per_sigma=0.47` gives Gaia K=43 at 0.24
+stars/cell and HST K=31 at 0.44 -- not affordable. But 0.47 was measured
+BEFORE the h^2/12 fix, when refining the grid shrank a bias the estimator
+itself was manufacturing; that sweep was measuring the bug's
+resolution-dependence and calling it a resolution requirement. Re-measuring
+it is in progress.
+
+**1D MUSE is already feasible** on measured numbers: 22 bins at 6.9
+stars/bin, against the hand-picked profile's 37 at 4.1. The wider measured
+`rotation_span` is more than offset by the measured dispersion range being
+narrower than assumed (10.4-20.0 vs 7.0-22.0).
+
+### Not rotation
+
+For HST the *minor*-axis mean-velocity spread (16.7 km/s) slightly exceeds
+the *major*-axis one (16.0). Rigid rotation should put nearly all of that
+on the major axis with the minor flat near zero. Per-bin SEM is ~0.8 km/s
+against a 16 km/s spread, so it is not sampling noise on the means.
+Something roughly isotropic -- bulk-motion residual, perspective effects,
+or edge bins -- rides alongside the rotation. It does not change grid sizing
+(the larger axis wins either way), but a rotation-only model would
+misattribute it.
+
+### Trap for the next person
+
+`recovery_curve_2d` returns one row PER METRIC per `n_stars`, not one row
+per `n_stars`. Taking `rows[0]` silently reports `mean_x` alone -- which is
+the metric LEAST sensitive to resolution, since the h^2/12 term biases
+second moments and leaves means untouched. A sweep read that way looks
+reassuringly flat while saying nothing about `sigma_x`/`sigma_y`/`rho`.
+This voided one 400-fit run here.
