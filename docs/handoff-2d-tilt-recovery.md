@@ -765,3 +765,56 @@ so `cyy - <e_y^2>` is a difference of comparable numbers and a few bins
 deconvolve to near zero. Use p5 (5.67). The same reasoning that makes full
 `ptp` correct for `rotation_span` makes the raw min wrong here: that tail is
 physical, this one is the estimator's.
+
+### Discretisation of higher cumulants, measured before implementing them
+
+`TASKS.md` deferred higher-moment Sheppard corrections as "shape-dependent".
+That is worth stating precisely, because there is a tempting argument that
+cumulants escape it: binning to cell centres looks like a convolution with
+`Uniform(-h/2, h/2)`, cumulants add under convolution, and `kappa(U)` depends
+only on `h` (`k2 = h^2/12`, `k3 = 0`, `k4 = -h^4/120`). If that were exact,
+the correction would be shape-INdependent and standardised cumulants would be
+the obvious 2D non-Gaussianity statistic.
+
+**It is not exact.** Measured directly (`scratchpad/cumulant_sheppard_check.py`,
+exact cell masses of analytic truths, no fitting involved), the corrected
+cumulants recover the continuous values exactly for a Gaussian at every `h`
+tested, and only approximately for anything else -- the grouping identity is
+an asymptotic expansion, not an equality, and its residual involves higher
+derivatives of the density. It fails outright for a uniform truth (a density
+discontinuity), which is a stress case rather than a realistic LOSVD.
+
+What matters is the size of the residual at the grids actually adopted.
+Error in the corrected statistic, against the continuous truth:
+
+| truth | h/sigma | sigma err | skewness err | excess kurtosis err |
+|---|---|---|---|---|
+| skew_normal | 0.58 | +0.01% | -0.001 | +0.000 |
+| skew_normal | 0.85 | +0.39% | -0.021 | -0.030 |
+| skew_normal | 1.10 | +0.43% | +0.024 | -0.123 |
+| student_t5 | 0.58 | +0.00% | +0.000 | +0.002 |
+| student_t5 | 0.85 | -0.01% | +0.000 | +0.009 |
+| laplace | 0.58 | +0.09% | +0.004 | -0.021 |
+| laplace | 0.85 | -0.31% | +0.017 | +0.078 |
+| laplace | 1.10 | +0.60% | -0.071 | -0.152 |
+
+Reading, for the two adopted grids:
+
+- **HST at cps 0.58**: skewness good to ~0.004, excess kurtosis to ~0.02.
+  Comfortably usable.
+- **Gaia at cps 0.85**: skewness to ~0.02, excess kurtosis to ~0.08,
+  shape-dependent. Marginal -- an excess-kurtosis signal of order 0.1 would be
+  reported with a bias comparable to itself.
+- Beyond `h/sigma ~ 1` the fourth cumulant degrades fast (0.12-0.15 at 1.10).
+
+So the correction is worth implementing -- uncorrected `k4` errors are an
+order of magnitude larger -- but it does not remove the grid requirement, and
+**the requirement for the fourth cumulant is tighter than for sigma**. Sigma
+stays under 0.6% across this whole range, which is exactly why a
+sigma-calibrated grid cannot be assumed adequate for kurtosis. Any 2D
+non-Gaussianity work needs its own resolution anchor, measured the same way
+`_CPS_ANCHORS` was.
+
+This also settles the estimator choice: use raw cumulants with the additive
+`kappa(U)` correction, then standardise from the corrected `k2`. Correcting
+standardised quantities directly mixes two corrections and has no clean form.
