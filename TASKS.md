@@ -20,6 +20,77 @@ h3/h4 limitation honestly rather than engineering around it.
 
 ## Now
 
+### 2026-09-01 profile audit and verification campaign
+
+Status of the six items carried out of the data-driven tuning session. See
+`docs/handoff-2d-tilt-recovery.md` (2026-09-01 afternoon section) for the
+measurements behind each.
+
+- **[IN PROGRESS] MUSE 1D recovery curve.** `OMEGACAT_MEASURED` had its grid
+  derived (22 bins, 152 stars/bin) but no simulation verification at all.
+  Sweeping ivar around the operating point at both dispersion ends
+  (0.355 at `sigma_max`, 1.145 at `sigma_min`), 3 truths, 30 realisations:
+  `scratchpad/run_muse_recovery.py`.
+
+- **[QUEUED] HST cps x n_stars sweep** (`scratchpad/run_cps_sweep.py`).
+  Crosses two items onto one set of fits:
+  - is HST calibrated at its 174-star minimum bin on the ADOPTED grid? The
+    earlier min-occupancy run used cps=0.85 / K=19, since rejected.
+  - re-anchor `_CPS_ANCHORS`' HST entry, which was measured with mock errors
+    2.5x too broad (see below). Over-broad errors inflate the intervals
+    `rms_z` divides by, so 0.58 may be too coarse -- the unsafe direction.
+
+  Note the adopted HST grid is **K=25** (0.68 stars/cell at 426), not the
+  K=27 quoted in the 2026-09-01 morning handoff.
+
+- **[QUEUED] Gaia re-anchor.** Same script, same reason: its entry (0.85) was
+  measured with errors collapsed onto a spike. Its error points the safe way
+  (real errors are larger, inflating intervals), so 0.85 is more likely
+  conservative than optimistic, but it is not yet earned.
+
+- **[RESOLVED 2026-09-01] `err_cut` mismatch.** Was filed as a
+  notebook-vs-profile disagreement; it was worse. `draw_errors` back-derived
+  its log-normal width from `err_cut` assuming the cut sits at p95, and that
+  failed in both measured profiles and in opposite directions -- Gaia's cut
+  (7.81) sat BELOW its own median (8.60) and collapsed 65% of every mock's
+  errors onto the cut; HST's cut is real but sits at ~p100, over-broadening
+  the tail 2.5x. `err_log_sigma` is now an explicit field, guarded at
+  construction, and measured by `from_data` (anchored on p95/median, not
+  `std(log)`, which fits the body and understates the tail).
+
+- **[RESOLVED 2026-09-01, no action] HST minor-axis mean-velocity excess.**
+  Not an anomaly. A linear-gradient fit to the 1415 bin means gives
+  `dm1/dy = +0.0296` and `dm2/dx = -0.0302` km/s/arcsec -- equal magnitude,
+  orthogonal, i.e. a pure curl with the divergence 10x smaller. The notebook
+  re-adds rotation from the 1D TANGENTIAL rotation curve, and a tangential
+  field has equal RMS in any two orthogonal Cartesian components by
+  construction, so `ptp2 ~= ptp1` is required. Not edge bins (inner 90%
+  unchanged), not a bulk residual (means within 0.15 km/s of zero).
+  `rotation_span = 16.7` stands.
+
+- **[DOWNGRADED] Per-axis rather than per-bin resolution.** Real axis ratios
+  are 0.894 (HST) and 0.767 (Gaia) median, not the 0.65 assumed -- that came
+  from the synthetic test truth, which is more anisotropic than the cluster.
+  `sigma_min`, already measured per-component across both axes, sits at or
+  below the narrowest principal axis: HST needs NO correction (ratio 1.03),
+  Gaia ~0.81 (1.23x finer cells, not 1.54x). Fold into the 2D
+  non-Gaussianity work rather than paying for its own campaign; re-express
+  `_CPS_ANCHORS` in the same sweep that re-measures them.
+
+- **[NOT STARTED] 2D non-Gaussianity** (skew/kurtosis analogues for HST).
+  Recommend standardised cumulants over 2D Gauss-Hermite. **Write the
+  discretisation test FIRST** -- higher-moment Sheppard corrections are
+  shape-dependent and are deliberately unimplemented in `analysis.py`.
+
+- **[NOT STARTED] Re-run the slow/SBC suite.** Not run since the tuning
+  changes. `XLA_FLAGS="--xla_force_host_platform_device_count=4" pytest
+  tests/ -v --tb=short -m slow`.
+
+- **[NOT STARTED] `n_stars` was measured, not optimised.** `target_capacity`
+  was never swept, so the margin is unknown. The HST sweep above gives the
+  occupancy floor, which is the number that decides whether to raise the
+  PowerBin target or accept a few prior-dominated bins.
+
 - **[RESOLVED 2026-08-06] 1D `num_samples` raised 1000 -> 3000; 2D sampler
   defaults fixed (`dense_mass=False`, `num_samples=3000`).** On real HST
   proper-motion data (`omegaCen/dynamite_dataprep/hst_veldist.ipynb`), the
