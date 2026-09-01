@@ -67,8 +67,8 @@ should be closed before the tuning is trusted.
 
 2. **HST at its 174-star minimum is unverified on the adopted grid.** The
    min-occupancy run (`scratchpad/run_hst_min.py`, N=174/250/426) ran at
-   cps=0.85 / K=19, which we then rejected. At the adopted cps=0.58 (K=27),
-   174 stars gives 0.24 stars/cell, far below the 0.68 floor the sweeps
+   cps=0.85 / K=19, which we then rejected. At the adopted cps=0.58 (K=25),
+   174 stars gives 0.28 stars/cell, far below the 0.68 floor the sweeps
    measured. Roughly 10% of HST's 1415 bins sit near that floor, and they are
    the sparse outer bins carrying the kinematic signal.
 
@@ -209,7 +209,7 @@ should be closed before the tuning is trusted.
 > `docs/handoff-2d-tilt-recovery.md`. Two verification gaps remain from that
 > work: MUSE has NO simulation verification at all (never ran a 1D recovery
 > curve with `OMEGACAT_MEASURED`), and HST's 174-star minimum bins are
-> unverified on the adopted cps=0.58 / K=27 grid (0.24 stars/cell, below the
+> unverified on the adopted cps=0.58 / K=25 grid (0.28 stars/cell, below the
 > 0.68 measured floor). Next step: run the MUSE 1D recovery curve first — it is
-> the cheapest and has zero coverage — then HST at N=174 on K=27. Read ALL
+> the cheapest and has zero coverage — then HST at N=174 on K=25. Read ALL
 > metric rows from `recovery_curve_2d`, not `rows[0]`.
