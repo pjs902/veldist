@@ -45,8 +45,20 @@ CLUSTER_DISTANCE_PC = 5494.0
 #: 1 mas/yr = 4.740470 * distance[kpc] km/s (standard proper-motion relation).
 KMS_PER_MASYR = 4.740470 * CLUSTER_DISTANCE_PC / 1000.0
 
-#: The 0.3 mas/yr proper-motion quality cut, in km/s.
+#: HST's 0.3 mas/yr proper-motion quality cut, in km/s. Applied upstream of
+#: the HST catalogue, whose largest error (7.741 km/s) sits just under it.
+#: **This is HST's cut, not a project-wide one** -- passing it as Gaia's
+#: ``err_cut`` puts the cut below Gaia's own median error, which
+#: :meth:`ObservingProfile2D.__post_init__` now rejects.
 PM_QUALITY_CUT_KMS = 0.30 * KMS_PER_MASYR
+
+#: Gaia's proper-motion error ceiling, in km/s. The Gaia selection applies no
+#: PM-error quality cut, so this sits above every measured error rather than
+#: truncating the distribution: the spread is set by the magnitude
+#: distribution (measured ``err_log_sigma`` 0.727), not by a truncation.
+#: Named because "Gaia's cut" is 34x HST's and confusing the two is silent
+#: everywhere except the ``err_cut > err_median`` guard.
+GAIA_PM_ERR_CEILING_KMS = 10.0 * KMS_PER_MASYR
 
 
 #: Measured (err_median/sigma_lo, cell_per_sigma) anchors for
@@ -1261,7 +1273,7 @@ GAIA_OUTER_MEASURED = ObservingProfile2D(
     name="gaia_outer_measured",
     sigma_ref=11.1,
     err_median=8.60,
-    err_cut=10.0 * KMS_PER_MASYR,
+    err_cut=GAIA_PM_ERR_CEILING_KMS,
     err_log_sigma=0.727,
     n_stars=435,
     n_sigma_grid=4.0,
