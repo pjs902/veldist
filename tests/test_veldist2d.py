@@ -1062,3 +1062,34 @@ def test_solver_setup_grid_rectangular_smoke():
     assert solver.Q.shape == (n_cells, n_cells)
     assert solver.L.shape == (n_cells, n_cells)
     assert np.all(np.isfinite(solver.L))
+
+
+def test_fit_all_bins_2d_thins_returned_samples():
+    """Returned solvers must be small enough to hold ~1400 of them in RAM.
+
+    The full HST production set (1415 bins, K=23) at num_samples=3000 holds
+    ~36 GB of untouched draws in fit_all_bins_2d's list -- the whole machine.
+    Guards the four properties that fix it: latent `x` gone, intrinsic_pdf
+    thinned and float32, heavy inference arrays dropped -- and, crucially,
+    that clip_uncertainties still saw the FULL draws (so DYNAMITE output is
+    unchanged).
+    """
+    bin_data_list = [_make_pm_bin(15, seed=0)]
+    grid_kwargs = {"center": (0.0, 0.0), "width": (30.0, 30.0), "n_bins": 5}
+    run_kwargs = {"num_warmup": 2, "num_samples": 20, "seed": 100}
+
+    solvers = fit_all_bins_2d(bin_data_list, grid_kwargs, run_kwargs=run_kwargs, show_progress=False)
+    s = solvers[0]
+
+    assert list(s.samples) == ["intrinsic_pdf"]  # latent x dropped
+    assert s.samples["intrinsic_pdf"].shape == (2, 25)  # 20 draws / thin=10
+    assert s.samples["intrinsic_pdf"].dtype == np.float32
+    assert s.matrix is None and s.L is None and s.Q is None and s.Q_reg is None
+    # thinning happened AFTER clip_uncertainties, so the summary survives
+    assert s.clipped_samples["pdf_median"].shape == (25,)
+
+    # thin=1 keeps every draw (still float32, still no latent x)
+    solvers = fit_all_bins_2d(
+        bin_data_list, grid_kwargs, run_kwargs=run_kwargs, show_progress=False, thin=1
+    )
+    assert solvers[0].samples["intrinsic_pdf"].shape == (20, 25)

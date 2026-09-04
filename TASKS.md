@@ -144,6 +144,29 @@ measurements behind each.
   likely an underestimate), byte-identical posteriors to sequential at
   matching seeds.
 
+  **Correction + memory fix (2026-09-04).** The "near-identical per-bin
+  wall time, since compile time dominates over sampling" claim above does
+  not hold at production grid size: measured at K=23, N=426, 500+3000, a
+  bin costs 27.5 s cold vs 26.0 s JIT-warm, so compile is ~5% and sampling
+  ~95%. `num_samples` is a near-linear knob on run time; 3000 is kept for
+  the ESS but is not free. Shape-bucketing star counts to reuse compiles
+  is correspondingly not worth it, and neither is caching the per-bin
+  `setup_grid` (GMRF build + Cholesky is 1.7 ms against 26 s).
+
+  What *was* costing real time was memory. `fit_all_bins_2d` returned
+  solvers holding every draw: at K=23 x 3000 draws that is ~26 MB/bin, so
+  the ~1400-bin HST set held ~36 GB in the returned list — the whole
+  machine — which is why that run was pinned to `n_jobs=2` and took 4.4 h.
+  `_fit_one_bin_2d` now shrinks each solver inside the worker, before it
+  crosses the process boundary: drops `matrix`/`Q`/`Q_reg`/`L` and
+  `samples["x"]` (`intrinsic_pdf` is a deterministic softmax of it), and
+  thins `intrinsic_pdf` 10x to float32 (~0.63 MB/bin, ~0.9 GB total).
+  `clip_uncertainties()` still runs on the FULL draws, so DYNAMITE output
+  is unchanged; at ~31 leapfrog steps/sample the kept draws are
+  near-independent. New `thin` kwarg on `fit_all_bins_2d` (`thin=1` keeps
+  every draw, `thin=0` leaves `samples` untouched); guarded by
+  `test_fit_all_bins_2d_thins_returned_samples`.
+
   Separately, 1D's `KinematicSolver.run` default `num_samples` was raised
   1000 -> 3000 on the same "more ESS for ~free wall time" reasoning.
   Unlike the 2D change, this touches an already-SBC/coverage-validated

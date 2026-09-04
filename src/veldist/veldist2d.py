@@ -1109,7 +1109,7 @@ def _log_bin_failure(failure_log_path, failure):
         f.write(json.dumps(failure) + "\n")
 
 
-def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, failure_log_path=None):
+def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, failure_log_path=None, thin=10):
     """Fit a single bin. Module-level (not a closure) so it's picklable for
     ``ProcessPoolExecutor`` -- see :func:`fit_all_bins_2d`'s ``n_jobs``.
 
@@ -1167,6 +1167,35 @@ def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, 
         )
         return i, None
 
+    # ponytail: shrink the solver before it crosses the process boundary and
+    # lands in fit_all_bins_2d's list. clip_uncertainties() above already ran
+    # on the FULL draws, so nothing written to DYNAMITE changes.
+    #
+    # Why this is here and not in the caller: on the largest production set
+    # (HST, 1415 bins, K=23 -> 529 cells, num_samples=3000) the untouched
+    # solvers are ~26 MB each -- 36 GB in the returned list, which is the
+    # whole machine. Post-hoc cleanup in a notebook is too late; peak RAM is
+    # hit inside this function's callers.
+    #
+    #   samples["x"]  dropped outright: intrinsic_pdf is a deterministic
+    #                 softmax of it (model_gaussian_core_2d), so x carries no
+    #                 information the pdf does not.
+    #   intrinsic_pdf thinned 10x and cast to float32: 12.7 MB -> 0.63 MB.
+    #                 NUTS here runs ~31 leapfrog steps/sample, so draws are
+    #                 already near-independent; 300 of 3000 against a measured
+    #                 ESS of 830-1290 loses ESS, not correctness. float32 gives
+    #                 ~1e-7 relative precision on values summing to 1.
+    #
+    # Set thin=1 to keep every draw (still float32 and still x-free).
+    if thin:
+        solver.samples = {
+            "intrinsic_pdf": np.asarray(solver.samples["intrinsic_pdf"][::thin], dtype=np.float32)
+        }
+    solver.matrix = None
+    solver.Q = None
+    solver.Q_reg = None
+    solver.L = None
+
     return i, solver
 
 
@@ -1178,6 +1207,7 @@ def fit_all_bins_2d(
     show_progress=True,
     n_jobs=1,
     failure_log_path="fit_all_bins_2d_failures.jsonl",
+    thin=10,
 ):
     """
     Run the full inference pipeline for a list of spatial (Voronoi) bins.
@@ -1267,7 +1297,14 @@ def fit_all_bins_2d(
         multiple ``n_jobs`` workers at the same path: each failure is one
         atomic ``open`` + single ``write`` + ``close``, not a held-open
         file handle.
-
+    thin : int
+        Keep every ``thin``-th posterior draw of ``intrinsic_pdf`` (and drop
+        the latent ``x`` draws entirely) on each returned solver, cast to
+        float32. Defaults to 10. ``clip_uncertainties`` runs on the full
+        draws first, so the DYNAMITE outputs are unaffected; this only bounds
+        the memory of the returned list. See :func:`_fit_one_bin_2d` for the
+        measured rationale. Pass ``thin=1`` to keep every draw, or ``thin=0``
+        to leave ``samples`` completely untouched.
     Returns
     -------
     solvers : list
@@ -1309,7 +1346,7 @@ def fit_all_bins_2d(
             cov = np.asarray(bin_data["cov"])
 
             _, solver = _fit_one_bin_2d(
-                i, pm1, pm2, cov, grid_kwargs, run_kwargs, base_seed + i, min_stars, failure_log_path
+                i, pm1, pm2, cov, grid_kwargs, run_kwargs, base_seed + i, min_stars, failure_log_path, thin
             )
             solvers[i] = solver
     else:
@@ -1330,6 +1367,7 @@ def fit_all_bins_2d(
                     base_seed + i,
                     min_stars,
                     failure_log_path,
+                    thin,
                 ): i
                 for i, bin_data in enumerate(bin_data_list)
             }
