@@ -1,25 +1,23 @@
 # file src/veldist/veldist2d.py
-"""
-Bayesian Matrix-Based 2D (Proper-Motion) Kinematic Deconvolution
+"""Bayesian Matrix-Based 2D (Proper-Motion) Kinematic Deconvolution
 ==================================================================
 
-This module is the 2D analogue of ``veldist.py``: it infers the intrinsic
-bivariate velocity distribution (e.g. over proper motion components
-``pmra``/``pmdec``) from discrete stellar observations with per-star 2x2
-measurement covariance, using a pre-computed design matrix and a hierarchical
-2D GMRF (Gauss-Markov random field) smoothness prior.
+The 2D counterpart of ``veldist.py``. It infers the intrinsic bivariate
+velocity distribution (for example over the proper-motion components
+``pmra``/``pmdec``) from stars with individual 2x2 measurement covariances,
+using a precomputed design matrix and a 2D Gauss-Markov random field (GMRF)
+smoothness prior.
 
-Kept deliberately separate from ``veldist.py`` (see ``PLAN.md`` Part 3) --
-the 1D and 2D solvers share the same broad approach (design matrix +
-softmax-of-GMRF likelihood) but differ enough in the details (grid
-flattening, box vs. quadrature integration, precision-matrix construction)
-that premature unification would cost more than the duplication.
+It is deliberately kept separate from ``veldist.py`` (``PLAN.md`` Part 3).
+The two solvers share the overall approach (design matrix and a softmax of
+a smooth latent field) but differ in enough details (grid flattening, box
+versus quadrature integration, building the precision matrix) that merging
+them would cost more than the duplication.
 
-All GMRF / Cholesky / latent maths is done in float64
-(``jax.config.update("jax_enable_x64", True)``) even though the design
-matrix ``M`` is stored as float32 for memory; see the ⚠ Gotchas in
-``PLAN.md`` §3.1/§3.2 for why mixing precisions here is deliberate, not an
-oversight.
+The GMRF, Cholesky and latent-field maths run in float64
+(``jax.config.update("jax_enable_x64", True)``), while the design matrix
+``M`` is stored as float32 to save memory. The mixed precision is
+intentional; see the Gotchas in ``PLAN.md`` §3.1/§3.2.
 """
 
 import contextlib
@@ -67,12 +65,12 @@ SIGMA3_RATE_2D = 0.35
 
 
 def _as_kx_ky(n_bins):
-    """Normalise a per-axis bin count to ``(kx, ky)``.
+    """Turn a per-axis bin count into ``(kx, ky)``.
 
-    Accepts either a scalar (square grid, ``kx == ky``) or a 2-tuple
-    ``(kx, ky)`` (rectangular grid). This is the single place that
-    interprets ``n_bins``; every function below that needs the per-axis
-    counts goes through here (or receives ``(kx, ky)`` directly).
+    Accepts a scalar (square grid, ``kx == ky``) or a 2-tuple ``(kx, ky)``
+    (rectangular grid). This is the only place ``n_bins`` is interpreted;
+    everything below that needs per-axis counts goes through it or receives
+    ``(kx, ky)`` directly.
     """
     if np.isscalar(n_bins):
         kx = ky = int(n_bins)
@@ -83,33 +81,30 @@ def _as_kx_ky(n_bins):
 
 
 def setup_grid_2d(center, width, n_bins):
-    """
-    Define a velocity grid over a bivariate velocity space.
+    """Define a velocity grid over a 2D velocity space.
 
-    ``n_bins`` may be a scalar ``K`` (square ``K x K`` grid, the original
-    behaviour) or a 2-tuple ``(kx, ky)`` (rectangular grid) -- see
-    ``TASKS.md`` / the 2026-08-31 rectangular-grid change for why: a square
-    grid forces both axes to share one resolution and one extent-in-sigma,
-    which under-resolves or truncates whichever axis has the smaller
-    intrinsic dispersion.
+    ``n_bins`` is either a scalar ``K`` (a square ``K x K`` grid, the original
+    behaviour) or a 2-tuple ``(kx, ky)`` (a rectangular grid). Rectangular grids
+    were added on 2026-08-31 (see ``TASKS.md``) because a square grid forces
+    both axes to share one resolution and one extent in units of sigma, which
+    under-resolves or truncates whichever axis has the smaller dispersion.
 
-    The grid is flattened row-major (C order) using ``np.ravel_multi_index`` /
-    ``np.unravel_index`` for every index conversion, never hand-written
-    arithmetic, to avoid the row-major/column-major transposition bug
-    flagged in ``PLAN.md`` §3.1: cell ``(ix, iy)`` maps to flat index
-    ``m = ix * ky + iy`` (``ky`` is the per-axis count of the *second* axis;
-    for a square grid this is the same ``m = ix * K + iy`` as before).
+    The grid is flattened in row-major (C) order, and every index conversion
+    uses ``np.ravel_multi_index`` / ``np.unravel_index`` rather than
+    hand-written arithmetic, to avoid the row/column transposition bug noted in
+    ``PLAN.md`` §3.1. Cell ``(ix, iy)`` has flat index ``m = ix * ky + iy``,
+    where ``ky`` is the count along the second axis (``m = ix * K + iy`` on a
+    square grid).
 
     Parameters
     ----------
     center : (float, float)
-        Center of the grid, ``(cx, cy)``.
+        Grid centre, ``(cx, cy)``.
     width : (float, float)
-        Total width of the grid, ``(wx, wy)``.
+        Total grid width, ``(wx, wy)``.
     n_bins : int or (int, int)
-        Number of bins per axis. Either a scalar ``K`` (square grid, total
-        cells ``K**2``) or ``(kx, ky)`` (rectangular grid, total cells
-        ``kx * ky``).
+        Bins per axis: a scalar ``K`` (square, ``K**2`` cells) or
+        ``(kx, ky)`` (rectangular, ``kx * ky`` cells).
 
     Returns
     -------
@@ -120,12 +115,11 @@ def setup_grid_2d(center, width, n_bins):
         ``n_bins_x``, ``n_bins_y`` (per-axis counts), ``n_cells``
         (= kx * ky), ``shape`` (kx, ky).
 
-        ``n_bins`` is set to the common per-axis count ``K`` **only when the
-        grid is square** (``kx == ky``); it is intentionally *absent* from
-        the dict for a rectangular grid, so any code that still assumes a
-        single scalar bin count fails with a clear ``KeyError`` rather than
-        silently using the wrong axis's count. New code should read
-        ``n_bins_x`` / ``n_bins_y`` (or ``shape``) instead.
+        ``n_bins`` (the common per-axis count ``K``) is present **only for a
+        square grid**. It is left out on purpose for rectangular grids, so
+        code that still assumes one scalar count fails with a clear
+        ``KeyError`` instead of silently using the wrong axis. New code should
+        use ``n_bins_x`` / ``n_bins_y`` or ``shape``.
     """
     cx, cy = center
     wx, wy = width
@@ -181,40 +175,38 @@ def _gauss_legendre_2x2_nodes():
 
 
 def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
-    """
-    Compute the 2D probability design matrix M (N, K**2).
+    """Compute the 2D design matrix M, shape (N, n_cells).
 
-    ``M[i, m] = integral over cell m of N(mu=(pm1_i, pm2_i), Sigma=cov_i)``.
+    ``M[i, m]`` is the integral over cell ``m`` of
+    ``N(mu=(pm1_i, pm2_i), Sigma=cov_i)``.
 
-    Three code paths, chosen per star:
+    Each star takes one of two paths:
 
-    1. Diagonal ``cov_i`` (``cov_i[0,1] == 0``): exact box integration, which
-       factorises into the outer product of two independent 1D
-       ``precompute_design_matrix``-style erf/CDF calls (reuses
-       ``veldist.precompute_design_matrix`` per axis). Exact and cheap.
-    2. Correlated ``cov_i``: 2x2 Gauss-Legendre sub-cell quadrature (4
-       evaluation points per cell per star), which handles arbitrary Sigma.
+    1. Diagonal ``cov_i`` (``cov_i[0,1] == 0``): exact box integration. The
+       integral factorises into the outer product of two 1D erf/CDF
+       integrals, reusing ``veldist.precompute_design_matrix`` on each axis.
+    2. Correlated ``cov_i``: 2x2 Gauss-Legendre quadrature within each cell
+       (4 points per cell per star), which works for any Sigma.
 
-    The matrix is built in chunks over stars (default 5000) to bound peak
-    memory, because JAX allocates intermediates during construction, so building
-    the whole ``(N, K**2)`` array in one call can peak at 2-3x its final
-    size. The final ``M`` is cast to float32 only at the very end of each
-    chunk, after all quadrature/erf math is done in float64.
+    Stars are processed in chunks (default 5000) to limit peak memory: JAX
+    allocates intermediates, so building the full ``(N, n_cells)`` array at
+    once can take 2-3 times its final size. All quadrature and erf maths is in
+    float64; each chunk is cast to float32 only at the end.
 
     Parameters
     ----------
     pm1, pm2 : array-like (N,)
-        Observed two velocity/proper-motion components per star.
+        The two observed velocity or proper-motion components of each star.
     cov : array-like (N, 2, 2)
         Per-star measurement covariance matrices.
     grid : dict
         Output of :func:`setup_grid_2d`.
     chunk_size : int
-        Number of stars processed per chunk. Default 5000.
+        Stars per chunk. Default 5000.
 
     Returns
     -------
-    M : np.ndarray (N, K**2), float32
+    M : np.ndarray (N, n_cells), float32
         Design matrix.
     """
     pm1 = np.asarray(pm1, dtype=np.float64)
@@ -272,13 +264,10 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
 
 
 def _bivariate_gaussian_pdf(x, y, mu1, mu2, cov):
-    """
-    Evaluate N((x,y); mu, cov) for arrays of evaluation points and per-star
-    mu/cov. Broadcasts (n_stars, n_pts).
+    """Evaluate N((x, y); mu, cov) for per-star means and covariances.
 
-    x, y : (n_stars, n_pts)
-    mu1, mu2 : (n_stars,)
-    cov : (n_stars, 2, 2)
+    Shapes: ``x``, ``y`` are (n_stars, n_pts); ``mu1``, ``mu2`` are
+    (n_stars,); ``cov`` is (n_stars, 2, 2). The result is (n_stars, n_pts).
     """
     dx = x - mu1[:, None]
     dy = y - mu2[:, None]
@@ -299,10 +288,10 @@ def _bivariate_gaussian_pdf(x, y, mu1, mu2, cov):
 
 
 def _design_matrix_gl_quadrature(p1, p2, cov, edges_x, edges_y, kx, ky):
-    """
-    2x2 Gauss-Legendre sub-cell quadrature for a chunk of (correlated) stars.
+    """2x2 Gauss-Legendre quadrature within each cell for a chunk of correlated
+    stars.
 
-    Returns an (n, kx*ky) array (float64) of cell probability masses.
+    Returns an (n, kx*ky) float64 array of cell probability masses.
     """
     n = len(p1)
     n_cells = kx * ky
@@ -362,49 +351,42 @@ def _design_matrix_gl_quadrature(p1, p2, cov, edges_x, edges_y, kx, ky):
 
 
 def build_gmrf_precision(k, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6):
-    """
-    Build an 8-connectivity intrinsic GMRF precision matrix Q for a kx x ky grid.
+    """Build an 8-neighbour intrinsic GMRF precision matrix Q for a kx x ky grid.
 
-    ``Q = D - W`` where ``W`` is the (symmetric) adjacency-weight matrix:
-    weight ``edge_weight`` (default 1) for the 4 edge-neighbours and
-    ``diag_weight`` (default ``1/sqrt(2)``; see the note below) for
-    the 4 diagonal neighbours, and ``D = diag(row sums of W)``.
+    ``Q = D - W``, where ``W`` is the symmetric adjacency-weight matrix, with
+    weight ``edge_weight`` (default 1) for the 4 side neighbours and
+    ``diag_weight`` (default ``1/sqrt(2)``) for the 4 diagonal neighbours, and
+    ``D = diag(row sums of W)``.
 
-    Built via explicit ``np.ravel_multi_index``-based adjacency lists (never
-    array-shift tricks), because shift-based construction silently wraps around at
-    the grid boundary (periodic boundary leakage), which is the single most
-    dangerous failure mode here (see ``PLAN.md`` §3.2 gotchas).
+    The adjacency is built from explicit ``np.ravel_multi_index`` neighbour
+    lists, never from array shifts. Shifts silently wrap around at the grid
+    boundary, giving a periodic grid by accident, which is the most dangerous
+    failure mode here (``PLAN.md`` §3.2 gotchas).
 
-    ``Q`` is singular by construction (constant-vector null space, the
-    softmax removes that direction anyway). A ridge is added for the
-    Cholesky factorisation, scaled relative to ``mean(diag(Q))`` (not an
-    absolute value) so its meaning does not change if the connectivity
-    weights change:  ``eps = ridge_scale * mean(diag(Q))``.
+    ``Q`` is singular by construction; its null space is the constant vector,
+    which the softmax removes anyway. A ridge is added for the Cholesky
+    factorisation, ``eps = ridge_scale * mean(diag(Q))``, scaled to the
+    diagonal rather than absolute so that it keeps its meaning if the weights
+    change.
 
-    NOTE (open question, deliberately not addressed here): on a rectangular
-    grid where the *cells themselves* are non-square (``width_x/kx !=
-    width_y/ky``), the geometric justification for ``diag_weight =
-    1/sqrt(2)`` -- the Euclidean distance to a corner-touching neighbour on a
-    square lattice -- no longer strictly applies (a diagonal step covers a
-    different physical distance than sqrt(2) cells). This function keeps the
-    weights exactly as they were for the square case and does not attempt a
-    cell-aspect-ratio correction; changing that is a separate, deliberate
-    decision this task does not make.
+    Open question, not addressed here: when the cells themselves are not
+    square (``width_x/kx != width_y/ky``), the reasoning behind
+    ``diag_weight = 1/sqrt(2)`` (the distance to a corner neighbour on a square
+    lattice) no longer strictly holds. The weights are kept as for square
+    cells; correcting for cell aspect ratio would be a separate decision.
 
     Parameters
     ----------
     k : int or (int, int)
-        Grid size per axis. Either a scalar ``K`` (square grid, total cells
-        ``K**2``) or ``(kx, ky)`` (rectangular grid, total cells
-        ``kx * ky``).
+        Grid size per axis: a scalar ``K`` (square, ``K**2`` cells) or
+        ``(kx, ky)`` (rectangular, ``kx * ky`` cells).
     diag_weight : float
-        Weight for diagonal (corner-touching) neighbours. Default
-        ``1/sqrt(2)`` is the natural distance weighting; pass 1.0 for equal
-        weighting of all 8 neighbours.
+        Weight for diagonal neighbours. The default ``1/sqrt(2)`` weights by
+        distance; 1.0 weights all 8 neighbours equally.
     edge_weight : float
-        Weight for edge (side-touching) neighbours. Default 1.0.
+        Weight for side neighbours. Default 1.0.
     ridge_scale : float
-        Relative ridge added before Cholesky:
+        Relative ridge added before the Cholesky:
         ``eps = ridge_scale * mean(diag(Q))``. Default 1e-6.
 
     Returns
@@ -455,25 +437,21 @@ def _null_space_basis_2d(k):
 
     ``k`` is a scalar (square grid) or ``(kx, ky)`` (rectangular grid).
 
-    Spans ``{1, x, y, x^2, xy, y^2}`` -- exactly the log-densities of
-    bivariate Gaussians, which is what the prior must leave free so that the
-    velocity ellipsoid is not shrunk.
+    The basis spans ``{1, x, y, x^2, xy, y^2}``, exactly the log-densities of
+    bivariate Gaussians. The prior must leave these free so that the velocity
+    ellipsoid is not shrunk.
 
-    Built from tensor-product Legendre polynomials of total degree <= 2 rather
-    than the raw monomials, for the conditioning reason documented in
-    ``veldist.py::_null_space_basis``: the Vandermonde basis is badly
-    conditioned and its QR loses precision. Legendre spans the identical
-    space, so the projector is unchanged.
+    It is built from tensor-product Legendre polynomials of total degree <= 2
+    rather than raw monomials, for conditioning (see
+    ``veldist.py::_null_space_basis``); both span the same space, so the
+    projector is the same. It also uses cell indices rather than physical
+    centres, which again gives the same projector because the two differ by an
+    affine map on a uniform grid, and ``setup_grid_2d`` only makes uniform
+    grids.
 
-    Uses an index grid rather than physical cell centres. Both give the same
-    projector: the orthogonal projector onto a subspace does not depend on
-    which basis spans it, and for a uniformly spaced grid the index and
-    physical coordinates differ only by an affine map. ``setup_grid_2d`` only
-    produces uniform grids.
-
-    Row-major flattened (``m = ix*ky + iy``) to match ``setup_grid_2d``'s
-    ``centers_2d``. Cached: costs an O(n_cells^2) QR, depends only on ``k``,
-    and is evaluated at JAX trace time where the result is constant-folded.
+    Flattened row-major (``m = ix*ky + iy``) to match ``centers_2d``. Cached:
+    it needs an O(n_cells^2) QR, depends only on ``k``, and runs at JAX trace
+    time, where the result is folded in as a constant.
     """
     kx, ky = _as_kx_ky(k)
 
@@ -503,20 +481,20 @@ def _null_space_basis_2d(k):
 
 @cache
 def _gmrf_deviation_scale_2d(k):
-    """Sorbye-Rue scaling constant for the null-space-projected 2D GMRF.
+    """Sørbye-Rue scaling constant for the null-space-projected 2D GMRF.
 
-    Returns the factor making the generalised variance -- the geometric mean
-    of the per-cell marginal variances of the projected field -- equal to 1,
-    so that ``sigma3`` means "typical log-density departure from the Gaussian
-    null space" independently of grid resolution (Sorbye & Rue 2014, Spatial
-    Statistics 8, 39; this is what ``scale.model=TRUE`` does in R-INLA).
+    Returns the factor that makes the generalised variance (the geometric mean
+    of the per-cell marginal variances of the projected field) equal to 1, so
+    that ``sigma3`` means "typical log-density departure from the Gaussian null
+    space" at any grid resolution (Sørbye & Rue 2014, Spatial Statistics 8,
+    39; the same as ``scale.model=TRUE`` in R-INLA).
 
-    Measured size: the scale drifts about -12% from k=9 to k=21 (2.311 ->
-    2.028). This is a correctness tidy so that a tuned ``SIGMA3_RATE_2D``
-    transfers across grids -- it is NOT the fix for the dispersion bias, and
-    an earlier hypothesis that it was has been retracted.
+    The constant drifts by about -12% from k=9 to k=21 (2.311 to 2.028).
+    Applying it lets a tuned ``SIGMA3_RATE_2D`` carry over between grids. It is
+    a correctness tidy-up, **not** the fix for the dispersion bias; an earlier
+    claim that it was has been withdrawn.
 
-    Cached: O(k^6) pinv, depends only on ``k``.
+    Cached: an O(k^6) pseudo-inverse that depends only on ``k``.
     """
     q_ns = _null_space_basis_2d(k)
     kx, ky = _as_kx_ky(k)
@@ -533,37 +511,34 @@ def _gmrf_deviation_scale_2d(k):
 
 
 def model_2d(matrix, n_cells, L):
-    """
-    The 2D NumPyro model.
+    """2D NumPyro model with the pure GMRF prior.
 
     Parameters
     ----------
-    matrix : jnp.ndarray (N_stars, K**2)
-        Pre-computed 2D design matrix.
+    matrix : jnp.ndarray (N_stars, n_cells)
+        Precomputed 2D design matrix.
     n_cells : int
-        Number of grid cells, K**2.
-    L : jnp.ndarray (K**2, K**2)
-        Cholesky factor of the (ridge-regularised) GMRF precision matrix Q,
-        computed once outside the model and closed over (never recomputed
-        per NUTS step; Cholesky of a fixed matrix is a one-time cost).
+        Number of grid cells.
+    L : jnp.ndarray (n_cells, n_cells)
+        Cholesky factor of the ridge-regularised GMRF precision Q. It is
+        computed once outside the model and passed in, not recomputed at
+        each NUTS step.
 
     Notes
     -----
-    Latent parameterisation is non-centred and fully generative: a real
-    ``numpyro.sample`` site (``z``) followed by a deterministic transform --
-    exactly as recommended in ``PLAN.md`` §1.2/§3.2, and *not* a
-    ``numpyro.factor``-based penalty on an unconditioned base measure. A
-    factor-based version would be invisible to ``numpyro.infer.Predictive``
-    (pure ancestral / prior-predictive sampling only forward-samples through
-    ``sample`` sites), silently breaking simulation-based calibration even
-    though NUTS inference itself would still be numerically correct.
+    The latent field is non-centred and fully generative: a real
+    ``numpyro.sample`` site ``z`` followed by a deterministic transform, as
+    recommended in ``PLAN.md`` §1.2/§3.2, and **not** a ``numpyro.factor``
+    penalty on an unconstrained base measure. ``numpyro.infer.Predictive``
+    only simulates through ``sample`` sites, so a factor-based version would
+    silently break simulation-based calibration even though NUTS would still
+    be correct.
 
-    We want ``x = sigma * L^-T z``, i.e.
-    ``jax.scipy.linalg.solve_triangular(L.T, z, lower=False)``, solving the
-    *upper* triangular system ``L.T @ x = z`` for x. Using ``L`` directly
-    with ``lower=True`` would instead give ``L^-1 z``, a different (wrong)
-    covariance; see ``tests/test_veldist2d.py::test_solve_triangular_direction``
-    for the numerical check this is validated against.
+    The transform is ``x = sigma * L^-T z``, i.e.
+    ``jax.scipy.linalg.solve_triangular(L.T, z, lower=False)``, which solves the
+    *upper*-triangular system ``L.T @ x = z``. Using ``L`` with ``lower=True``
+    would give ``L^-1 z`` instead, which has the wrong covariance.
+    ``tests/test_veldist2d.py::test_solve_triangular_direction`` checks this.
     """
     smoothness_sigma = numpyro.sample("smoothness_sigma", dist.HalfNormal(3.0))
 
@@ -579,33 +554,35 @@ def model_2d(matrix, n_cells, L):
 
 
 def generate_gaussian_core_field_2d(shape, centers_2d, L):
-    """Latent log-density field: free bivariate-Gaussian core + penalised deviation.
+    """Latent log-density field: a free bivariate-Gaussian core plus a penalised
+    deviation.
 
-    The infinite-smoothing limit of this prior is a bivariate Gaussian, not a
-    uniform over the velocity grid. That is the whole point: the pure-GMRF
-    prior in :func:`model_2d` has a uniform limit whose dispersion is
-    ``grid_width/sqrt(12)`` -- 34 km/s on a 119 km/s grid against a true 17 --
-    so weakly-constrained fits are pulled toward a far broader distribution and
-    every recovered dispersion is biased high. Measured on the pure GMRF
-    (isotropic sigma=17, err/sigma=0.014, scored against the discretised
-    truth): sigma_x bias +2.34 at N=100 and +0.51 at N=500, growing with k.
+    With infinite smoothing this prior gives a bivariate Gaussian, not a
+    uniform distribution over the grid. That is its purpose. The pure GMRF
+    prior in :func:`model_2d` tends to a uniform distribution with dispersion
+    ``grid_width/sqrt(12)``, which is 34 km/s on a 119 km/s grid against a true
+    17 km/s, so weakly constrained fits are pulled toward something much
+    broader and every dispersion comes out too high. Measured on the pure GMRF
+    (isotropic sigma = 17, err/sigma = 0.014, scored against the discretised
+    truth): a sigma_x bias of +2.34 at N=100 and +0.51 at N=500, growing
+    with k.
 
-    A general quadratic form in (vx, vy) softmaxes to exactly a bivariate
-    Gaussian, so ``v0x``, ``v0y``, ``s0x``, ``s0y``, ``rho0`` map one-to-one
-    onto the PDF's mean and covariance -- the velocity ellipsoid. Structure
-    beyond second order remains penalised, exactly as h3/h4 are in 1D.
+    A general quadratic in (vx, vy) passed through a softmax is exactly a
+    bivariate Gaussian, so ``v0x``, ``v0y``, ``s0x``, ``s0y`` and ``rho0`` map
+    one-to-one onto the mean and covariance of the PDF, i.e. the velocity
+    ellipsoid. Structure beyond second order is still penalised, as h3/h4 are
+    in 1D.
 
     Parameters
     ----------
     shape : int or (int, int)
-        Grid size per axis: a scalar ``K`` (square grid) or ``(kx, ky)``
-        (rectangular grid). Total cells ``kx * ky``. Passed explicitly
-        (never inferred from ``n_cells`` via ``sqrt``) because
-        ``round(sqrt(n_cells))`` silently recovers the wrong per-axis
-        counts on a rectangular grid with no error raised.
+        Grid size per axis: a scalar ``K`` (square) or ``(kx, ky)``
+        (rectangular). Passed explicitly rather than inferred from
+        ``n_cells``, because ``round(sqrt(n_cells))`` silently gives the wrong
+        counts for a rectangular grid.
     centers_2d : array-like, shape (kx*ky, 2)
-        Physical cell centres from :func:`setup_grid_2d`. Required because the
-        core is quadratic in *velocity*, not in cell index.
+        Cell centres in velocity, from :func:`setup_grid_2d`. Needed because
+        the core is quadratic in velocity, not in cell index.
     L : jnp.ndarray, shape (kx*ky, kx*ky)
         Cholesky factor of the ridge-regularised GMRF precision.
 
@@ -714,28 +691,25 @@ def generate_gaussian_core_field_2d(shape, centers_2d, L):
 
 
 def model_gaussian_core_2d(matrix, n_cells, L, centers_2d, shape):
-    """The 2D NumPyro model with the Gaussian-core prior.
+    """2D NumPyro model with the Gaussian-core prior.
 
     Parameters
     ----------
     matrix : jnp.ndarray, shape (N_stars, kx*ky)
-        Pre-computed 2D design matrix.
+        Precomputed 2D design matrix.
     n_cells : int
-        Number of grid cells, ``kx * ky``. Kept as an explicit argument
-        (rather than derived from ``shape``) so the model signature matches
-        :func:`model_2d`'s, but note it is *not* used to recover the
-        per-axis counts -- see ``shape`` below.
+        Number of grid cells, ``kx * ky``. Kept so the signature matches
+        :func:`model_2d`, but not used to recover the per-axis counts; see
+        ``shape``.
     L : jnp.ndarray, shape (n_cells, n_cells)
         Cholesky factor of the ridge-regularised GMRF precision.
     centers_2d : jnp.ndarray, shape (n_cells, 2)
-        Physical cell centres.
+        Cell centres in velocity.
     shape : int or (int, int)
-        Per-axis grid size: a scalar ``K`` (square grid) or ``(kx, ky)``
-        (rectangular grid). Must be passed explicitly -- ``n_cells`` alone
-        cannot be un-ambiguously factored back into ``(kx, ky)`` for a
-        rectangular grid (``round(sqrt(n_cells))`` silently gives the wrong
-        answer with no error), which is exactly the bug this parameter
-        exists to avoid.
+        Per-axis grid size: a scalar ``K`` (square) or ``(kx, ky)``
+        (rectangular). Must be given explicitly, because ``n_cells`` alone
+        cannot be factored back into ``(kx, ky)`` for a rectangular grid;
+        ``round(sqrt(n_cells))`` silently gets it wrong.
     """
     field = generate_gaussian_core_field_2d(shape, centers_2d, L)
 
@@ -752,25 +726,24 @@ def model_gaussian_core_2d(matrix, n_cells, L, centers_2d, shape):
 
 
 class KinematicSolver2D:
-    """
-    High-level interface for 2D (bivariate proper-motion) Bayesian kinematic
-    deconvolution. Mirrors :class:`veldist.KinematicSolver`'s API.
+    """High-level interface for 2D (proper-motion) Bayesian deconvolution, with
+    the same API as :class:`veldist.KinematicSolver`.
 
     Attributes
     ----------
     matrix : jnp.ndarray or None
-        Pre-computed design matrix, shape (N_stars, K**2).
+        Design matrix, shape (N_stars, n_cells).
     grid : dict
-        Metadata from :func:`setup_grid_2d`.
+        Grid metadata from :func:`setup_grid_2d`.
     Q, Q_reg, L : np.ndarray or None
-        GMRF precision matrix, its ridge-regularised version, and its
-        Cholesky factor. Built once by ``setup_grid`` and closed over by the
+        GMRF precision matrix, its ridge-regularised version, and the Cholesky
+        factor of the latter. Built once by ``setup_grid`` and passed to the
         model.
     n_stars : int or None
     samples : dict or None
     clipped_samples : dict or None
-        Per-cell summary statistics (median PM-distribution mass and clipped
-        uncertainties) populated by ``clip_uncertainties``.
+        Per-cell median mass and floored uncertainties, set by
+        ``clip_uncertainties``.
     """
 
     def __init__(self):
@@ -786,25 +759,22 @@ class KinematicSolver2D:
     def setup_grid(
         self, center, width, n_bins, diag_weight=None, edge_weight=1.0, ridge_scale=1e-6
     ):
-        """
-        Define the 2D velocity grid and build/factorise the GMRF precision
-        matrix.
+        """Define the 2D velocity grid and build and factorise the GMRF precision.
 
         Parameters
         ----------
         center : (float, float)
         width : (float, float)
         n_bins : int or (int, int)
-            Per-axis bin count. Either a scalar ``K`` (square grid, total
-            cells ``K**2``) or ``(kx, ky)`` (rectangular grid, total cells
-            ``kx * ky``).
+            Bins per axis: a scalar ``K`` (square, ``K**2`` cells) or
+            ``(kx, ky)`` (rectangular, ``kx * ky`` cells).
         diag_weight, edge_weight, ridge_scale : float
-            Forwarded to :func:`build_gmrf_precision`.
+            Passed to :func:`build_gmrf_precision`.
 
         Returns
         -------
         None
-            Sets ``self.grid``, ``self.Q``, ``self.Q_reg``, ``self.L``.
+            Sets ``self.grid``, ``self.Q``, ``self.Q_reg`` and ``self.L``.
         """
         self.grid = setup_grid_2d(center, width, n_bins)
         shape = self.grid["shape"]
@@ -829,20 +799,19 @@ class KinematicSolver2D:
         self.L = L
 
     def add_data(self, pm1, pm2, cov, chunk_size=5000):
-        """
-        Load observations and pre-compute the 2D design matrix.
+        """Load observations and compute the 2D design matrix.
 
         Parameters
         ----------
         pm1, pm2 : array-like (N,)
-            Observed two velocity/proper-motion components per star.
+            The two observed velocity or proper-motion components of each star.
         cov : array-like (N, 2, 2)
-            Per-star measurement covariance matrices. Build as
+            Per-star measurement covariance,
             ``[[sigma_x**2, rho*sigma_x*sigma_y], [rho*sigma_x*sigma_y,
-            sigma_y**2]]``. Note that catalogues such as Gaia report a
-            *correlation* ``rho`` (e.g. ``pmra_pmdec_corr``), not a
-            covariance; feeding rho directly in place of the covariance
-            entry produces a non-positive-definite matrix for most stars.
+            sigma_y**2]]``. Catalogues such as Gaia give the *correlation*
+            ``rho`` (e.g. ``pmra_pmdec_corr``), not the covariance; putting
+            ``rho`` in the off-diagonal directly makes most matrices non-positive-
+            definite.
 
         Returns
         -------
@@ -865,70 +834,56 @@ class KinematicSolver2D:
     def run(self, num_warmup=500, num_samples=3000, gpu=None, seed=5567,
             prior="gaussian_core", target_accept_prob=0.95, dense_mass=False,
             max_tree_depth=10):
-        """
-        Run the NUTS sampler.
+        """Sample the posterior with NUTS.
 
         Parameters
         ----------
         num_warmup : int
         num_samples : int
-            **Defaults to 3000, not NumPyro's typical ~1000**, on measured
-            grounds (2026-08-06, real HST data, ``dense_mass=False``,
-            ``target_accept_prob=0.95``): min ESS across the six scalar
-            sites (``v0x``/``v0y``/``s0x``/``s0y``/``rho0``/``sigma3``) rose
-            from ~260-470 at 1000 samples to ~830-1290 at 3000, for
-            essentially the *same* per-bin wall time (~1-3s, dominated by
-            JIT compile, not sampling -- see ``dense_mass`` below). Drawing
-            more samples here is nearly free; there is no reason to leave
-            ESS on the table.
+            **Default 3000.** Measured on real HST data (2026-08-06,
+            ``dense_mass=False``, ``target_accept_prob=0.95``): the minimum ESS
+            over the six scalar sites (``v0x``, ``v0y``, ``s0x``, ``s0y``,
+            ``rho0``, ``sigma3``) rose from about 260-470 at 1000 samples to about
+            830-1290 at 3000, for essentially the same per-bin wall time (about
+            1-3 s, dominated by JIT compilation, not sampling). Extra samples are
+            close to free.
         gpu : bool or None
             See :meth:`veldist.KinematicSolver.run`.
         seed : int
         prior : {"gaussian_core", "gmrf"}
-            Which prior to use. ``"gaussian_core"`` (default) gives the
-            latent field a free bivariate-Gaussian core, so the velocity
-            ellipsoid is unpenalised and the infinite-smoothing limit is a
-            Gaussian. ``"gmrf"`` is the original pure Gauss-Markov random
-            field, retained for comparison; its smoothing limit is a *uniform*
-            distribution over the velocity grid, measured to bias sigma_x high
-            by +0.5 (N=500) to +2.3 (N=100) km/s on a sigma=17 truth.
+            ``"gaussian_core"`` (default) gives the latent field a free
+            bivariate-Gaussian core, so the velocity ellipsoid is unpenalised and
+            infinite smoothing gives a Gaussian. ``"gmrf"`` is the original pure
+            GMRF, kept for comparison. It tends to a *uniform* distribution over
+            the grid and biases sigma_x high by +0.5 km/s (N=500) to +2.3 km/s
+            (N=100) on a sigma = 17 truth.
         target_accept_prob : float
-            NUTS target acceptance rate. Defaults to 0.95 (NumPyro's own
-            default is 0.8), matching 1D's ``KinematicSolver.run`` -- see
-            that method's docstring for the funnel-geometry rationale
-            (``docs/validation.md``). **Not yet re-validated for the 2D
-            model with a full SBC campaign** the way 1D was, but *is*
-            measured directly on real HST data (2026-08-06, ``dense_mass=
-            False``): at ``num_samples=3000``, 0/5 test bins had any
-            divergences and min ESS was ~830-1290, vs. 3 total divergences
-            (out of 5 bins) at ``target_accept_prob=0.8`` with the same
-            sample count -- ``0.95`` is the better-supported choice, not
-            just a 1D holdover.
+            NUTS target acceptance rate. Default 0.95 rather than NumPyro's 0.8,
+            as in 1D (see :meth:`veldist.KinematicSolver.run` for the funnel
+            argument). It has **not** been re-validated for 2D with a full SBC
+            campaign, but on real HST data (2026-08-06, ``dense_mass=False``,
+            ``num_samples=3000``) it gave no divergences in 5 test bins and a
+            minimum ESS of about 830-1290, against 3 divergences in the same 5
+            bins at 0.8. So 0.95 is supported in 2D on its own evidence.
         dense_mass : bool
-            Use a dense (full-covariance) mass matrix instead of NumPyro's
-            default diagonal one. **Defaults to False** -- measured to be
-            actively counterproductive on real HST data (2026-08-06).
-            With ``dense_mass=True``, NUTS hits ``max_tree_depth``
-            (1023 steps/sample) on essentially every sample regardless of
-            ``target_accept_prob``, and a controlled comparison (same
-            bins, JIT-cache warm so compile cost was hidden) still gave
-            *lower* min ESS (~200-290) than ``dense_mass=False`` at the same
-            1000-sample budget (~260-470) -- all those extra leapfrog steps
-            buy nothing. With a cold cache (the realistic case: ~1400 bins,
-            ~1400 distinct star counts, so nearly every bin needs a fresh
-            XLA compile), the dense-mass kernel's compile cost alone was
-            ~100s/bin (~20x ``dense_mass=False``), which is where the
-            "~43 hours for a full run" estimate came from. Unlike 1D --
-            where ``dense_mass=True`` *reduced* cost and improved r_hat/ESS
-            -- this is the opposite result for the 2D model; do not port
-            the 1D dense-mass finding here without re-measuring. Left
-            overridable for anyone who wants to re-investigate, but do not
-            flip the default without new evidence.
+            Use a full mass matrix instead of a diagonal one. **Default False**:
+            on real HST data (2026-08-06) the dense matrix made things worse.
+            With ``dense_mass=True``, NUTS hit ``max_tree_depth`` (1023 steps per
+            sample) on almost every sample whatever ``target_accept_prob`` was,
+            and with a warm JIT cache it still gave a *lower* minimum ESS (about
+            200-290) than the diagonal matrix (about 260-470) at 1000 samples.
+            With a cold cache, the realistic case (about 1400 bins with about
+            1400 distinct star counts, so nearly every bin compiles afresh), the
+            dense kernel took about 100 s per bin to compile, 20 times the
+            diagonal one, which is where the "43 hours for a full run" estimate
+            came from. This is the opposite of the 1D result, where the dense
+            matrix was both faster and better mixed; do not carry the 1D finding
+            over without re-measuring. It remains an option, but do not change
+            the default without new evidence.
         max_tree_depth : int
-            NUTS's cap on trajectory doubling; NumPyro's own default is 10
-            (max 1023 leapfrog steps/sample). Exposed here (1D's
-            ``KinematicSolver.run`` does not expose it) since it was needed
-            to diagnose the ``dense_mass`` tree-depth blowup above.
+            NUTS's limit on trajectory doubling; NumPyro's default is 10 (at most
+            1023 leapfrog steps per sample). Exposed here, unlike in 1D, because
+            it was needed to diagnose the dense-mass problem above.
 
         Returns
         -------
@@ -978,61 +933,46 @@ class KinematicSolver2D:
         return self.samples
 
     def clip_uncertainties(self, floor_fraction=0.01, abs_floor=1e-10):
-        """
-        Apply uncertainty floors and store per-cell PM-distribution summary
-        statistics.
+        """Summarise the posterior per cell and apply uncertainty floors.
 
-        Direct port of :meth:`veldist.KinematicSolver.clip_uncertainties`;
-        see that method for the full rationale (uncertainty floors, why
-        marginal medians need not sum to 1). The only substantive difference
-        here is naming: the quantity summarised is a bivariate proper-motion
-        distribution, not a line-of-sight velocity distribution, so the keys
-        are ``pdf_median`` / ``pdf_uncertainty`` rather than
-        ``losvd_median`` / ``losvd_uncertainty``.
+        The 2D version of :meth:`veldist.KinematicSolver.clip_uncertainties`;
+        see that method for the reasoning behind the floors and why the marginal
+        medians do not sum to 1. The only real difference is naming: the result is
+        a proper-motion distribution rather than an LOSVD, so the keys are
+        ``pdf_median`` / ``pdf_uncertainty``.
 
-        This is a **post-processing step** that does *not* modify the raw
-        posterior samples in ``self.samples``. It summarises the posterior
-        as per-cell marginal medians and half-CI-widths in probability-mass
-        space, then raises the uncertainties to a floor so that no cell
-        carries a zero into the Dynamite output writer.
+        A post-processing step: ``self.samples`` is not changed.
 
-        - ``pdf_median`` stores the per-cell **marginal median** of the
-          posterior probability mass. Because the joint posterior is a
-          simplex but marginals are taken independently, the median values
-          typically *sum to 0.85-0.95*, not 1. This is expected and correct.
-        - ``pdf_uncertainty`` stores the **half-width** of the 68% credible
-          interval: ``(p84 - p16) / 2``. Used as symmetric +/-error bars.
+        - ``pdf_median`` is the **marginal median** of each cell's mass. These
+          usually **sum to 0.85-0.95**, not 1, which is expected.
+        - ``pdf_uncertainty`` is the **half-width** of the 68% credible
+          interval, ``(p84 - p16) / 2``, used as a symmetric error bar.
 
-        Both quantities are **dimensionless probability mass per cell**.
-        They are *not* divided by cell area.
+        Both are **dimensionless probability mass per cell**, not divided by the
+        cell area.
 
-        Motivation
-        ----------
-        Zero uncertainties in PM-distribution cells propagate into
-        Dynamite's internal NNLS projection matrices and produce ``econ``
-        zeros that cause weight-solving failures in large orbit-library
-        runs. The relative floor (``floor_fraction * max_uncertainty``) is
-        the primary safeguard; the absolute floor is a numerical backstop
-        for channels where the posterior is pathologically tight across the
-        board.
+        A zero uncertainty in any cell reaches Dynamite's NNLS matrices as an
+        ``econ`` zero and breaks weight solving in large orbit-library runs. The
+        relative floor (``floor_fraction * max_uncertainty``) is the main
+        protection; the absolute floor is a numerical backstop.
 
         Parameters
         ----------
         floor_fraction : float
-            Relative floor as a fraction of the maximum per-cell half-CI-width
-            across all cells. Default 0.01 (1%).
+            Relative floor, as a fraction of the largest per-cell half-width.
+            Default 0.01.
         abs_floor : float
-            Absolute floor applied after the relative floor. Default 1e-10.
+            Absolute floor, applied after the relative one. Default 1e-10.
 
         Returns
         -------
         None
-            Sets ``self.clipped_samples`` as a dict with keys:
+            Sets ``self.clipped_samples`` to a dict with:
 
-            - ``'pdf_median'``:      per-cell marginal median, probability
-              mass (dimensionless); shape (K**2,), flat row-major.
-            - ``'pdf_uncertainty'``: clipped half-width of 68% CI,
-              probability mass; shape (K**2,), flat row-major.
+            - ``'pdf_median'``: per-cell marginal median, probability mass;
+              shape (n_cells,), flat row-major.
+            - ``'pdf_uncertainty'``: floored 68% half-width, probability mass;
+              shape (n_cells,), flat row-major.
         """
         if self.samples is None:
             msg = "No posterior samples found. Call run() before clip_uncertainties()."
@@ -1080,9 +1020,11 @@ class KinematicSolver2D:
 
 
 def _array_stats(x):
-    """Small numeric summary of an array, for failure diagnostics -- plain
-    floats/ints only, so this is always JSON-serialisable regardless of
-    the input dtype (numpy scalars are not JSON-serialisable directly)."""
+    """Small numeric summary of an array for failure logs.
+
+    Returns plain Python floats and ints so the result is always JSON-
+    serialisable, whatever the input dtype.
+    """
     x = np.asarray(x)
     if x.size == 0:
         return {"n": 0}
@@ -1097,11 +1039,12 @@ def _array_stats(x):
 
 
 def _log_bin_failure(failure_log_path, failure):
-    """Append one failure record as a JSON line. Safe under concurrent
-    writers (``n_jobs`` > 1): each call opens, writes once, and closes: a
-    single ``write()`` to a file opened with ``'a'`` is atomic on POSIX for
-    writes below the platform pipe-buffer size (a few KB), which a single
-    failure record is.
+    """Append one failure record to the log as a JSON line.
+
+    Safe with several writers (``n_jobs`` > 1): each call opens the file,
+    writes once and closes it. On POSIX a single ``write()`` in append mode is
+    atomic below the pipe-buffer size (a few KB), and one record is well under
+    that.
     """
     if failure_log_path is None:
         return
@@ -1110,21 +1053,22 @@ def _log_bin_failure(failure_log_path, failure):
 
 
 def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, failure_log_path=None, thin=10):
-    """Fit a single bin. Module-level (not a closure) so it's picklable for
-    ``ProcessPoolExecutor`` -- see :func:`fit_all_bins_2d`'s ``n_jobs``.
+    """Fit one bin. Defined at module level, not as a closure, so that it can be
+    pickled for ``ProcessPoolExecutor`` (see ``n_jobs`` in
+    :func:`fit_all_bins_2d`).
 
-    A bin whose MCMC fit raises (e.g. NumPyro's "Cannot find valid initial
-    parameters", seen in practice on real HST data -- 2026-08-06) is caught
-    here, logged with enough context to investigate later, and skipped
-    (returned as ``None``) rather than propagating and killing every other
-    bin in a multi-hour ``fit_all_bins_2d`` run. ``min_stars`` skips are a
-    normal, expected outcome and are not treated as failures.
+    If the MCMC fit raises (for example NumPyro's "Cannot find valid initial
+    parameters", seen on real HST data on 2026-08-06), the error is caught,
+    logged with enough context to investigate later, and the bin is returned
+    as ``None``, instead of the exception killing every other bin of a
+    multi-hour run. Skipping a bin below ``min_stars`` is normal and is not
+    logged as a failure.
 
     Returns
     -------
     (int, KinematicSolver2D or None)
-        Bin index and the solved solver, or ``None`` if skipped (either
-        ``len(pm1) < min_stars``, or the fit raised an exception).
+        The bin index and the fitted solver, or ``None`` if the bin was
+        skipped (fewer than ``min_stars`` stars, or the fit raised).
     """
     if len(pm1) < min_stars:
         warnings.warn(
@@ -1209,110 +1153,85 @@ def fit_all_bins_2d(
     failure_log_path="fit_all_bins_2d_failures.jsonl",
     thin=10,
 ):
-    """
-    Run the full inference pipeline for a list of spatial (Voronoi) bins.
+    """Run the full inference pipeline on a list of spatial (Voronoi) bins.
 
-    Direct port of :func:`veldist.fit_all_bins` for the 2D (proper-motion)
-    solver. For each bin, this executes the ``setup_grid`` -> ``add_data``
-    -> ``run`` -> ``clip_uncertainties`` pipeline and returns a list of
-    :class:`KinematicSolver2D` instances ready for the Dynamite output
-    writer. Bins with too few stars are skipped (returning ``None`` at that
-    position) so the writer can mask them.
+    The 2D counterpart of :func:`veldist.fit_all_bins`. For each bin it runs
+    ``setup_grid``, ``add_data``, ``run`` and ``clip_uncertainties``, and
+    returns the fitted :class:`KinematicSolver2D` objects ready for the
+    Dynamite writer. Bins with too few stars are returned as ``None`` so the
+    writer can mask them.
 
-    Unlike 1D's :func:`~veldist.fit_all_bins`, there is no ``match_grid``
-    equivalent here and none will be added: every bin is fitted on the same
-    shared ``grid_kwargs``. This is not a simplification made for
-    convenience -- Dynamite's 2D kinematics ``.npz`` format carries a single
-    scalar ``vxrange``/``vyrange`` for the whole map, so there is no
-    per-aperture grid slot even at output time, and a per-bin matched grid
-    would have nowhere to go.
+    There is no ``match_grid`` option as in 1D, and there will not be one.
+    Dynamite's 2D ``.npz`` format has a single ``vxrange``/``vyrange`` for the
+    whole map, so a per-bin grid would have nowhere to go; every bin uses the
+    shared ``grid_kwargs``.
 
-    Each bin receives a unique RNG seed derived as ``base_seed + bin_index``
-    to avoid correlations between sampling chains.
+    Bin ``i`` is seeded with ``base_seed + i`` so the chains of different bins
+    are independent.
 
     Parameters
     ----------
     bin_data_list : list of dict
-        One dict per Voronoi bin. Required keys:
+        One dict per Voronoi bin, with keys:
 
-        - ``'pm1'``, ``'pm2'``: arrays of observed proper-motion components.
-        - ``'cov'``: array of per-star 2x2 measurement covariance matrices.
+        - ``'pm1'``, ``'pm2'``: observed proper-motion components.
+        - ``'cov'``: per-star 2x2 measurement covariance matrices.
 
-        Any additional keys (e.g. spatial metadata) are ignored here and
-        can be passed separately to the output writer.
+        Other keys (spatial metadata, say) are ignored here; pass them to the
+        output writer separately.
     grid_kwargs : dict
-        Keyword arguments forwarded to :meth:`KinematicSolver2D.setup_grid`
-        (``center``, ``width``, ``n_bins``, ...). Shared across all bins.
+        Arguments for :meth:`KinematicSolver2D.setup_grid` (``center``,
+        ``width``, ``n_bins``, ...), shared by all bins.
     run_kwargs : dict, optional
-        Keyword arguments forwarded to :meth:`KinematicSolver2D.run`
-        (e.g. ``num_warmup``, ``num_samples``, ``gpu``, ``prior``). The
-        ``seed`` key, if present, is used as the *base* seed; each bin then
-        receives ``seed + bin_index``. Defaults to ``{}`` (all ``run``
-        defaults apply).
+        Arguments for :meth:`KinematicSolver2D.run` (``num_warmup``,
+        ``num_samples``, ``gpu``, ``prior``, ...). A ``seed`` here is the base
+        seed; bin ``i`` gets ``seed + i``. Default ``{}``, i.e. ``run``'s
+        defaults.
     min_stars : int
-        Minimum number of stars required to attempt inference. Bins with
-        fewer stars are skipped with a warning. Default 10.
+        Minimum number of stars needed to fit a bin. Smaller bins are skipped
+        with a warning. Default 10.
     show_progress : bool
-        Show a single ``tqdm`` progress bar over bins instead of the
-        default per-bin, per-chain NUTS progress bars. Default ``True``.
-
-        Note: unlike 1D's ``KinematicSolver.run``,
-        ``KinematicSolver2D.run`` currently has no ``progress_bar``
-        parameter to suppress NumPyro's own per-chain bars, so this only
-        controls the single outer bar over bins; it is not forwarded to
-        ``run()`` in the ``n_jobs=1`` path. NumPyro's per-chain bars are
-        always redirected/suppressed inside ``_fit_one_bin_2d`` regardless
-        of ``n_jobs``.
+        Show one ``tqdm`` bar over bins. Default ``True``. This controls only
+        the outer bar: ``KinematicSolver2D.run`` has no ``progress_bar``
+        argument, and NumPyro's per-chain bars are always suppressed inside
+        ``_fit_one_bin_2d``.
     n_jobs : int
-        Number of bins to fit concurrently via ``ProcessPoolExecutor``.
-        Default 1 (sequential, same as before this parameter existed).
-        Bins are independent (own data, own posterior), so this
-        parallelises over bins, **not** over chains within a bin --
-        ``KinematicSolver2D.run`` has no ``num_chains`` and this does not
-        add one. Each worker is a fresh process (spawned, not forked --
-        JAX/XLA is not fork-safe once its backend has initialised), so
-        each pays its own JIT compile cost per star-count shape it
-        encounters; with ``n_jobs`` workers all potentially compiling the
-        same shape independently, total compile work can exceed the
-        sequential case, but wall time still drops because it happens in
-        parallel. Uses ``multiprocessing.get_context("spawn")`` explicitly
-        for the same fork-safety reason. Reserving JAX host devices via
-        ``numpyro.set_host_device_count`` in the parent process (for
-        chain-level parallelism) is unrelated to this and unaffected by
-        it, since spawned workers get a fresh JAX backend, not the
-        parent's.
+        Number of bins to fit at once in a ``ProcessPoolExecutor``. Default 1
+        (one after another). This parallelises over bins, **not** over chains
+        within a bin. Workers are started with ``spawn``, not ``fork``,
+        because JAX is not fork-safe once its backend is running. Each worker
+        therefore compiles its own copy of every star-count shape it meets, so
+        total compile work can exceed the sequential case, but it happens in
+        parallel and wall time still drops. Reserving host devices in the
+        parent process (for chain-level parallelism) has no effect on the
+        workers, which start with a fresh JAX backend.
     failure_log_path : str or path-like or None
-        Where to append per-bin failure diagnostics (JSON lines: bin index,
-        seed, exception type/message/traceback, summary stats on
-        ``pm1``/``pm2``/the covariance diagonal/off-diagonal, and
-        ``grid_kwargs``) when a bin's MCMC fit raises. A bin failing here
-        is caught (see :func:`_fit_one_bin_2d`) and skipped, **not** left
-        to propagate and kill the rest of a run that may be hours long --
-        seen in practice on real HST data (2026-08-06): NumPyro's "Cannot
-        find valid initial parameters" on one pathological bin took down
-        an otherwise-healthy ~1400-bin run. Default
-        ``'fit_all_bins_2d_failures.jsonl'`` (relative to the current
-        working directory); pass ``None`` to disable the log file (a
-        ``warnings.warn`` is still emitted either way). Safe to point
-        multiple ``n_jobs`` workers at the same path: each failure is one
-        atomic ``open`` + single ``write`` + ``close``, not a held-open
-        file handle.
+        File to which per-bin failure diagnostics are appended as JSON lines
+        when a fit raises: bin index, seed, exception type, message and
+        traceback, summary statistics of ``pm1``, ``pm2`` and the covariance,
+        and ``grid_kwargs``. The failed bin is skipped rather than stopping a
+        run that may take hours; on real HST data (2026-08-06), one bad bin
+        raising "Cannot find valid initial parameters" killed an otherwise
+        healthy run of about 1400 bins. Default
+        ``'fit_all_bins_2d_failures.jsonl'`` in the working directory; ``None``
+        disables the file (a warning is issued either way). Several workers can
+        share the path, since each record is written with a single
+        open-write-close.
     thin : int
-        Keep every ``thin``-th posterior draw of ``intrinsic_pdf`` (and drop
-        the latent ``x`` draws entirely) on each returned solver, cast to
-        float32. Defaults to 10. ``clip_uncertainties`` runs on the full
-        draws first, so the DYNAMITE outputs are unaffected; this only bounds
-        the memory of the returned list. See :func:`_fit_one_bin_2d` for the
-        measured rationale. Pass ``thin=1`` to keep every draw, or ``thin=0``
-        to leave ``samples`` completely untouched.
+        On each returned solver, keep every ``thin``-th draw of
+        ``intrinsic_pdf`` as float32 and drop the latent ``x`` draws.
+        Default 10. ``clip_uncertainties`` runs on the full draws first, so the
+        Dynamite output is unaffected; this only limits the memory used by the
+        returned list (see :func:`_fit_one_bin_2d`). ``thin=1`` keeps every
+        draw, and ``thin=0`` leaves ``samples`` untouched.
+
     Returns
     -------
     solvers : list
-        One entry per input bin. Entries are either a fully solved
-        :class:`KinematicSolver2D` (with ``samples`` and
-        ``clipped_samples`` populated) or ``None`` for a skipped bin
-        (either below ``min_stars``, or a failed fit -- see
-        ``failure_log_path`` to tell the two apart after the fact).
+        One entry per input bin: a fitted :class:`KinematicSolver2D` (with
+        ``samples`` and ``clipped_samples`` set), or ``None`` for a skipped
+        bin (too few stars, or a failed fit; check ``failure_log_path`` to
+        tell which).
     """
     if run_kwargs is None:
         run_kwargs = {}

@@ -2,25 +2,23 @@
 DYNAMITE 2D (Proper-Motion) Output Writer
 ==========================================
 
-The 2D analogue of ``veldist.write_dynamite_kinematics``: turns a list of
-solved :class:`~veldist.veldist2d.KinematicSolver2D` instances into the
-``.npz`` archive Dynamite's ``ProperMotions``/``Histogram2D`` kinematics
-representation consumes, plus the usual ``aperture.dat``/``bins.dat`` pair
-(format unchanged from 1D).
+The 2D counterpart of ``veldist.write_dynamite_kinematics``. It takes a list
+of fitted :class:`~veldist.veldist2d.KinematicSolver2D` objects and writes
+the ``.npz`` archive read by Dynamite's ``ProperMotions``/``Histogram2D``
+kinematics, plus the usual ``aperture.dat`` and ``bins.dat`` (same format as
+in 1D).
 
-Kept in its own module rather than appended to ``veldist2d.py`` -- see
-``docs/superpowers/specs/2026-08-05-dynamite-2d-writer-design.md`` §1. This
-is pure post-processing I/O with no shared state with the sampler, has a
-different dependency footprint (numpy-only, no astropy), and targets an
-upstream format that is still moving (see the version-pinning note below),
-so it is kept trivially swappable/deletable independent of
-``veldist2d.py``'s tested modelling code.
+It lives in its own module rather than in ``veldist2d.py`` (see
+``docs/superpowers/specs/2026-08-05-dynamite-2d-writer-design.md`` §1). It
+is pure I/O that shares no state with the sampler, needs only numpy (no
+astropy), and targets an upstream format that may still change, so it
+should be easy to replace or remove without touching the modelling code.
 
-**Target format**: Dynamite PR #442, commit ``9ccc416``, merged to
-``main`` 2026-06-03. **Not yet in any tagged release** (``v5.0.0`` predates
-it). This writer's ``.npz`` key/shape contract is data, not code, and has
-no runtime dependency on Dynamite itself -- but the contract may need
-revision if the upstream interface changes before a tagged release.
+**Target format**: Dynamite PR #442, commit ``9ccc416``, merged to ``main``
+on 2026-06-03 and **not yet in a tagged release** (``v5.0.0`` is older).
+The writer does not import Dynamite; it only follows the ``.npz`` keys and
+shapes, which may need updating if the upstream interface changes before a
+release.
 """
 
 from pathlib import Path
@@ -33,21 +31,24 @@ __all__ = ["write_dynamite_kinematics_2d"]
 def _write_aperture_and_bins_files(
     solvers, output_dir, voronoi_bin_metadata, aperture_filename, bins_filename
 ):
-    """Write aperture.dat / bins.dat. Format unchanged from 1D's writer
-    (veldist.write_dynamite_kinematics); duplicated here rather than shared
-    because that function is not importable without pulling in astropy.
+    """Write aperture.dat and bins.dat in the same format as the 1D writer.
 
-    ``ap['angle_deg']`` is written verbatim: this writer does no frame handling
-    and no validation. DYNAMITE's rule is ``angle_deg = -theta_maj`` with
-    ``theta_maj`` the receding major axis measured CCW from +x **in the caller's
-    own frame** -- not a sky position angle (the two agree only mod 180, and
-    substituting one for the other silently inverts every fitted rotation).
+    The code is duplicated from ``veldist.write_dynamite_kinematics`` because
+    importing that function would pull in astropy.
 
-    The frame of the ``pm1``/``pm2`` histograms matters too and is likewise the
-    caller's responsibility: DYNAMITE's projection is right-handed with the LOS
-    along ``x' x y'``, so ``(x, y, v_los)`` must be right-handed. In particular
-    ``pm2`` (the minor-axis component) flips sign under an East/West mirror while
-    ``pm1`` does not. See ``omegaCen/dynamite_dataprep/dynamite_frame.py``.
+    ``ap['angle_deg']`` is written as given, with no frame handling or
+    checks. Dynamite expects ``angle_deg = -theta_maj``, where ``theta_maj``
+    is the receding major axis measured counter-clockwise from +x **in the
+    caller's own frame**. This is not a sky position angle: the two agree
+    only modulo 180, and using one in place of the other silently flips every
+    fitted rotation.
+
+    The frame of the ``pm1``/``pm2`` histograms is also the caller's
+    responsibility. Dynamite's projection is right-handed with the line of
+    sight along ``x' x y'``, so ``(x, y, v_los)`` must be right-handed.
+    ``pm2`` (the minor-axis component) changes sign under an East/West
+    mirror; ``pm1`` does not. See
+    ``omegaCen/dynamite_dataprep/dynamite_frame.py``.
     """
     ap = voronoi_bin_metadata["aperture"]
     ap_path = output_dir / aperture_filename
@@ -94,61 +95,57 @@ def write_dynamite_kinematics_2d(
     uncertainty_abs_floor=1e-10,
 ):
     """
-    Write Dynamite-compatible ProperMotions/Histogram2D input files from a
-    list of solved spatial (Voronoi) bins.
+    Write Dynamite ProperMotions/Histogram2D input files for a set of
+    fitted spatial (Voronoi) bins.
 
-    Produces three files:
+    Three files are written:
 
-    - ``{npz_filename}``: NumPy ``.npz`` archive with keys ``PM_2dhist``,
+    - ``{npz_filename}``: a NumPy ``.npz`` archive with ``PM_2dhist`` and
       ``PM_2dhist_sigma`` (both ``(n_apertures, K, K)``), ``binID_dynamite``,
-      ``nstarbin`` (all ``(n_apertures,)``), ``vxrange``, ``vyrange``
-      (scalars -- one shared velocity grid for every aperture), ``xbin``,
-      ``ybin`` (``(n_apertures,)``).
-    - ``{aperture_filename}``: pixel grid geometry. Format unchanged from 1D.
-    - ``{bins_filename}``: pixel-to-bin mapping. Format unchanged from 1D.
+      ``nstarbin``, ``xbin`` and ``ybin`` (all ``(n_apertures,)``), and the
+      scalars ``vxrange`` and ``vyrange`` (every aperture shares one velocity
+      grid).
+    - ``{aperture_filename}``: pixel grid geometry, same format as 1D.
+    - ``{bins_filename}``: pixel-to-bin map, same format as 1D.
 
-    Any ``None`` entries in ``solvers`` (bins skipped by
-    :func:`~veldist.dynamite2d.fit_all_bins_2d`) are automatically masked:
-    their pixels are written as 0 in the bins file and they are omitted
-    from ``PM_2dhist``/``PM_2dhist_sigma``/``nstarbin``/``xbin``/``ybin``.
-    The remaining bins are re-numbered sequentially (1-indexed) in
-    ``binID_dynamite`` -- **required**, not merely conventional: Dynamite's
-    legacy orbit-library reader (``orblib_f.f90``, ``LegacyOrbitLibrary.
-    read_orbit_base``) assumes 1-indexed, gap-free bin IDs.
+    ``None`` entries in ``solvers`` (bins skipped by
+    :func:`~veldist.veldist2d.fit_all_bins_2d`) are masked: their pixels are
+    written as 0 in the bins file and they are left out of every array in
+    the ``.npz``. The remaining bins are renumbered 1, 2, 3, ... in
+    ``binID_dynamite``. This is required: Dynamite's legacy orbit-library
+    reader (``orblib_f.f90``, ``LegacyOrbitLibrary.read_orbit_base``) assumes
+    bin IDs start at 1 with no gaps.
 
-    :meth:`~veldist.veldist2d.KinematicSolver2D.clip_uncertainties` is
-    called automatically (with ``uncertainty_floor_fraction``/
-    ``uncertainty_abs_floor``) on any solver that has not already had its
-    ``clipped_samples`` populated.
+    Any solver whose ``clipped_samples`` is not yet set has
+    :meth:`~veldist.veldist2d.KinematicSolver2D.clip_uncertainties` called on
+    it with ``uncertainty_floor_fraction`` and ``uncertainty_abs_floor``.
 
-    **Normalisation**: ``PM_2dhist``/``PM_2dhist_sigma`` are written exactly
-    as ``clip_uncertainties`` produces them -- per-bin marginal medians that
-    typically sum to ~0.85-0.95, not 1. Do **not** pre-normalise. Dynamite's
-    ``ProperMotions.normalise()`` divides both arrays by the identical
-    per-aperture ``hist_scale`` factor on load, so the value/uncertainty
-    correspondence is preserved regardless of the pre-normalisation sum
-    (see the design doc §9 for the full trace through Dynamite's source).
+    **Normalisation.** ``PM_2dhist`` and ``PM_2dhist_sigma`` are written
+    exactly as ``clip_uncertainties`` returns them. They are per-cell
+    marginal medians and usually sum to about 0.85-0.95, not 1. Do **not**
+    normalise them first: Dynamite's ``ProperMotions.normalise()`` divides
+    both arrays by the same per-aperture ``hist_scale`` when loading, so
+    values and uncertainties stay consistent whatever the sum (see §9 of the
+    design doc).
 
-    **Axis order**: ``PM_2dhist[a, ix, iy]`` -- axis 1 is vx, axis 2 is vy,
-    matching ``setup_grid_2d``'s ``(ix, iy)`` convention with no transpose.
-    Verified against ``ProperMotions.as_histogram2d()`` (Dynamite PR #442,
-    commit ``9ccc416``); see the design doc §5.
+    **Axis order.** ``PM_2dhist[a, ix, iy]``: axis 1 is vx and axis 2 is vy,
+    the same ``(ix, iy)`` order as ``setup_grid_2d``, with no transpose.
+    Checked against ``ProperMotions.as_histogram2d()`` in Dynamite PR #442,
+    commit ``9ccc416`` (design doc §5).
 
     Parameters
     ----------
     solvers : list
         Solved :class:`~veldist.veldist2d.KinematicSolver2D` instances (or
         ``None`` for skipped bins), as returned by
-        :func:`~veldist.dynamite2d.fit_all_bins_2d`. All non-``None``
-        entries must share the same (square) velocity grid -- same per-axis
-        bin count K and the same ``(vx, vy)`` bin edges.
+        :func:`~veldist.veldist2d.fit_all_bins_2d`. Every non-``None``
+        entry must use the same square velocity grid: the same per-axis bin
+        count K and the same ``(vx, vy)`` bin edges.
     output_dir : str or path-like
-        Directory in which to write the three output files. Created if it
-        does not exist.
+        Directory for the three output files; created if needed.
     voronoi_bin_metadata : dict
-        Spatial metadata. Same structure as
-        :func:`veldist.veldist.write_dynamite_kinematics`'s
-        ``voronoi_bin_metadata`` argument: ``'bins'`` (list of dicts with
+        Spatial metadata, structured as for
+        :func:`veldist.veldist.write_dynamite_kinematics`: ``'bins'`` (list of dicts with
         ``'xbin'``/``'ybin'``), ``'aperture'``, ``'pixel_bin_ids'``.
     npz_filename : str
         File name for the kinematics ``.npz``. Default ``'pm_2dhist.npz'``.
@@ -158,16 +155,16 @@ def write_dynamite_kinematics_2d(
         File name for the bins file. Default ``'bins.dat'``.
     uncertainty_floor_fraction, uncertainty_abs_floor : float
         Forwarded to :meth:`~veldist.veldist2d.KinematicSolver2D.clip_uncertainties`
-        when auto-invoked. Defaults match 1D's validated values (not yet
-        re-measured for 2D).
+        when it is called automatically. The defaults are the values
+        validated in 1D; they have not been re-measured for 2D.
 
     Raises
     ------
     ValueError
-        If no solved bins are found; if solvers share inconsistent grids;
-        if any solved solver's per-axis bin count K is even (Dynamite's
-        ``set_default_hist_bins`` rejects even bin counts); or if any
-        ``PM_2dhist_sigma`` entry is <= 0 after clipping.
+        If there are no fitted bins, if the solvers' grids differ, if any
+        per-axis bin count K is even (Dynamite's ``set_default_hist_bins``
+        rejects even counts), or if any ``PM_2dhist_sigma`` entry is <= 0
+        after clipping.
 
     Returns
     -------

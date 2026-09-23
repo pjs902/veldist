@@ -26,42 +26,34 @@ __all__ = [
 
 
 def within_cell_variance(grid_centers, bin_width=None):
-    """
-    ``h**2 / 12``, the exact variance of a Uniform(cell) distribution.
+    """Return ``h**2 / 12``, the variance of a uniform distribution over one cell.
 
-    The velocity distribution the model actually infers is per-cell
-    probability MASS ``p_m`` on a grid of cell width ``h``. The likelihood's
-    design matrix (see ``precompute_design_matrix`` in ``veldist.py``)
-    INTEGRATES each star's error kernel over the cell -- a piecewise-constant
-    assumption for the density, ``p(v) ~= p_m / h`` within cell ``m``. The
-    density the model actually fits therefore has
+    The model infers probability MASS ``p_m`` per cell of width ``h``. The
+    design matrix (``precompute_design_matrix`` in ``veldist.py``) integrates
+    each star's error kernel over the cell, which treats the density as
+    constant inside it, ``p(v) ~= p_m / h``. The density actually fitted
+    therefore has
 
         ``Var(q) = sum_m p_m * (v_m - mu)**2 + h**2 / 12``
 
-    Treating ``p_m`` as a point mass at the cell centre (``sum_m p_m *
-    (v_m - mu)**2`` alone, with no within-cell term) omits the ``h**2/12``
-    piece and is biased low by approximately ``h**2 / (12 * sigma)`` in
-    sigma. This is the 1D counterpart of the fix already applied in
-    ``calibration2d.py::_moments_from_pdf_samples_2d`` (commit 2e2cbf8); see
-    that function's docstring for the full three-way derivation (likelihood
-    vs. point-mass estimator vs. discretised-truth target) and the
-    confirming numbers (predicted vs. measured sigma bias within 4% at
-    every tested resolution).
+    Treating ``p_m`` as a point mass at the cell centre drops the ``h**2/12``
+    term and biases sigma low by about ``h**2 / (12 * sigma)``. This is the 1D
+    counterpart of the fix in ``calibration2d.py::_moments_from_pdf_samples_2d``
+    (commit 2e2cbf8), whose docstring has the full derivation and the check
+    (predicted and measured sigma bias agree within 4% at every resolution
+    tested).
 
     Parameters
     ----------
     grid_centers : array-like, shape (n_bins,)
-        Bin-centre velocities, in ascending order. Used only to derive the
-        cell width when *bin_width* is not given; the grid must be uniformly
-        spaced for that derivation to be valid (checked to a relative
-        tolerance of ``1e-6``).
+        Bin centres in ascending order. Used only to derive the cell width
+        when *bin_width* is not given, which requires uniform spacing (checked
+        to a relative tolerance of ``1e-6``).
     bin_width : float or None, optional
-        Cell width ``h``. If ``None`` (default), derived as
-        ``grid_centers[1] - grid_centers[0]``. Passing it explicitly is
-        preferable whenever the caller already has the grid dict (e.g.
-        ``solver.grid["width"]``), since that is exact regardless of grid
-        uniformity; the derived value assumes -- and checks -- uniform
-        spacing.
+        Cell width ``h``. If ``None`` (default), it is taken as
+        ``grid_centers[1] - grid_centers[0]``. Pass it explicitly when you have
+        the grid dict (e.g. ``solver.grid["width"]``); that is exact whether or
+        not the grid is uniform.
 
     Returns
     -------
@@ -71,8 +63,8 @@ def within_cell_variance(grid_centers, bin_width=None):
     Raises
     ------
     ValueError
-        If *bin_width* is ``None`` and *grid_centers* has fewer than 2
-        points, or is not uniformly spaced.
+        If *bin_width* is ``None`` and *grid_centers* has fewer than 2 points
+        or is not uniformly spaced.
     """
     if bin_width is not None:
         return float(bin_width) ** 2 / 12.0
@@ -104,44 +96,41 @@ def within_cell_variance(grid_centers, bin_width=None):
 
 
 def compute_moments(pdf_samples, grid_centers, bin_width=None):
-    """
-    Compute statistical moments from posterior LOSVD samples.
+    """Compute moments from posterior LOSVD samples.
 
     .. deprecated::
-        This function is retained for backward compatibility.  For new code,
-        prefer :func:`compute_summary`, which returns the same quantities plus
-        robust alternatives (median, IQR, tail weight, bimodality score) and
-        uses the posterior half-68% CI as its uncertainty convention instead
-        of the posterior standard deviation.
+        Kept for backward compatibility. New code should use
+        :func:`compute_summary`, which returns the same quantities plus robust
+        alternatives (median, IQR, tail weight, bimodality score) and reports
+        the half-width of the 68% interval instead of the posterior standard
+        deviation.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function.  Each row must sum to 1.
+        Posterior samples of the probability mass per bin; each row sums to 1.
     grid_centers : array-like, shape (n_bins,)
-        Centres of the velocity bins (km/s or consistent velocity unit).
+        Bin centres, in km/s or another consistent unit.
     bin_width : float or None, optional
-        Grid cell width ``h``, used to add the within-cell variance
-        ``h**2/12`` (see :func:`within_cell_variance`) so ``std`` estimates
-        the same continuous quantity the likelihood fits rather than being
-        biased low by ``~h**2/(12*sigma)``. Defaults to ``None``, which
-        derives ``h`` from *grid_centers* (requires uniform spacing); pass
-        it explicitly for a non-uniform grid or to avoid the derivation.
+        Cell width ``h``, used to add the within-cell variance ``h**2/12``
+        (see :func:`within_cell_variance`) so that ``std`` estimates the
+        continuous dispersion the likelihood fits instead of being biased low
+        by about ``h**2/(12*sigma)``. If ``None`` (default), ``h`` is derived
+        from *grid_centers*, which must then be uniform.
 
     Returns
     -------
     dict
-        Keys and values:
+        Each value is ``(posterior_mean, posterior_std)``:
 
-        ``'mean'`` : (float, float)
-            ``(posterior_mean, posterior_std)`` of the flux-weighted mean
-            velocity across MCMC samples.
-        ``'std'`` : (float, float)
-            ``(posterior_mean, posterior_std)`` of the velocity dispersion.
-        ``'skewness'`` : (float, float)
-            ``(posterior_mean, posterior_std)`` of the skewness.
-        ``'kurtosis'`` : (float, float)
-            ``(posterior_mean, posterior_std)`` of the excess kurtosis.
+        ``'mean'``
+            Mean velocity.
+        ``'std'``
+            Velocity dispersion.
+        ``'skewness'``
+            Skewness.
+        ``'kurtosis'``
+            Excess kurtosis.
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
@@ -176,44 +165,39 @@ def compute_moments(pdf_samples, grid_centers, bin_width=None):
 
 
 def cdf_percentile(pdf_samples, grid_centers, p):
-    """
-    Compute the CDF percentile(s) for each posterior draw.
+    """Compute CDF percentile(s) for each posterior draw.
 
-    For each MCMC sample, treats the probability mass as a discrete
-    distribution over *grid_centers* and interpolates the cumulative
-    distribution at level(s) *p*.
+    Each draw is treated as a discrete distribution on *grid_centers*, and
+    its cumulative distribution is interpolated at level(s) *p*.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function.  Each row must sum to 1
-        and *grid_centers* must be monotonically increasing.
+        Posterior samples of the probability mass per bin; each row sums to 1.
     grid_centers : array-like, shape (n_bins,)
-        Bin-centre velocities in ascending order.
+        Bin centres in ascending order.
     p : float or array-like
-        Cumulative probability level(s) in the interval [0, 1].  Scalar input
-        returns a 1-D result; array input returns a 2-D result.
+        Cumulative probability level(s) in [0, 1]. A scalar gives a 1-D
+        result, an array a 2-D result.
 
     Returns
     -------
     ndarray
-        Shape ``(n_samples,)`` when *p* is a scalar, or
-        ``(n_samples, len(p))`` when *p* is array-like.
+        Shape ``(n_samples,)`` for scalar *p*, or ``(n_samples, len(p))``.
 
     Examples
     --------
-    Compute the posterior median velocity for each MCMC sample:
+    Posterior median velocity for each draw:
 
     >>> v_median_samples = cdf_percentile(pdf_samples, grid_centers, 0.5)
 
-    Compute Q25 and Q75 simultaneously:
+    Q25 and Q75 together:
 
     >>> q25_q75 = cdf_percentile(pdf_samples, grid_centers, [0.25, 0.75])
     >>> iqr_samples = q25_q75[:, 1] - q25_q75[:, 0]
 
-    No within-cell (``h**2/12``) correction is applied here; see
-    :func:`compute_percentile_summary`'s docstring for why that correction
-    -- specific to variances -- does not apply to percentiles at all.
+    No within-cell (``h**2/12``) correction is applied; that correction is
+    specific to variances (see :func:`compute_percentile_summary`).
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
@@ -228,48 +212,34 @@ def cdf_percentile(pdf_samples, grid_centers, p):
 
 
 def tail_weight(pdf_samples, grid_centers, means, stds):
-    """
-    Fraction of probability mass outside +/-1 sigma of the mean, per MCMC sample.
+    """Fraction of probability mass more than 1 sigma from the mean, per draw.
 
-    This is a direct, model-free measure of tail heaviness that can be
-    interpreted without any expansion assumption.  It is the non-parametric
-    analogue of the Gauss-Hermite *h4* coefficient.  For a Gaussian the value
-    is exactly ``1 - erf(1/sqrt(2)) ~ 0.3173``.
+    A direct, model-free measure of how heavy the tails are, needing no series
+    expansion; the non-parametric counterpart of the Gauss-Hermite *h4*. For a
+    Gaussian it is ``1 - erf(1/sqrt(2)) ~ 0.3173``.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function.  Each row sums to 1.
+        Posterior samples of the probability mass per bin; each row sums to 1.
     grid_centers : array-like, shape (n_bins,)
-        Bin-centre velocities.
+        Bin centres.
     means : array-like, shape (n_samples,)
-        Per-sample flux-weighted mean velocities.  Compute as
-        ``pdf_samples @ grid_centers`` if not already available.
+        Mean velocity of each draw, e.g. ``pdf_samples @ grid_centers``.
     stds : array-like, shape (n_samples,)
-        Per-sample velocity dispersions (standard deviations of the LOSVD).
-        This function performs no second-moment computation itself -- it
-        only thresholds against whatever *stds* the caller passes in. Pass
-        the within-cell-corrected sigma (e.g. from :func:`compute_summary`,
-        which is what it is called with internally) so "outside +/-1 sigma"
-        means the same physical sigma that ``compute_summary`` reports; the
-        threshold shifts outward accordingly (fractionally by
-        ``~h**2/(24*sigma**2)``), which is the correct, if small,
-        consequence of using the corrected sigma, not a separate bug.
+        Dispersion of each draw. This function only uses *stds* as the
+        threshold; it computes no second moment itself. Pass the
+        within-cell-corrected sigma (as :func:`compute_summary` does), so that
+        "1 sigma" means the same sigma ``compute_summary`` reports. The
+        threshold then moves out slightly (by a fraction of about
+        ``h**2/(24*sigma**2)``), which is the intended effect.
 
     Returns
     -------
     ndarray, shape (n_samples,)
-        Tail-weight value for each MCMC sample.  Values greater than 0.317
-        indicate heavier tails than Gaussian (associated with radial velocity
-        anisotropy); values below 0.317 indicate lighter tails / flat top
-        (tangential anisotropy).
-
-    Notes
-    -----
-    The Gaussian reference value can be computed as::
-
-        from math import erf, sqrt
-        gaussian_tail_weight = 1 - erf(1 / sqrt(2))   # = 0.3173
+        Tail weight of each draw. Above 0.317 means heavier tails than a
+        Gaussian (associated with radial anisotropy); below means lighter tails
+        or a flat top (tangential anisotropy).
 
     Examples
     --------
@@ -289,49 +259,44 @@ def tail_weight(pdf_samples, grid_centers, means, stds):
 
 
 def bimodality_score(pdf_samples):
-    """
-    Count the number of peaks in the smoothed posterior-mean LOSVD.
+    """Count the peaks in the smoothed posterior-mean LOSVD.
 
-    This is a diagnostic integer flag, not a posterior quantity.  It is
-    computed from the posterior-mean LOSVD (not from individual samples), so
-    no credible interval is available.  Bins with a score of 2 or more
-    indicate a potentially multimodal distribution where GH-analogue summary
-    statistics (mean, sigma, skewness, kurtosis) may be misleading and the
-    full histogram shape should be inspected.
+    A diagnostic integer, not a posterior quantity: it is computed from the
+    posterior-mean LOSVD, so it has no credible interval. A score of 2 or more
+    means the distribution may be multimodal, in which case the mean, sigma,
+    skewness and kurtosis can mislead and the full histogram should be
+    inspected.
 
-    Peak detection uses a 3-point boxcar to smooth over single-bin noise, and
-    requires each candidate peak to exceed 1% of the global maximum to
-    suppress spurious detections in low-probability tails.
+    The LOSVD is smoothed with a 3-point boxcar to ignore single-bin noise,
+    and a peak must exceed 1% of the global maximum, to ignore spurious peaks
+    in the tails.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function.  Each row sums to 1.
+        Posterior samples of the probability mass per bin; each row sums to 1.
 
     Returns
     -------
     int
-        Number of local maxima detected.  Typical values:
+        Number of local maxima found:
 
         ``1``
-            Unimodal distribution (normal case).
+            Unimodal (the normal case).
         ``2``
-            Bimodal; could indicate counter-rotation, two kinematic
-            components, or a contaminating population.
+            Bimodal: possibly counter-rotation, two kinematic components, or
+            a contaminating population.
         ``>= 3``
-            Highly irregular; inspect visually before interpreting any
-            scalar summaries.
+            Irregular; look at it before interpreting any scalar summary.
 
     Notes
     -----
-    A more principled treatment would count peaks on every individual MCMC
-    sample and return a distribution over the count.  This is deferred as a
-    future improvement; the posterior-mean approach suffices to identify bins
-    that require visual inspection.
+    Counting peaks in every draw and reporting a distribution over the count
+    would be more principled. That is left for later; the posterior-mean
+    version is enough to flag bins that need a closer look.
 
-    Unaffected by the within-cell (``h**2/12``) variance correction
-    elsewhere in this module: this is a peak count on the raw PMF shape, not
-    a second moment, and takes no dispersion estimate as input.
+    Not affected by the within-cell (``h**2/12``) correction: it counts peaks
+    in the raw mass and uses no dispersion.
 
     Examples
     --------
@@ -353,37 +318,32 @@ def bimodality_score(pdf_samples):
 
 
 def half_68ci(samples):
-    """
-    Half-width of the 68% posterior credible interval.
+    """Half-width of the 68% posterior credible interval.
 
-    Computes ``(p84 - p16) / 2``, the symmetric +/- uncertainty reported
-    throughout veldist for both LOSVD values and scalar summary metrics.
-    This matches the BayesLOSVD convention and is the natural non-parametric
-    analogue of a 1-sigma Gaussian error bar.
+    Returns ``(p84 - p16) / 2``, the symmetric uncertainty veldist reports for
+    both LOSVD values and scalar summaries. It follows the BayesLOSVD
+    convention and is the non-parametric counterpart of a 1-sigma error bar.
 
     Parameters
     ----------
     samples : array-like, shape (n_samples,)
-        Posterior samples of a scalar quantity (e.g., one metric evaluated
-        over all MCMC draws).
+        Posterior samples of a scalar, e.g. one metric evaluated on every
+        draw.
 
     Returns
     -------
     float
-        ``(p84 - p16) / 2``, in the same units as *samples*.
+        ``(p84 - p16) / 2``, in the units of *samples*.
 
     Notes
     -----
     For a Gaussian posterior this equals the posterior standard deviation.
-    For skewed or heavy-tailed posteriors it can differ substantially, but
-    it always has the interpretation "the true value lies within +/-half_68ci
-    of the median with approximately 68% posterior probability."
+    For skewed or heavy-tailed posteriors it can differ a lot, but it always
+    means that the true value lies within +/- half_68ci of the median with
+    about 68% posterior probability.
 
-    Unaffected by the within-cell (``h**2/12``) variance correction
-    elsewhere in this module: it is a generic percentile-spread operator on
-    whatever scalar *samples* it is handed (already-corrected sigma
-    samples, GH parameters, anything), not a second-moment computation
-    itself.
+    Not affected by the within-cell (``h**2/12``) correction: it is a
+    generic percentile spread of whatever samples it is given.
 
     Examples
     --------
@@ -398,50 +358,40 @@ def half_68ci(samples):
 
 
 def truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0):
-    """
-    Zero far-edge tail mass in each posterior draw and renormalise.
+    """Zero the far tails of each posterior draw and renormalise.
 
-    This is the raw-sample analogue of
-    :meth:`~veldist.veldist.KinematicSolver.truncate_losvd`. The RW1
-    smoothness prior used during inference leaks a small amount of posterior
-    mass into velocity-grid bins far from the bulk of the distribution.  For
-    moments that weight residuals by a high power (e.g. kurtosis's fourth
-    power), even a tiny amount of far-edge mass can produce a large bias (a
-    bin at 5 sigma carries ~625x the weight of a bin at 1 sigma).
+    The raw-sample counterpart of
+    :meth:`~veldist.veldist.KinematicSolver.truncate_losvd`. The RW1 prior
+    leaks a little posterior mass into bins far from the bulk of the
+    distribution. Moments that weight residuals by a high power are very
+    sensitive to this: for kurtosis, a bin at 5 sigma counts about 625 times
+    as much as one at 1 sigma.
 
-    Unlike ``truncate_losvd``, which operates on an already-fixed scalar
-    ``clipped_samples`` summary and never renormalises, this function
-    operates on the full ``(n_samples, n_bins)`` PMF array that
-    :func:`compute_summary` consumes, where every row is assumed to sum to
-    1.  Each row is renormalised after truncation so downstream moment
-    calculations (which divide by the total probability implicitly, via
-    ``pdf_samples @ grid_centers``, etc.) remain valid.
+    ``truncate_losvd`` works on the per-bin summary in ``clipped_samples`` and
+    does not renormalise. This function works on the full
+    ``(n_samples, n_bins)`` array that :func:`compute_summary` uses, and
+    renormalises each row after truncating so that moment calculations stay
+    valid.
 
-    Truncation is applied **per draw**, using that draw's own mean and
-    dispersion, rather than a single global threshold computed from (e.g.)
-    the posterior-mean LOSVD.  Posterior draws vary in their bulk mean and
-    dispersion; per-row truncation tracks each draw's own scale.
+    Each draw is truncated using its own mean and dispersion rather than one
+    global threshold, because the draws differ in both.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function.  Each row must sum
-        to 1.
+        Posterior samples of the probability mass per bin; each row sums to 1.
     grid_centers : array-like, shape (n_bins,)
-        Centres of the velocity bins.
+        Bin centres.
     n_sigma : float, optional
-        Number of (per-draw) velocity dispersions beyond which to zero the
-        probability mass.  Default 4.0.
+        Zero the mass beyond this many (per-draw) dispersions from the mean.
+        Default 4.0.
 
     Returns
     -------
     ndarray, shape (n_samples, n_bins)
-        Truncated and renormalised PMF samples.  Each row still sums to 1
-        (to floating-point precision), except for the degenerate case of a
-        row whose entire mass falls outside ``n_sigma`` sigma of its own
-        mean, which is returned unmodified (renormalising an all-zero row
-        is undefined) since that indicates every bin was truncated, not
-        that a residual leak was suppressed.
+        Truncated, renormalised samples. Every row still sums to 1, except a
+        row whose mass all lies beyond the cut: renormalising zeros is
+        undefined, so that row is returned unchanged.
 
     Examples
     --------
@@ -477,171 +427,152 @@ def truncate_pdf_samples(pdf_samples, grid_centers, n_sigma=4.0):
 
 
 def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None, bin_width=None):
-    """
-    Compute spatially mappable scalar summaries from posterior LOSVD samples.
+    """Compute scalar summaries of posterior LOSVD samples, suitable for maps.
 
-    This is the primary analysis function for extracting kinematic maps from
-    :class:`~veldist.KinematicSolver` output.  All metrics except
-    ``bimodality_score`` are evaluated independently on every MCMC sample,
-    so the full posterior uncertainty (measurement noise, finite star count,
-    prior regularisation) is propagated automatically with no separate
-    bootstrap or error-propagation step.
+    This is the main function for turning :class:`~veldist.KinematicSolver`
+    output into kinematic maps. Every metric except ``bimodality_score`` is
+    computed on each posterior draw separately, so the full uncertainty
+    (measurement noise, finite star count, prior) carries through with no
+    bootstrap or error propagation.
 
-    Each metric is summarised as ``(posterior_median, half_68ci)`` using the
-    same convention as the LOSVD itself: the reported uncertainty is
-    ``(p84 - p16) / 2``.
+    Each metric is reported as ``(posterior_median, half_68ci)``, with the
+    uncertainty ``(p84 - p16) / 2`` as for the LOSVD itself.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function.  Each row must sum to 1.
+        Posterior samples of the probability mass per bin; each row sums to 1.
     grid_centers : array-like, shape (n_bins,)
-        Centres of the velocity bins (km/s or consistent velocity unit).
+        Bin centres, in km/s or another consistent unit.
     n_sigma_truncate : float or None, optional
         If given, apply :func:`truncate_pdf_samples` with this ``n_sigma``
-        to *pdf_samples* before computing moment-based quantities, to
-        mitigate the RW1 tail-leakage bias described in the ``kurtosis``
-        warning below.  Default ``None`` (no truncation, fully backward-
-        compatible with existing callers).  This is opt-in rather than on-by-
-        default because truncation is a lossy, threshold-dependent repair:
-        it discards posterior mass at the chosen cut, which is desirable when
-        that mass is known prior leakage but undesirable if a distribution
-        has real support there (e.g. a deliberately wide grid
-        margin for a heavy-tailed truth). Silently truncating by default
-        would risk quietly biasing results for users who have not diagnosed
-        whether leakage is present in their setup. Empirical testing (mock
-        Gaussian realisations on a 20-bin grid, see ``PLAN.md`` §1.3) found
-        ``n_sigma_truncate=3.0`` reduces median excess kurtosis from +1.78
-        (untruncated) to +0.05; i.e. it removes the observed bias for a
-        Gaussian truth. Looser cuts recover less of the bias (4.0 -> +0.81,
-        5.0 -> +1.63, barely better than untruncated). Frequentist coverage
-        testing (``tests/test_coverage.py``, n=25 realisations per truth)
-        confirms this fixes calibration for a Gaussian truth (kurtosis
-        coverage 0.000 -> 0.840) and for a mildly skewed truth (skew-normal:
-        0.000 -> 0.800), both inside the nominal 68% band. **It does not fix
-        heavy-tailed or multimodal truths**: a Student-t(df=6) truth (true
-        excess kurtosis 2.82) stays at 0.000 coverage, and a bimodal counter-
-        rotation truth stays at 0.080, because a fixed ``n_sigma`` cut
-        removes some of their real tail mass along with the leaked mass.
-        Use ``n_sigma_truncate`` when you have reason to believe your true
-        LOSVD is close to Gaussian or mildly skewed; it is not a general cure
-        for kurtosis bias on heavy-tailed or multimodal truths.
+        before computing moments, to reduce the RW1 tail-leakage bias (see the
+        ``kurtosis`` note below). Default ``None``, no truncation.
+
+        It is opt-in because truncation is a lossy repair that depends on the
+        threshold. It throws away mass beyond the cut, which is right if that
+        mass is prior leakage but wrong if the distribution really extends
+        there, and truncating by default could bias results for users who
+        have not checked for leakage.
+
+        On Gaussian mocks with a 20-bin grid (``PLAN.md`` §1.3),
+        ``n_sigma_truncate=3.0`` brings the median excess kurtosis from +1.78
+        to +0.05, removing the bias. Looser cuts help less (4.0 gives +0.81,
+        5.0 gives +1.63). In the coverage tests (``tests/test_coverage.py``, 25
+        realisations per truth) it fixes calibration for a Gaussian truth
+        (kurtosis coverage 0.000 to 0.840) and a mildly skewed one (0.000 to
+        0.800). **It does not fix heavy-tailed or multimodal truths**: a
+        Student-t (df = 6) truth stays at 0.000 and a bimodal
+        counter-rotating truth at 0.080, because a fixed cut removes real tail
+        mass along with the leakage. Use it only if you expect the LOSVD to be
+        close to Gaussian or mildly skewed.
     bin_width : float or None, optional
-        Grid cell width ``h``, passed to :func:`within_cell_variance` and
-        added to the point-mass ``sigma**2`` so ``sigma`` (and the
-        ``skewness``/``kurtosis`` normalisation) estimates the continuous
-        quantity the likelihood actually fits rather than being biased low
-        by ``~h**2/(12*sigma)`` (see that function's docstring). Defaults to
-        ``None``, which derives ``h`` from *grid_centers* assuming uniform
-        spacing (validated; raises if the grid is not uniform). Prefer
-        passing ``solver.grid["width"]`` explicitly when available -- it is
-        exact regardless of grid uniformity. This correction is **not**
-        applied to ``iqr``/``sigma_iqr`` (percentile-based; see
-        :func:`compute_percentile_summary`'s docstring for why a within-cell
-        term is not the right correction for order statistics).
+        Cell width ``h``. ``h**2/12`` (see :func:`within_cell_variance`) is
+        added to the point-mass variance so that ``sigma``, and the
+        normalisation of ``skewness`` and ``kurtosis``, estimate the
+        continuous quantity the likelihood fits instead of being biased low by
+        about ``h**2/(12*sigma)``. If ``None`` (default), ``h`` is derived from
+        *grid_centers*, which must be uniform (an error is raised if not).
+        Passing ``solver.grid["width"]`` is exact and preferred. The
+        correction is **not** applied to ``iqr`` or ``sigma_iqr``, which are
+        percentiles (see :func:`compute_percentile_summary`).
 
     Returns
     -------
     dict
         Each key maps to a ``(median, half_68ci)`` tuple of floats, in the
-        same units as *grid_centers* for velocity quantities and dimensionless
-        for shape metrics, **except** ``'bimodality_score'``, which is a
-        plain ``int``.
+        units of *grid_centers* for velocities and dimensionless for shapes,
+        **except** ``'bimodality_score'``, which is a plain ``int``.
 
         **Location**
 
         ``'v_mean'``
-            Flux-weighted mean velocity.  GH analogue: *V*.  Sensitive to
-            tail contamination; compare with ``v_median`` as a cross-check.
+            Mean velocity; GH counterpart *V*. Sensitive to tail
+            contamination, so compare it with ``v_median``.
         ``'v_median'``
-            Median velocity (CDF = 0.5).  Robust against edge-bin
-            contamination and heavy tails.
+            Median velocity (CDF = 0.5). Robust to edge-bin contamination and
+            heavy tails.
         ``'v_asymmetry'``
-            Mean minus median.  Near zero for symmetric LOSVDs; the sign
-            mirrors that of the low-velocity tail (positive = mean pulled
-            toward higher velocities by a trailing tail).  Closely related
-            to *h3*, but does not require computing higher-order moments.
+            Mean minus median. Near zero for a symmetric LOSVD, positive when
+            a tail toward high velocities pulls the mean above the median.
+            Closely related to *h3*, without needing higher moments.
 
         **Dispersion**
 
         ``'sigma'``
-            Standard deviation of the LOSVD.  GH analogue: *sigma*.
+            Standard deviation of the LOSVD; GH counterpart *sigma*.
         ``'iqr'``
-            Interquartile range Q75 - Q25.  Robust dispersion estimate
-            insensitive to tail contamination.
+            Interquartile range Q75 - Q25, a dispersion measure insensitive to
+            the tails.
         ``'sigma_iqr'``
-            IQR / 1.3490, the Gaussian-equivalent dispersion derived from
-            the IQR.  For a Gaussian, ``sigma_iqr ~= sigma``.
-            ``sigma_iqr < sigma`` implies heavy tails (radial anisotropy);
-            ``sigma_iqr > sigma`` implies flat top (tangential anisotropy).
+            IQR / 1.3490, the Gaussian-equivalent dispersion from the IQR. For
+            a Gaussian ``sigma_iqr ~= sigma``. ``sigma_iqr < sigma`` means
+            heavy tails (radial anisotropy); ``sigma_iqr > sigma`` means a
+            flat top (tangential anisotropy).
 
         **Shape**
 
         ``'skewness'``
-            Normalised third central moment *gamma1*.  Zero for symmetric
-            distributions.  GH analogue: *h3* ~= -*gamma1* / sqrt(6).  Note
-            sign: *gamma1* > 0 (right-skewed, trailing tail) implies *h3* <
-            0, the expected signal on the receding side of a rotating system.
+            Standardised third central moment *gamma1*; zero for a symmetric
+            distribution. GH counterpart: *h3* ~= -*gamma1* / sqrt(6). Note the
+            sign: *gamma1* > 0 (a tail toward high velocities) gives *h3* < 0.
         ``'kurtosis'``
-            Excess kurtosis *kappa* = fourth central moment / sigma4 - 3.
-            Zero for a Gaussian.  GH analogue: *h4* ~= *kappa* / sqrt(24).
-            Positive (leptokurtic) implies radially anisotropic; negative
-            (platykurtic) implies tangentially anisotropic / flat-topped.
+            Excess kurtosis *kappa*, the fourth central moment over sigma^4,
+            minus 3; zero for a Gaussian. GH counterpart: *h4* ~= *kappa* /
+            sqrt(24). Positive (peaked, heavy-tailed) suggests radial
+            anisotropy; negative (flat-topped) suggests tangential anisotropy.
 
-            .. warning::
-                **The root cause of the kurtosis bias, the RW1 prior's flat
-                null space, has been fixed in the default prior.** As of
-                commit 4b3bca2 (2026-08-03), ``KinematicSolver.run()``
-                defaults to ``prior="gaussian_core"`` (Merritt 1997, AJ, 114,
-                228), which replaces the RW1 prior's uniform-over-grid limit
-                with a Gaussian null space. This eliminates the +1.1 excess-
-                kurtosis and +4-8% velocity-dispersion biases at source.
-                Prior-predictive median sigma is ~45 km/s on a 400 km/s grid
-                (vs. ~115 for uniform). Kurtosis bias for a Gaussian truth is
-                0.00; sigma bias is within 3%.
+            .. note::
+                The kurtosis bias came from the RW1 prior's flat null space,
+                and the default prior no longer has it. Since commit 4b3bca2
+                (2026-08-03), ``KinematicSolver.run()`` uses
+                ``prior="gaussian_core"`` (Merritt 1997, AJ, 114, 228), whose
+                infinite-smoothing limit is a Gaussian rather than a uniform
+                distribution. This removes the +1.1 excess-kurtosis and +4-8%
+                dispersion biases: for a Gaussian truth the kurtosis bias is
+                0.00 and the sigma bias is within 3%. The prior-predictive
+                median sigma is about 45 km/s on a 400 km/s grid, against
+                about 115 km/s for a uniform distribution.
 
-                The ``n_sigma_truncate`` mitigation is now a **legacy option
-                needed only when using** ``prior="rw1"``. With the default
-                Gaussian-core prior, truncation is not required for Gaussian
-                or mildly skewed truths. Heavy-tailed and multimodal truths
-                still show under-coverage in kurtosis even with the Gaussian-
-                core prior: this is an inherent finite-data limitation of any
-                smoothness prior at N=150, not the flat-null-space bug. See
-                ``tests/test_coverage.py``, ``tests/test_moment_bias.py``,
-                and ``PLAN.md`` §1.3 for numbers.
+                ``n_sigma_truncate`` is therefore only needed with
+                ``prior="rw1"``. With the default prior, heavy-tailed and
+                multimodal truths still under-cover in kurtosis; the cause is
+                still open (see ``docs/validation.md``,
+                ``tests/test_coverage.py`` and ``tests/test_moment_bias.py``).
         ``'tail_weight'``
-            Fraction of probability mass outside +/-1*sigma* of the mean.
-            Gaussian reference: 0.3173.  A more direct anisotropy diagnostic
-            than *h4* because it makes no expansion assumption and remains
-            interpretable for non-Gaussian shapes.  See also :func:`tail_weight`.
+            Fraction of mass more than 1 *sigma* from the mean; 0.3173 for a
+            Gaussian. A more direct anisotropy diagnostic than *h4*, because it
+            assumes no expansion and stays meaningful for non-Gaussian shapes.
+            See :func:`tail_weight`.
 
         **Diagnostic**
 
         ``'bimodality_score'``
-            Integer number of peaks in the smoothed posterior-mean LOSVD
-            (see :func:`bimodality_score`).  Score 1 = unimodal; >= 2 =
-            inspect visually.  No uncertainty is returned for this metric.
+            Number of peaks in the smoothed posterior-mean LOSVD (see
+            :func:`bimodality_score`). 1 means unimodal; 2 or more means look
+            at the histogram. No uncertainty is given.
 
     Notes
     -----
-    The approximate Gauss-Hermite conversions (valid for ``|h3|``, ``|h4|``
-    less than about 0.2):
+    Approximate Gauss-Hermite conversions, for ``|h3|`` and ``|h4|`` below
+    about 0.2:
 
     .. code-block:: text
 
         h3 ~= -skewness / sqrt(6)
         h4 ~=  kurtosis / sqrt(24)
 
-    These allow cross-validation against GH-based models and literature maps.
+    These allow rough comparison with GH-based models and published maps; for
+    literature-comparable values use :func:`gauss_hermite_fit`.
 
-    For spatial bins where ``bimodality_score >= 2``, the mean, sigma,
-    skewness, and kurtosis should be treated with caution: the mean lands
-    between two peaks, sigma is inflated by their separation, and skewness
-    reflects which peak is taller rather than any genuine asymmetry.
+    Where ``bimodality_score >= 2``, treat the mean, sigma, skewness and
+    kurtosis with care: the mean falls between the peaks, sigma is inflated by
+    their separation, and the skewness mostly reflects which peak is taller.
 
     Examples
     --------
-    >>> solver = KinematicSolver(v_grid)
+    >>> solver = KinematicSolver()
+    >>> solver.setup_grid(center=0.0, width=200.0, n_bins=50)
     >>> solver.add_data(velocities, uncertainties)
     >>> solver.run()
     >>> summary = compute_summary(solver.samples["intrinsic_pdf"],
@@ -740,43 +671,38 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None, bin_width=
 
 
 def compute_summary_maps(solvers):
-    """
-    Compute summary statistics for all solved bins from :func:`~veldist.fit_all_bins`.
+    """Compute :func:`compute_summary` for every bin returned by
+    :func:`~veldist.fit_all_bins`.
 
-    Iterates over a list of :class:`~veldist.KinematicSolver` instances,
-    calls :func:`compute_summary` on each one, and assembles the results into
-    arrays shaped ``(n_bins,)``, one entry per spatial bin, ready to pass
-    directly to a spatial map plotting function.
+    Runs :func:`compute_summary` on each :class:`~veldist.KinematicSolver`
+    and collects the results into arrays of shape ``(n_bins,)``, one entry per
+    spatial bin, ready for plotting as maps.
 
-    Bins that were skipped during inference (``None`` entries in *solvers*, as
-    returned for bins below ``min_stars`` by :func:`~veldist.fit_all_bins`)
-    produce ``NaN`` in all output arrays so that the spatial indexing is
-    preserved.
+    Skipped bins (``None`` in *solvers*, e.g. below ``min_stars``) give
+    ``NaN`` in every array, so the spatial indexing is kept.
 
     Parameters
     ----------
     solvers : list of :class:`~veldist.KinematicSolver` or None
-        As returned by :func:`~veldist.fit_all_bins`.  ``None`` entries
-        (skipped bins) are silently mapped to ``NaN``.  The list must
-        contain at least one non-``None`` entry.
+        As returned by :func:`~veldist.fit_all_bins`. ``None`` entries become
+        ``NaN``. At least one entry must be non-``None``.
 
     Returns
     -------
     dict
-        One key per metric name from :func:`compute_summary`.  Each value is
-        a sub-dict with two keys:
+        One key per metric from :func:`compute_summary`, each holding:
 
         ``'median'`` : ndarray, shape (n_bins,)
-            Posterior median of the metric.  ``NaN`` for skipped bins.  For
-            ``bimodality_score``, the integer score is cast to float.
+            Posterior median; ``NaN`` for skipped bins. ``bimodality_score``
+            is cast to float.
         ``'uncertainty'`` : ndarray, shape (n_bins,)
-            Half-width of the 68% credible interval.  ``NaN`` for skipped
-            bins and for ``bimodality_score`` (which has no posterior CI).
+            Half-width of the 68% interval; ``NaN`` for skipped bins and for
+            ``bimodality_score``, which has no interval.
 
     Raises
     ------
     ValueError
-        If all entries in *solvers* are ``None``.
+        If every entry in *solvers* is ``None``.
     """
     n_bins = len(solvers)
     # Determine metric names from the first non-None solver
@@ -822,46 +748,35 @@ _MOORS_KURTOSIS_GAUSSIAN = 1.2330951154852172
 
 
 def compute_percentile_summary(pdf_samples, grid_centers):
-    """
-    Compute percentile-based (order-statistic) moment analogues per sample.
+    """Compute percentile-based shape statistics for each posterior draw.
 
-    ``compute_summary``'s ``skewness``/``kurtosis`` are ordinary moments of
-    the posterior mean/variance, which a few heavy stars can dominate.
-    These analogues are built entirely from CDF percentiles instead, so a
-    single outlier star moves them by at most the width of one velocity bin.
-    They are not moments and are not expected to match GH h3/h4 or
-    ``compute_summary``'s skewness/kurtosis numerically; they are a more
-    robust *alternative* view of the same asymmetry/peakedness, evaluated
-    per posterior sample so uncertainty propagates the same way as
-    everywhere else in this module.
+    The ``skewness`` and ``kurtosis`` from ``compute_summary`` are ordinary
+    moments, which a few stars in the tails can dominate. The statistics here
+    are built only from CDF percentiles, so a single outlying star moves them
+    by at most one bin width. They are not moments and will not match GH
+    h3/h4 or ``compute_summary``'s values numerically; they are a more robust
+    view of the same asymmetry and peakedness. They are computed per draw, so
+    uncertainties carry through as elsewhere in this module.
 
-    No within-cell (``h**2/12``) correction is applied anywhere in this
-    function, unlike :func:`compute_summary`. That correction is a Sheppard
-    correction to a *moment* -- it comes from the algebraic identity
-    ``Var(uniform-in-cell) = Var(point-mass-at-centre) + h**2/12``, which is
-    specific to variances (second moments) and has no analogue for a
-    percentile. A percentile of the piecewise-constant density the
-    likelihood fits is not "a percentile of point masses at centres plus a
-    correction term" -- it is a different computation entirely: the CDF of a
-    piecewise-constant density is piecewise-*linear* between cell edges, so
-    its exact percentile requires interpolating against the cell *edges*
-    with the within-cell mass spread uniformly, not against centres. This
-    function (and :func:`cdf_percentile`, which it's built on) already
-    approximates that by linearly interpolating the cumulative point mass
-    between adjacent *centres*, which is a distinct, smaller bias (bounded
-    by one grid cell, per :func:`cdf_percentile`'s docstring/tests) from the
-    variance bias this fix addresses, and is out of scope here: fixing it
-    would mean reworking ``cdf_percentile`` to interpolate against edges,
-    not adding an ``h**2/12`` term. Adding ``h**2/12`` to a percentile
-    output would not even be dimensionally sensible on its own (a percentile
-    is a location, not a squared-deviation).
+    No within-cell (``h**2/12``) correction is applied, unlike in
+    :func:`compute_summary`. That correction is Sheppard's correction for a
+    *variance*: it comes from
+    ``Var(uniform in cell) = Var(point mass at centre) + h**2/12``, and there
+    is no equivalent for a percentile. The CDF of the piecewise-constant
+    density the likelihood fits is piecewise *linear* between cell edges, so
+    an exact percentile would interpolate against the edges. This function,
+    via :func:`cdf_percentile`, interpolates the cumulative mass between
+    *centres* instead. That is a separate, smaller bias (at most one cell) and
+    is not addressed here; fixing it would mean changing ``cdf_percentile``,
+    not adding a term. (Adding ``h**2/12`` to a percentile would not even have
+    the right units.)
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function, each row summing to 1.
+        Posterior samples of the probability mass per bin; each row sums to 1.
     grid_centers : array-like, shape (n_bins,)
-        Bin-centre velocities in ascending order.
+        Bin centres in ascending order.
 
     Returns
     -------
@@ -869,22 +784,21 @@ def compute_percentile_summary(pdf_samples, grid_centers):
         Four keys, each ``(posterior_median, half_68ci)``:
 
         ``'median'``
-            CDF P50 (this *is* the LOSVD median, not a moment).
+            The 50th percentile, i.e. the LOSVD median.
         ``'sigma_pct'``
-            ``(P84 - P16) / 2``, the percentile analogue of the standard
+            ``(P84 - P16) / 2``, the percentile counterpart of the standard
             deviation (exact for a Gaussian).
         ``'skew_pct'``
             Bowley skewness ``((P75-P50)-(P50-P25)) / (P75-P25)``, in
-            ``[-1, 1]``; 0 for a symmetric distribution, matching sign
-            convention with ``compute_summary``'s ``skewness``.
+            ``[-1, 1]``. Zero for a symmetric distribution, with the same sign
+            convention as ``compute_summary``'s ``skewness``.
         ``'kurtosis_pct'``
-            *Excess* Moors (1988) octile kurtosis:
-            ``((P87.5-P62.5)+(P37.5-P12.5)) / (P75-P25) - 1.233...``, the
-            raw Moors statistic minus its exact Gaussian reference value.
-            Zeroed on a Gaussian, positive for leptokurtic (heavy-tailed,
-            peaked) distributions -- the same convention as GH's ``h4``,
-            unlike the raw Moors statistic (which is ~1.23, not 0, for a
-            Gaussian).
+            *Excess* Moors (1988) octile kurtosis,
+            ``((P87.5-P62.5)+(P37.5-P12.5)) / (P75-P25) - 1.233...``, i.e. the
+            Moors statistic minus its Gaussian value. Zero for a Gaussian and
+            positive for peaked, heavy-tailed distributions, the same
+            convention as GH's ``h4``. (The raw Moors statistic is about 1.23
+            for a Gaussian.)
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
@@ -910,22 +824,21 @@ def compute_percentile_summary(pdf_samples, grid_centers):
 
 
 def compute_percentile_summary_maps(solvers):
-    """
-    Percentile-based summary maps, the ``compute_percentile_summary`` analogue
-    of :func:`compute_summary_maps`.
+    """Compute :func:`compute_percentile_summary` for every bin, the percentile
+    counterpart of :func:`compute_summary_maps`.
 
     Parameters
     ----------
     solvers : list of :class:`~veldist.KinematicSolver` or None
-        As returned by :func:`~veldist.fit_all_bins`. ``None`` entries
-        (skipped bins) are silently mapped to ``NaN``.
+        As returned by :func:`~veldist.fit_all_bins`. ``None`` entries become
+        ``NaN``.
 
     Returns
     -------
     dict
-        Keys ``'median'``, ``'sigma_pct'``, ``'skew_pct'``, ``'kurtosis_pct'``.
-        Each value is a sub-dict with ``'median'`` and ``'uncertainty'``
-        arrays of shape ``(n_bins,)``, ``NaN`` for skipped bins.
+        Keys ``'median'``, ``'sigma_pct'``, ``'skew_pct'``, ``'kurtosis_pct'``,
+        each a dict of ``'median'`` and ``'uncertainty'`` arrays of shape
+        ``(n_bins,)``, ``NaN`` for skipped bins.
     """
     n_bins = len(solvers)
     metrics = ["median", "sigma_pct", "skew_pct", "kurtosis_pct"]
@@ -947,11 +860,11 @@ def compute_percentile_summary_maps(solvers):
 
 
 def _gh_basis(y):
-    """Normalised Hermite polynomials H_3 and H_4, van der Marel & Franx (1993).
+    """Normalised Hermite polynomials H_3 and H_4 (van der Marel & Franx 1993).
 
-    Normalised so that the Gauss-Hermite series is orthonormal against the
-    Gaussian weight, which is what makes h3 and h4 directly comparable to
-    published values rather than merely proportional to them.
+    The normalisation makes the Gauss-Hermite series orthonormal under the
+    Gaussian weight, so h3 and h4 are directly comparable with published
+    values, not just proportional to them.
     """
     hermite3 = (2.0 * np.sqrt(2.0) * y**3 - 3.0 * np.sqrt(2.0) * y) / np.sqrt(6.0)
     hermite4 = (4.0 * y**4 - 12.0 * y**2 + 3.0) / np.sqrt(24.0)
@@ -973,48 +886,41 @@ def _gh_model(params, centers):
 def gauss_hermite_fit(pdf_samples, grid_centers, n_draws=500, seed=0):
     """Fit a Gauss-Hermite series to each posterior draw of the LOSVD.
 
-    ``compute_percentile_summary`` gives robust shape statistics, but they are
-    not on the Gauss-Hermite scale that the dynamical-modelling literature
-    reports. This function produces literature-comparable ``h3`` and ``h4``,
-    with a posterior, by fitting the four-parameter series
-    ``exp(-y^2/2) [1 + h3 H3(y) + h4 H4(y)]``, ``y = (v - V)/sigma``, to each
-    draw by least squares and summarising the resulting parameter samples.
+    ``compute_percentile_summary`` gives robust shape statistics, but not on
+    the Gauss-Hermite scale used in the dynamical-modelling literature. This
+    function gives literature-comparable ``h3`` and ``h4`` with a posterior.
+    It fits ``exp(-y^2/2) [1 + h3 H3(y) + h4 H4(y)]``, with
+    ``y = (v - V)/sigma``, to each draw by least squares and summarises the
+    resulting parameter samples.
 
-    Fitting is per draw rather than to the posterior mean because the mean of
-    a set of LOSVDs is smoother than any of them, which would bias ``h4``
-    low and understate the uncertainty on both coefficients.
+    It fits each draw rather than the posterior mean because the mean of many
+    LOSVDs is smoother than any one of them, which would bias ``h4`` low and
+    understate the uncertainty on both coefficients.
 
-    No within-cell (``h**2/12``) correction is applied here, deliberately.
-    Unlike :func:`compute_summary`, this function never sums point masses
-    against ``(v - mu)**2`` to get a variance -- ``sigma_gh`` is a *fitted
-    shape parameter* of a continuous analytic curve, obtained by
-    least-squares matching ``_gh_model``'s normalised density samples
-    against the (normalised) target masses at each grid centre. For a
-    reasonably well-resolved grid, midpoint-rule integration means
-    ``p_m ~= q(v_m) * h`` to ``O(h**3)`` for smooth ``q``, so both sides of
-    the fit -- the model's sampled density and the target's per-cell mass --
-    carry the *same* discretisation to leading order, and that error
-    cancels rather than propagating one-sidedly into the fit the way it does
-    in a raw point-mass moment sum. Adding ``h**2/12`` to ``sigma_gh`` post
-    hoc would double-count an effect the fit is not making in the first
-    place (verified by :func:`gauss_hermite_fit`'s own tests: it recovers
-    planted ``sigma`` to within a few percent from GH-shaped grids without
-    any such correction).
+    No within-cell (``h**2/12``) correction is applied, on purpose. This
+    function never forms a variance from point masses; ``sigma_gh`` is a shape
+    parameter of a continuous curve, fitted by matching the model's normalised
+    density at the bin centres to the normalised masses. For a smooth density
+    on a reasonably fine grid, ``p_m ~= q(v_m) * h`` to ``O(h**3)`` (midpoint
+    rule), so both sides of the fit carry the same discretisation at leading
+    order and it cancels. Adding ``h**2/12`` afterwards would correct for an
+    error the fit does not make; the tests confirm that it recovers a planted
+    ``sigma`` to within a few percent without it.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_bins)
-        MCMC samples of the probability mass function, each row summing to 1.
+        Posterior samples of the probability mass per bin; each row sums to 1.
     grid_centers : array-like, shape (n_bins,)
-        Bin-centre velocities in ascending order.
+        Bin centres in ascending order.
     n_draws : int
-        Number of posterior draws to fit. Each fit is an independent
-        non-linear least squares solve, so cost is linear in this. Draws are
-        thinned by random selection when ``n_samples`` exceeds it. The default
-        of 500 gives a half-68CI stable to a few percent; raise it only if
-        that is the dominant uncertainty in a result.
+        Number of draws to fit. Each is a separate non-linear least-squares
+        fit, so the cost is linear in this. If there are more samples, a
+        random subset is used. The default of 500 gives a half-68% interval
+        stable to a few percent; raise it only if that is the dominant
+        uncertainty.
     seed : int
-        Seed for the thinning selection, so results are reproducible.
+        Seed for choosing the subset, for reproducibility.
 
     Returns
     -------
@@ -1022,17 +928,17 @@ def gauss_hermite_fit(pdf_samples, grid_centers, n_draws=500, seed=0):
         ``'v_gh'``, ``'sigma_gh'``, ``'h3'``, ``'h4'``, each
         ``(posterior_median, half_68ci)``.
 
-        ``v_gh`` and ``sigma_gh`` are the *Gauss-Hermite* location and width,
-        which differ from ``compute_summary``'s ``v_mean`` and ``sigma``
-        (ordinary moments) whenever ``h4`` is non-zero. Report them as a pair
+        ``v_gh`` and ``sigma_gh`` are the Gauss-Hermite location and width.
+        They differ from ``compute_summary``'s ``v_mean`` and ``sigma``
+        (ordinary moments) whenever ``h4`` is non-zero. Report them together
         with ``h3``/``h4`` or not at all; mixing GH coefficients with moment
-        widths is a known source of confusion in the literature.
+        widths is a common source of confusion in the literature.
 
     Notes
     -----
-    Draws whose fit fails to converge are dropped. If more than half fail,
-    the LOSVD is probably not well described by a low-order GH series at all,
-    which ``bimodality_score`` is the right diagnostic for.
+    Draws whose fit does not converge are dropped. If more than half fail,
+    the LOSVD is probably not well described by a low-order GH series, and
+    ``bimodality_score`` is the better diagnostic.
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)

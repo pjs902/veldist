@@ -1,39 +1,34 @@
 # Validation
 
-This page summarises the statistical validation in the test suite for the 1D
-(`KinematicSolver`) and 2D (`KinematicSolver2D`) solvers, and the 2D solver's
-performance gate. It reports what these tests found, including a known
-unresolved bias. See `PLAN.md` §1.2, §1.3, §3.3, and §3.4 for the full
-methodology.
+This page summarises the statistical tests of the 1D (`KinematicSolver`) and
+2D (`KinematicSolver2D`) solvers and the 2D performance gate, including one
+known bias that is still unresolved. `PLAN.md` §1.2, §1.3, §3.3 and §3.4 give
+the full methodology.
 
 ## What SBC validates
 
-Simulation-Based Calibration (SBC; Talts et al. 2018) checks the sampler
-against the model itself: draw a parameter from the model's own prior,
-simulate synthetic data from it, run inference, and check that the true
-parameter's rank among the posterior draws is uniformly distributed. This
-is a test of implementation correctness. A wrong random-walk prior, an
-off-by-half-bin design matrix, or a `numpyro.factor` term invisible to
-`Predictive` all show up as non-uniform rank histograms. It does **not**
-check whether the model describes real data well.
+Simulation-based calibration (SBC; Talts et al. 2018) tests the sampler
+against the model itself. Draw parameters from the prior, simulate data from
+them, fit the data, and record where the true value ranks among the posterior
+draws. If the implementation is correct, those ranks are uniform. A wrong
+random-walk prior, a design matrix off by half a bin, or a `numpyro.factor`
+term that `Predictive` cannot see all show up as non-uniform ranks. SBC says
+**nothing** about whether the model describes real data well.
 
 ## What coverage validates
 
-Frequentist coverage testing validates the *model against reality*, not
-against itself. For a handful of fixed, physically motivated truths (not
-drawn from the model's prior), we generate many independent mock datasets,
-fit each, and check whether the true value falls inside the reported 68%
-credible interval the stated fraction of the time. This test matters for a
-downstream consumer such as Dynamite's NNLS $\chi^2$, which takes the
-reported uncertainties literally. Coverage can fail even when SBC passes
-cleanly, because SBC's "truth" is always self-consistent with the model's
-prior. A smoothness prior that shrinks away genuine sharp features in real
-data is invisible to SBC but shows up directly in coverage.
+Coverage tests check the model against reality. We take a few fixed,
+physically motivated truths (not drawn from the prior), simulate many mock
+datasets from each, fit them, and count how often the true value lands inside
+the 68% credible interval. This is what matters for a consumer like
+Dynamite's NNLS $\chi^2$, which takes the reported uncertainties at face
+value. Coverage can fail even when SBC passes, because SBC's truths always
+agree with the prior. A prior that smooths away real sharp features is
+invisible to SBC but shows up directly in coverage.
 
 ## Reading the metrics
 
-Each metric answers a different question and has a specific blind spot. The
-short version of how to read them:
+Each metric answers a different question and has its own blind spot:
 
 | Metric | Asks | Target | Blind spot |
 |---|---|---|---|
@@ -45,125 +40,124 @@ short version of how to read them:
 | Efficiency | Estimator scatter ÷ statistical optimum (`σ/√N` for the mean, `σ/√(2N)` for the dispersion). | 1.0 | With few realisations a single bad fit dominates. Use a robust (16–84 percentile) scatter. |
 | Bias | Systematic offset in the recovered value. | ≈ 0 | Only meaningful against a scale: compare to the optimal precision, not to zero. |
 
-### Three traps worth knowing
+### Three traps
 
-**Efficiency below 1.0 is not a win.** Nothing beats the statistical optimum,
-so a value under 1.0 means the prior is shrinking estimates toward a common
-answer. It must be read alongside the bias, never on its own.
+**Efficiency below 1.0 is not a win.** Nothing can beat the statistical
+optimum, so a value under 1.0 means the prior is pulling estimates toward a
+common answer. Always read it together with the bias.
 
-**Moment coverage does not imply per-bin coverage.** Moments compress ~37 bins
-into 5 scalars, and over-wide intervals in one bin cancel over-tight ones in
-another. Measured: tightening `SIGMA3_RATE` from 1.0 to 5.0 left every moment
-metric flat while per-bin coverage fell 0.680 → 0.609 on `skew_normal_h3`.
-Per-bin is the artifact DYNAMITE $\chi^2$-weights, so when the two disagree,
-per-bin is the one that matters.
+**Good moment coverage does not mean good per-bin coverage.** The moments
+compress about 37 bins into 5 numbers, and intervals that are too wide in one
+bin can cancel ones that are too narrow in another. Tightening `SIGMA3_RATE`
+from 1.0 to 5.0 left every moment metric unchanged while per-bin coverage on
+`skew_normal_h3` fell from 0.680 to 0.609. Dynamite's $\chi^2$ uses the
+per-bin values, so when the two disagree, per-bin coverage is the one that
+counts.
 
-**A shrinkage prior scores well on moments whose true value is zero.** Both
-`flat_top_tangential` and `student_t_h4` are symmetric, so their true skewness
-is ~0; a tight prior shrinks skewness toward 0 and scores near-perfect coverage
-for entirely the wrong reason. Read each coverage cell against whether that
-truth has signal in that moment. The same caution applies to any test case
-sitting where the prior already points: a Gaussian truth cannot measure what a
-Gaussian-core prior costs.
+**A shrinkage prior scores well on moments whose true value is zero.**
+`flat_top_tangential` and `student_t_h4` are symmetric, so their true
+skewness is about 0. A tight prior pulls skewness toward 0 and gets
+near-perfect coverage for the wrong reason. Check whether a truth actually
+has signal in a moment before reading its coverage. For the same reason, a
+Gaussian truth cannot tell you what a Gaussian-core prior costs.
 
 ### How they combine
 
-SBC is a **gate, not an objective**: pass/fail, with near-boundary results
-treated as ties. Among configurations that pass, choose on what is recovered,
-taking per-bin coverage first and then the moments that carry real signal.
+SBC is a pass/fail gate, not something to optimise; results near the
+threshold count as ties. Among configurations that pass, choose by what is
+recovered: per-bin coverage first, then the moments that carry real signal.
 
 ## 1D solver results
 
 **SBC** (`tests/test_calibration.py`, `n_bins=15`, `n_stars=200`,
-500 warmup + 1200 samples, `n_sims=30`): passes for **both** the RW1 and
-Gaussian-core priors, with 0/30 failed simulations.
+500 warmup + 1200 samples, `n_sims=30`) passes for both the RW1 and
+Gaussian-core priors, with no failed simulations. The harness runs over
+`SBC_PRIORS = ["rw1", "gaussian_core"]`.
 
-This gate depends on the sampler configuration, not only on the model. At
-NumPyro's default `target_accept_prob=0.8` the Gaussian-core prior fails it,
-with 17% of simulations discarded for inadequate effective sample size on
-`sigma3`. The cause is funnel geometry: as the deviation scale approaches zero
-the posterior narrows into a neck that a step size adapted on the funnel's
-mouth cannot traverse, so chains stick. Raising the acceptance target to 0.95
-fixes it (1/100 failures at `n_sims=100`); extra warmup does not substitute,
-since 1500 warmup steps at 0.8 still failed. See "Sampler configuration" below. The SBC harness
-is now parametrised over ``SBC_PRIORS = ["rw1", "gaussian_core"]``
-(see `tests/test_calibration.py`). This SBC run caught an earlier bug: the
-original random-walk prior used `numpyro.factor` on an unconditioned base
-measure. Because `numpyro.factor` is invisible to `Predictive`, the SBC
-"truth" was silently drawn from the wrong distribution. The prior was
-rewritten generatively; SBC then passed cleanly.
+The result depends on the sampler settings as well as the model. At NumPyro's
+default `target_accept_prob=0.8`, the Gaussian-core prior fails, with 17% of
+simulations discarded for low effective sample size on `sigma3`. The cause is
+a funnel: as the deviation scale approaches zero the posterior narrows into a
+neck, and a step size tuned on the wide part of the funnel cannot get through
+it. Raising the target to 0.95 fixes this (1 failure in 100 at
+`n_sims=100`). More warmup does not help: 1500 warmup steps at 0.8 still
+failed. See "Sampler configuration" below.
 
-**Prior-predictive null-space test** (`tests/test_prior_predictive.py`):
-the Gaussian-core prior's prior-predictive median velocity dispersion is
-~32 km/s on a 400 km/s wide grid (vs. ~115 for uniform), confirming the
-null space is quadratic, not flat. This is resolution-invariant to within
-3% relative spread across n_bins = 20/40/80.
+SBC also caught an early bug. The first random-walk prior used
+`numpyro.factor` on an unconditioned base measure, which `Predictive` cannot
+see, so the SBC "truths" were drawn from the wrong distribution. After the
+prior was rewritten generatively, SBC passed.
 
-**Bias tests** (`tests/test_moment_bias.py`): for a Gaussian truth
-(σ = 40 km/s, N = 150 stars, n_bins ∈ {20, 80}), the Gaussian-core prior
-shows |kurtosis bias| < 0.35 and |σ bias| < 3%, and the σ bias does not grow
-with bin count. The RW1 negative control still reproduces the known
-+1.1 kurtosis and +4% σ bias at n_bins = 80. Note that the pre-fix version of
-this result was uninformative for the non-Gaussian deviation: with the
-deviation term inert (marginal SD ~0.0036), a posterior collapsed onto a
-Gaussian trivially satisfied the Gaussian-truth bias thresholds.
+**Prior-predictive null space** (`tests/test_prior_predictive.py`). On a
+400 km/s grid, the Gaussian-core prior's median prior-predictive dispersion
+is about 32 km/s, against about 115 km/s for a uniform distribution. This
+confirms the null space is quadratic rather than flat. It varies by less
+than 3% across `n_bins` = 20, 40 and 80.
 
-**Coverage** (`tests/test_coverage.py`, `n_real=25` per truth, `n_stars=150`,
-`n_bins=20`, four truths: Gaussian, Student-$t$ ($\nu=6$), skew-normal,
-counter-rotating bimodal): parametrised over both priors. For the
-**Gaussian-core prior** (without truncation) this test currently **fails**, and
-also failed before the RW3 scaling fix. It is a standing known-red result
-rather than a regression, and is marked `xfail(strict=False)` so that an
-improvement shows up as an XPASS.
+**Bias** (`tests/test_moment_bias.py`). For a Gaussian truth (σ = 40 km/s,
+N = 150, `n_bins` of 20 and 80), the Gaussian-core prior gives
+|kurtosis bias| < 0.35 and |σ bias| < 3%, and the σ bias does not grow with
+the number of bins. The RW1 prior, kept as a negative control, still shows
+its known +1.1 kurtosis and +4% σ bias at `n_bins` = 80. An earlier version
+of this test passed for the wrong reason: the deviation term was effectively
+switched off (marginal SD about 0.0036), and a posterior collapsed onto a
+Gaussian meets Gaussian-truth thresholds trivially.
 
-The Gaussian truth shows over-coverage in kurtosis (1.000, all 25/25 intervals
-contain the truth) and skewness (0.960); the error bars are conservative but
-valid. This row is not evidence about the deviation term either way: kurtosis
-coverage was also 1.000 *before* the fix, because a posterior collapsed onto a
-Gaussian covers a Gaussian truth perfectly.
+**Coverage** (`tests/test_coverage.py`, `n_real=25` per truth,
+`n_stars=150`, `n_bins=20`; truths: Gaussian, Student-$t$ with $\nu=6$,
+skew-normal, counter-rotating bimodal; run for both priors). For the
+Gaussian-core prior without truncation this test **fails**, as it did before
+the RW3 scaling fix. It is a known failure, not a regression, and is marked
+`xfail(strict=False)` so that an improvement shows up as an XPASS.
 
-The non-Gaussian truths still show under-coverage in kurtosis and tail_weight.
-Measured pre-fix → post-fix: bimodal kurtosis 0.000 → 0.320 and bimodal
-tail_weight 0.000 → 1.000 (both out of catastrophic failure); Student-$t$
-kurtosis 0.000 → 0.040 (still below the 0.30 floor); skew-normal skewness and
-kurtosis 0.000 → 0.000 (unchanged). The earlier attribution in this document to
-"an inherent finite-data limitation, not the flat-null-space bug" is withdrawn:
-that diagnosis was made with an inert deviation term and cannot be supported.
-The cause of the residual under-coverage, in the skew-normal case above all,
-is an open question. Full table in
-`docs/superpowers/plans/2026-08-03-rw3-measurements.md`. For the **RW1
-prior**, `n_sigma_truncate=3.0` is applied (see `analysis.truncate_pdf_samples`);
-the test remains marked `xfail` pending a better tail-handling approach for
-heavy-tailed truths. See `PLAN.md` §1.3 for numbers.
+The Gaussian truth over-covers in kurtosis (1.000; all 25 intervals contain
+the truth) and skewness (0.960). The error bars are conservative but valid.
+This says nothing about the deviation term, since kurtosis coverage was also
+1.000 before the fix: a posterior collapsed onto a Gaussian covers a Gaussian
+truth perfectly.
 
-**Non-Gaussian deviation prior** (`sigma3` in `generate_gaussian_core_curve`):
-the deviation scale is standardised via the Sørbye–Rue generalised-variance
-constant (Sørbye & Rue 2014, *Spatial Statistics* 8, 39–51), so `sigma3`
-directly means the typical log-density departure from a Gaussian LOSVD,
-independent of grid resolution. The prior on `sigma3` is a penalised-complexity
-(PC) prior (Simpson et al. 2017, *Statistical Science* 32, 1): an Exponential
-whose base model, `sigma3 = 0`, is an exactly Gaussian LOSVD. A prior-
-predictive check confirms the PC prior makes non-Gaussian LOSVDs reachable
-a priori: at `SIGMA3_RATE=0.35` and n_bins=40, prior-predictive
-|excess kurtosis| has p90 ≈ 38.8.
+The non-Gaussian truths still under-cover in kurtosis and `tail_weight`.
+Before and after the fix:
 
-That test brackets rather than pins the rate. Measured p90 |excess kurtosis|
-is 38.8 at rate 0.35, 1.13 at 5.0 and 1.05 at 50, so every rate from 0.35
-upward passes its 0.3–50 bounds and it cannot select one. SBC and per-bin
-coverage select the rate; this test only catches the two gross failure modes
-(a prior too tight to represent any non-Gaussian shape, or so loose that draws
-saturate into near-delta spikes).
+- bimodal kurtosis: 0.000 → 0.320
+- bimodal `tail_weight`: 0.000 → 1.000
+- Student-$t$ kurtosis: 0.000 → 0.040 (still below the 0.30 floor)
+- skew-normal skewness and kurtosis: 0.000 → 0.000
 
-**Default prior and regularisation**: the adopted configuration is
-`SIGMA3_RATE=0.35` (Exp(0.35)) at `rw_order=3`, the loosest rate measured. At
-the science target (σ=22, n_real=100) it gives 41/45 coverage entries in the
-nominal band and 1 catastrophic, with v_mean efficiency 1.13× and sigma
-efficiency 1.35×.
+An earlier version of this page blamed the remaining under-coverage on "an
+inherent finite-data limitation". That diagnosis was made while the
+deviation term was inert and has been withdrawn. The cause, especially for
+the skew-normal case, is still open. The full table is in
+`docs/superpowers/plans/2026-08-03-rw3-measurements.md`. For the RW1 prior,
+`n_sigma_truncate=3.0` is applied (see `analysis.truncate_pdf_samples`), and
+the test stays `xfail` until heavy-tailed truths are handled better; see
+`PLAN.md` §1.3.
 
-Tightening the rate was tried as a way of passing SBC, and rejected. It does
-work, by removing the funnel geometry the sampler was struggling with, but the
-geometry is where the non-Gaussian shape information lives. The cost is
-invisible in the moments and plain in the per-bin numbers:
+**Deviation prior** (`sigma3` in `generate_gaussian_core_curve`). The
+deviation is scaled with the Sørbye–Rue generalised-variance constant
+(Sørbye & Rue 2014, *Spatial Statistics* 8, 39–51), so `sigma3` is the
+typical log-density departure from a Gaussian at any grid resolution. Its
+prior is a penalised-complexity prior (Simpson et al. 2017, *Statistical
+Science* 32, 1): an exponential whose base model, `sigma3 = 0`, is an exact
+Gaussian. A prior-predictive check confirms that non-Gaussian LOSVDs are
+reachable: at `SIGMA3_RATE=0.35` and `n_bins=40`, the 90th percentile of
+|excess kurtosis| is about 38.8.
+
+That check sets bounds rather than choosing a rate. The 90th percentile is
+38.8 at rate 0.35, 1.13 at 5.0 and 1.05 at 50, so every rate from 0.35 up
+passes its 0.3–50 bounds. SBC and per-bin coverage pick the rate. This test
+only catches the two gross failures: a prior too tight to allow any
+non-Gaussian shape, or one so loose that draws collapse into narrow spikes.
+
+**Adopted setting.** The default is `SIGMA3_RATE=0.35` at `rw_order=3`, the
+loosest rate measured. At the science target (σ = 22, `n_real=100`), 41 of
+45 coverage entries fall in the nominal band and 1 fails badly; efficiency is
+1.13× on `v_mean` and 1.35× on `sigma`.
+
+Tightening the rate would also make SBC pass, by removing the funnel, and was
+rejected. The funnel is where the non-Gaussian shape information lives, and
+removing it costs shape recovery. The cost does not show in the moments, but
+it is clear per bin:
 
 | `SIGMA3_RATE` | per-bin coverage (gaussian / skew / student-t) | h3+h4 mean coverage |
 |---|---|---|
@@ -174,37 +168,34 @@ invisible in the moments and plain in the per-bin numbers:
 
 ![Per-bin and h3+h4 coverage vs. SIGMA3_RATE](images/fig_sigma3_rate.png)
 
-*The same table plotted: per-bin coverage across the three truths stays
-near or above the nominal 0.68 target across the whole rate range (the
-"invisible in the moments" part), while h3+h4 mean coverage drops
-monotonically as the rate tightens. SIGMA3_RATE=0.35 is the loosest rate
-measured and the adopted default.*
+*The table above as a plot. Per-bin coverage for the non-Gaussian truths
+drifts down as the rate tightens, and h3+h4 coverage falls steadily.
+0.35, the loosest rate measured, is the default.*
 
-Every moment metric (coverage, efficiency and bias on v_mean and sigma) is
-flat across that whole range, which is why the cost went unnoticed until
-per-bin coverage was measured directly. Fixing the sampler instead costs about
-2× wall time and nothing else. The decision record is in
+Coverage, efficiency and bias on `v_mean` and `sigma` are flat over this
+whole range, which is why the cost went unnoticed until per-bin coverage was
+measured. Fixing the sampler instead costs about twice the wall time and
+nothing else. The decision is recorded in
 `docs/superpowers/specs/2026-08-03-regularisation-decision.md`.
 
-Two shape hypotheses were measured and ruled out, and should not be re-raised
-without new evidence. Raising the random-walk penalty order to 4 or 5 does not
-free h3/h4 (retention stays ~0.13–0.16), because the null space is a null space
-of the *log*-density and the softmax decouples it from the PDF moments. A
-mode-order split scale fails for the adjacent reason: all the shape *and* all
-the roughness live in the same two smoothest modes, so there is no separation
-for two scales to exploit.
+Two other ideas were tested and ruled out; do not revisit them without new
+evidence. Raising the random-walk order to 4 or 5 does not free h3/h4
+(retention stays around 0.13–0.16), because the null space belongs to the
+*log*-density and the softmax separates it from the moments of the PDF.
+Using separate scales for different modes fails for a related reason: all
+of the shape and all of the roughness sit in the same two smoothest modes,
+so two scales have nothing to separate.
 
-`KinematicSolver.run()` defaults to `prior="gaussian_core"`. Pass `prior="rw1"`
-for the previous behaviour. The penalty order is fixed at 3; `rw_order` exists
-on `generate_gaussian_core_curve` and `model_gaussian_core` only so the tests
-above can re-measure the ruled-out hypothesis.
+`KinematicSolver.run()` uses `prior="gaussian_core"` by default; pass
+`prior="rw1"` for the old behaviour. The order is fixed at 3. `rw_order` is
+exposed on `generate_gaussian_core_curve` and `model_gaussian_core` only so
+the tests can re-check the rejected higher orders.
 
 ## Sampler configuration
 
-The defaults in `KinematicSolver.run()` depart from NumPyro's in three ways,
-each measured rather than assumed. All three are exported as constants from
-`veldist.veldist` and imported by the SBC harness, so the gate cannot drift
-from what the solver ships.
+`KinematicSolver.run()` changes three NumPyro defaults, each based on
+measurements. All three are constants in `veldist.veldist` that the SBC
+harness imports, so the tests always check what the solver actually uses.
 
 | Setting | veldist | NumPyro | Why |
 |---|---|---|---|
@@ -212,52 +203,49 @@ from what the solver ships.
 | `dense_mass` | **True** | False | The `d3` components are correlated through the cumulative sum and the null-space projection |
 | `num_chains` | **4** | 1 | r_hat needs more than one chain, and nothing else detects a chain settling into the wrong mode |
 
-The dense mass matrix is the larger effect. Measured on a skew-normal mock (37
-bins, 150 stars, 4 chains), minimum ESS on `intrinsic_pdf` rises from 119 to
-1188 and maximum r_hat falls from 1.0161 to 1.0015, in *less* wall time: better
-conditioning means fewer leapfrog steps per sample. The r_hat figure matters on
-its own, since 1.0161 is above the conventional 1.01 threshold, and with a
-single chain nothing in the pipeline could have reported it.
+The dense mass matrix matters most. On a skew-normal mock (37 bins, 150
+stars, 4 chains), it raises the minimum ESS on `intrinsic_pdf` from 119 to
+1188 and lowers the maximum r_hat from 1.0161 to 1.0015, and it is *faster*,
+because a better-conditioned problem needs fewer leapfrog steps per sample.
+The r_hat of 1.0161 is above the usual 1.01 threshold, and with a single
+chain nothing would have reported it.
 
-Chains run sequentially unless CPU devices are requested **before** JAX
-initialises its backend:
+The chains run one after another unless you ask for CPU devices **before**
+JAX starts:
 
 ```python
 import veldist
 veldist.set_host_devices(4)   # call before any other JAX work
 ```
 
-Results are identical either way; only wall time differs, by about 4×.
-`run()` warns if the request arrives too late.
+The results are the same either way; only the wall time changes, by about
+4×. `run()` warns if the call comes too late.
 
 ## Per-bin LOSVD calibration
 
-Moment coverage is a lossy summary of what DYNAMITE actually consumes. Its
-$\chi^2$ treats `losvd_median` and `losvd_uncertainty` as per-bin measurements
-with independent Gaussian errors, so those per-bin intervals are what must be
-calibrated, and ~37 bins compressed into 5 scalars can hide over-wide intervals
-in one bin cancelling over-tight ones in another.
+Moment coverage is only a summary of what Dynamite uses. Its $\chi^2$ treats
+`losvd_median` and `losvd_uncertainty` as independent Gaussian measurements
+in each bin, so those per-bin intervals are what must be calibrated.
 
-`test_per_bin_losvd_coverage` (`tests/test_coverage.py`, `n_real=25`) measures
-it directly, against `clip_uncertainties` output rather than raw samples, since
-the uncertainty floors applied there are part of what gets written. Mean
-coverage over informative bins, against a nominal 0.68: gaussian 0.724,
-skew-normal 0.710, Student-$t$ 0.709, with no informative bin below the 0.30
-floor.
+`test_per_bin_losvd_coverage` (`tests/test_coverage.py`, `n_real=25`)
+measures them directly. It uses the output of `clip_uncertainties` rather
+than the raw samples, because the uncertainty floors applied there are part
+of what gets written. Mean coverage over informative bins, against 0.68:
+Gaussian 0.724, skew-normal 0.710, Student-$t$ 0.709. No informative bin
+falls below the 0.30 floor.
 
-Empty bins are excluded and reported separately. They are dominated by the
-relative uncertainty floor and over-cover trivially at ~0.88, so averaging them
-in would manufacture a passing number.
+Empty bins are left out and reported separately. The relative uncertainty
+floor dominates them, so they over-cover at about 0.88, and including them
+would inflate the result.
 
 ## The measured observing profile
 
-`veldist.calibration.OMEGACAT` was originally a hand-typed guess at the
-observing regime of the project's target dataset. It has now been measured
-directly from real data via `ObservingProfile.from_data`, using the
-oMEGACat line-of-sight catalogue. After the standard quality cuts
-(`selection_hq_los` and `selection_hq_astrometry_and_membership`), 24,925
-stars remain out of 717,934 rows. The fitted profile is committed at
-`tests/data/omegacat_profile.json`.
+`veldist.calibration.OMEGACAT` started as a hand-typed estimate of the
+target dataset's observing conditions. It has since been measured from the
+oMEGACat line-of-sight catalogue with `ObservingProfile.from_data`. After
+the standard quality cuts (`selection_hq_los` and
+`selection_hq_astrometry_and_membership`), 24,925 of 717,934 stars remain.
+The fitted profile is in `tests/data/omegacat_profile.json`.
 
 | Parameter | Measured | Hand-typed (`OMEGACAT`) |
 |---|---|---|
@@ -267,210 +255,179 @@ stars remain out of 717,934 rows. The fitted profile is committed at
 | `sigma_min` | 13.37 km/s | 7.0 km/s |
 | `rotation_span` | 6.99 km/s | 10.0 km/s |
 
-**The most important consequence, stated plainly.** The hand-typed
-`sigma_min = 7` km/s treated a narrow-dispersion regime as the campaign's
-hardest case, and that regime does not exist in this dataset: the real
-minimum is 13.37 km/s. Meanwhile the easiest case is harder than assumed.
-Measured `err/sigma` spans 0.21 to 0.30, against the assumed 0.11 to 0.36.
-So the validation swept a wider difficulty range than reality and centred
-it in the wrong place. Nothing already measured is invalidated by this,
-but any argument of the form "it passes even in the hardest bin" was made
-against a bin that does not occur.
+**The hardest case does not exist.** The hand-typed `sigma_min = 7` km/s
+made a narrow-dispersion regime the hardest test case, but the real minimum
+is 13.37 km/s. Meanwhile the easiest case is harder than assumed: the
+measured `err/sigma` runs from 0.21 to 0.30, against an assumed 0.11 to
+0.36. The validation therefore covered a wider range of difficulty than the
+data need, centred in the wrong place. No existing measurement is
+invalidated, but any claim that the method "passes even in the hardest bin"
+referred to a bin that never occurs.
 
-**Information content of real bins.** Using `sigma_ref = 19.04`, per-bin
-ivar spans 0.389 to 0.410 with a median of 0.393. `ivar / n_stars` varies
-by only 1.1 percent across the field, because `err` of about 4 km/s
-against `sigma` of about 19 km/s means `err^2` is much smaller than
-`sigma^2` everywhere, so ivar reduces to `N / sigma^2`. The outer third of
-bins is tighter still, not looser.
+**Information content of real bins.** With `sigma_ref = 19.04`, the per-bin
+information (ivar) runs from 0.389 to 0.410, median 0.393. `ivar / n_stars`
+varies by only 1.1% across the field: with `err` around 4 km/s and `sigma`
+around 19 km/s, `err^2` is much smaller than `sigma^2` everywhere, so ivar
+reduces to `N / sigma^2`. The outer third of the bins is, if anything,
+tighter.
 
-**Therefore, for this dataset, information-content binning and
-star-count binning are equivalent**, and the measured threshold can be
-applied as a star count. `veldist.binning` remains useful for datasets
-where measurement errors do approach the intrinsic dispersion, and
-`min_ivar` in `fit_all_bins` is the honest way to express the cut
-regardless of dataset.
+**So for this dataset, binning by information content and binning by star
+count are equivalent**, and the measured threshold can be applied as a star
+count. `veldist.binning` is still useful for data whose errors approach the
+intrinsic dispersion, and `min_ivar` in `fit_all_bins` is the more general
+way to express the cut.
 
-**One caveat.** The measurement used radial annuli of about 150 stars as
-a stand-in for the real Voronoi tessellation, because the catalogue
-carries no stored bin assignment. Bin-to-bin ivar constancy is therefore
-partly by construction. The `ivar / n_stars` normalisation is what makes
-the conclusion robust to that, but a check against the true Voronoi bins
+**Caveat.** The catalogue has no stored Voronoi assignment, so the
+measurement used radial annuli of about 150 stars instead. Constant ivar
+from bin to bin is therefore partly built in. Normalising by `n_stars` makes
+the conclusion robust to that, but checking against the real Voronoi bins
 would settle it.
 
-**What the campaign found.** The full recovery campaign swept ivar 0.1-3.2
-at sigma 13.4 and 19.0, at 40 realisations per cell (1920 NUTS fits). Both
-`v_mean` and `sigma` calibrate at every information content down to ivar
-0.1 (the lowest swept, pinned bottom). See the recovery-curve results
-section below for the threshold table and coverage numbers.
+The recovery campaign (below) found that both `v_mean` and `sigma` are
+calibrated at every information content down to ivar 0.1.
 
 ## Comparison against a Gaussian MLE baseline
 
 `veldist.baseline.gaussian_mle` maximises
-`sum_i log N(v_i | mu, sqrt(sigma^2 + err_i^2))` over `mu` and `sigma`, i.e.
-the classic two-parameter fit that treats the LOSVD as Gaussian and
-error-convolves it star by star. On a truly Gaussian LOSVD with known
-per-star Gaussian errors this is the exact maximum-likelihood optimum, so
-veldist cannot beat it there. Matching it is the pass condition, not a
-target to exceed.
+`sum_i log N(v_i | mu, sqrt(sigma^2 + err_i^2))` over `mu` and `sigma`: the
+classic two-parameter fit of an error-convolved Gaussian. For a Gaussian
+LOSVD with known Gaussian errors this is the exact maximum-likelihood
+solution, so `veldist` cannot beat it there. Matching it is the pass
+condition.
 
-**Equivalence on the first two moments.** On a Gaussian truth at 150 stars
-per bin, the ratio of veldist's posterior 68% credible-interval half-width to
-the MLE's analytic standard error is 0.999 +/- 0.003 for `v_mean` and
-1.016 +/- 0.005 for `sigma`, pooled over 60 mock realisations across three
-independent seed blocks. The 37-dimensional non-parametric posterior
-reproduces the two-parameter exact-optimum estimator's precision to about
-half a percent.
+**The first two moments match.** For a Gaussian truth with 150 stars per
+bin, the ratio of `veldist`'s 68% credible-interval half-width to the MLE's
+analytic standard error is 0.999 ± 0.003 for `v_mean` and 1.016 ± 0.005 for
+`sigma`, pooled over 60 mocks in three independent seed blocks. The
+37-dimensional non-parametric posterior is as precise as the two-parameter
+optimum to within about half a percent.
 
-That ratio is only meaningful if the denominator is trustworthy, so it was
-checked independently: the MLE's expected-Fisher-information error matches
-the actual scatter of its own point estimates to within 0.2 to 0.7 percent
-at N = 150 over 5000 realisations. Without that check, the ratios above could
-be an artifact of an optimistic asymptotic error rather than a real result.
+This ratio is only as good as its denominator, so the MLE errors were
+checked separately: over 5000 realisations at N = 150, the expected-Fisher
+error matches the actual scatter of the MLE estimates to within 0.2–0.7%.
 
-**The two methods tie on `v_mean` and `sigma` across all nine mock truths**
-in the calibration library (`veldist.calibration.make_truths`), not only the
-Gaussian one. Across all 18 truth-by-metric cells (9 truths, 2 metrics),
-every paired comparison is a statistical tie, with a maximum |t| of 1.41, and
-the sign favours veldist in 10 of the 18 cells, consistent with a coin flip.
-Paired per-realisation agreement between the two estimators is about
-0.05 km/s, against per-realisation errors of about 1 km/s.
+**The tie holds for all nine truths** in the calibration library
+(`veldist.calibration.make_truths`), not just the Gaussian. All 18
+truth-by-metric comparisons are statistical ties (maximum |t| of 1.41), and
+`veldist` comes out ahead in 10 of 18, as expected from chance. The two
+estimators agree to about 0.05 km/s per realisation, against per-realisation
+errors of about 1 km/s.
 
-The tie is structural, not coincidental. `Truth.scaled(sigma)` constructs
-every truth in the library to share the same second moment, so any correctly
-implemented second-moment estimator recovers `sigma` regardless of the
-LOSVD's shape. Consistent with this, the measured Gaussian MLE `sigma` bias
-is a uniform -0.07 to -0.12 km/s across all nine truths: ordinary small-sample
-maximum-likelihood dispersion bias, not shape-driven misspecification. An
-earlier version of this test asserted that the MLE would be *biased* on
-non-Gaussian shapes; that assertion was wrong and has been removed.
+The tie is expected. `Truth.scaled(sigma)` gives every truth the same second
+moment, so any correct second-moment estimator recovers `sigma` whatever the
+shape. Accordingly, the MLE's `sigma` bias is a uniform −0.07 to −0.12 km/s
+across all nine truths, which is ordinary small-sample MLE bias rather than
+misspecification. An earlier version of this test assumed the MLE would be
+biased on non-Gaussian shapes; that was wrong and has been removed.
 
-This tie is the desired result, not a shortfall. The non-parametric model
-costs essentially nothing on the first two moments while allowing arbitrary
-LOSVD shape: there is no precision paid for the extra flexibility.
+This is a good result. The non-parametric model allows any shape and pays
+nothing for it on the first two moments.
 
-**Where the methods actually differ is shape.** On
-`bimodal_counter_rotation`, total variation distance from the true LOSVD is
-0.0712 for veldist versus 0.2168 for the Gaussian MLE, a paired difference of
-0.1457 +/- 0.0046 over 20 realisations, t = 31.8. The large t comes from an
-unusually small `std(d)` of 0.0205, not only from a large mean: this truth is
-two well-separated Gaussians at +/-18 km/s, so a single Gaussian must straddle
-the gap between the two modes in every realisation. The penalty is systematic
-rather than statistical, which collapses the denominator of the paired t-test.
+**The difference is in the shape.** On `bimodal_counter_rotation`, the total
+variation distance from the true LOSVD is 0.0712 for `veldist` and 0.2168
+for the Gaussian MLE: a paired difference of 0.1457 ± 0.0046 over 20
+realisations, t = 31.8. The t value is large mostly because the scatter of
+the difference is tiny (0.0205). The truth is two well-separated Gaussians at
+±18 km/s, so a single Gaussian has to straddle the gap in every
+realisation. Its error is systematic, not random.
 
-One caveat applies to that comparison, stated honestly: veldist's
-`intrinsic_pdf` is probability mass per bin, while the truth and the MLE
-curves are evaluated as density at bin centres and then renormalised. These
-differ at second order in bin width through curvature, and the mismatch
-penalises veldist rather than the MLE, so the measured 3x advantage in total
-variation distance is if anything conservative.
+One caveat: `veldist`'s `intrinsic_pdf` is mass per bin, while the truth and
+the MLE curve are evaluated as densities at bin centres and renormalised.
+The two differ at second order in bin width, and the mismatch works against
+`veldist`, so the threefold advantage is if anything an underestimate.
 
-The conclusion to take from this section is that veldist's justification over
-a two-parameter fit rests on the recovered distribution and the shape
-statistics, never on `v_mean` or `sigma`. The moment-level agreement above is
-a correctness result, confirming veldist gets the easy case right, not a
-superiority result.
+In short, the case for `veldist` over a two-parameter fit rests on the
+recovered distribution and its shape, not on `v_mean` or `sigma`. The
+agreement on the first two moments shows that `veldist` gets the easy case
+right; it is not a claim of superiority.
 
 ### Percentile-to-Gauss-Hermite mapping
 
-`veldist.calibration.PROXY_TO_GH` records the measured relation between the
-cheap percentile-based shape proxies (`skew_pct`, `kurtosis_pct`) and the
-classical Gauss-Hermite coefficients (`h3`, `h4`). For smoothly non-Gaussian
-LOSVDs, `h4` is about 0.633 times `kurtosis_pct`: the median ratio over the
-five ratio-eligible truths, with the four smooth ones spanning 0.604 to
-0.659.
+`veldist.calibration.PROXY_TO_GH` records how the percentile-based shape
+statistics (`skew_pct`, `kurtosis_pct`) relate to the Gauss-Hermite
+coefficients (`h3`, `h4`). For smoothly non-Gaussian LOSVDs, `h4` is about
+0.633 × `kurtosis_pct`. This is the median over the five eligible truths;
+the four smooth ones range from 0.604 to 0.659.
 
-The exception is `cold_disk_component`, a 4 percent kinematically cold
-sub-component: there the octile statistic reads slightly positive
-(`kurtosis_pct` = +0.0047) while Gauss-Hermite `h4` comes out negative
-(-0.0160). The two measures disagree in sign on this physically realistic
-case, so `kurtosis_pct` alone can point the wrong way for a small cold
-sub-population.
+The exception is `cold_disk_component`, a 4% kinematically cold
+sub-population. There `kurtosis_pct` is slightly positive (+0.0047) while
+`h4` is negative (−0.0160). The two disagree in sign on a realistic case, so
+`kurtosis_pct` on its own can point the wrong way for a small cold
+component.
 
-`skew_pct_to_h3` rests on only three ratio-eligible truths and is
-correspondingly weakly constrained; treat it with less confidence than the
-five-truth `h4` mapping. The mapping is calibrated only within the amplitude
-envelope `|h3| <= 0.15`, `|h4| <= 0.10`. Outside that envelope,
-`bimodality_score` is the right diagnostic, not a percentile-to-GH
-conversion.
+`skew_pct_to_h3` rests on only three eligible truths and is poorly
+constrained; trust it less than the `h4` mapping. Both mappings are
+calibrated only for `|h3| <= 0.15` and `|h4| <= 0.10`. Beyond that, use
+`bimodality_score` rather than converting to GH.
 
 ### Recovery-curve results
 
-`veldist.calibration.recovery_curve` sweeps `ObservingProfile` information
-content and reports, per metric, the ivar threshold below which coverage or
-CI-ratio calibration breaks down. Information content is defined as
-`sum_i 1/(sigma^2 + err_i^2)`, **not** `1/err_i^2`: a star constrains the
-LOSVD centroid only up to the intrinsic spread it was drawn from, not down
-to its measurement error alone.
+`veldist.calibration.recovery_curve` sweeps the information content of an
+`ObservingProfile` and reports, for each metric, the ivar below which
+coverage or the CI ratio stops being calibrated. Information content is
+`sum_i 1/(sigma^2 + err_i^2)`, **not** `1/err_i^2`: a star pins down the
+LOSVD centre only to within the intrinsic spread it was drawn from, however
+small its measurement error.
 
-The full campaign swept six ivar values bracketing the real data (0.1, 0.2,
-0.39, 0.8, 1.6, 3.2) at two dispersions (19.04 and 13.37 km/s), across four
-truth shapes (gaussian, student_t_h4, skew_normal_h3, two_population), at
-40 realisations each — 1920 NUTS fits, 192 rows. The campaign used the
-measured `omegacat_profile.json` rather than the hand-typed OMEGACAT
-constants, at the real `sigma_min`/`sigma_max` rather than the guessed
-values.
+The campaign swept six ivar values around the real data (0.1, 0.2, 0.39,
+0.8, 1.6, 3.2) at two dispersions (19.04 and 13.37 km/s) and four truth
+shapes (gaussian, student_t_h4, skew_normal_h3, two_population), with 40
+realisations each: 1920 NUTS fits and 192 rows. It used the measured
+`omegacat_profile.json`, not the hand-typed `OMEGACAT` values.
 
-**Both `v_mean` and `sigma` calibrate at every information content down to
-ivar = 0.1**, the lowest value swept (pinned bottom at both dispersions; the
-true threshold may be lower still). That includes the real-data regime:
-omMEGACat bins sit at ivar 0.39, comfortably inside the calibrated range.
+**Both `v_mean` and `sigma` are calibrated at every information content
+down to ivar = 0.1**, the lowest value swept, at both dispersions. The real
+threshold may be lower. Real oMEGACat bins sit at ivar 0.39, well inside the
+calibrated range.
 
 | Metric | Mean coverage | Nominal | CI/CR range | Cells in NOMINAL_BAND |
 |---|---|---|---|---|
 | `v_mean` | 0.716 | 0.68 | 0.93-1.02 | 48/48 |
 | `sigma` | 0.657 | 0.68 | 1.03-1.17 | 48/48 |
 
-Coverage judgement uses the repo's own `NOMINAL_BAND` convention — the
-99% binomial band at the campaign's `n_real=40`, which spans 0.475-0.850.
-Both v_mean and sigma fall comfortably within it across all 48 cells each.
-The earlier smoke run's `min_coverage=0.60` was too tight for `n_real=40`
-(the standard error of a binomial proportion at n=40 is 0.074, so 0.60 sits
-one standard error below nominal), and its "sigma threshold at the top of
-the range" was a gate defect, not a real limitation. The correct binomial
-floor is `coverage_floor(n_real)` in `veldist.calibration`.
+Coverage is judged with the repository's `NOMINAL_BAND`, the 99% binomial
+band at `n_real=40` (0.475–0.850). All 48 cells for each metric fall inside
+it. An earlier smoke run used `min_coverage=0.60`, which is too strict at
+`n_real=40`: the binomial standard error there is 0.074, so 0.60 is only one
+standard error below nominal. The "sigma threshold at the top of the range"
+it reported was an artefact of that gate. The correct floor is
+`coverage_floor(n_real)` in `veldist.calibration`.
 
-The CI/CR ratio for sigma is 1.03-1.17 (i.e., veldist's posterior half-width
-is 3-17% wider than the Cramer-Rao bound), consistent with the extra
-non-parametric flexibility costing a few percent of precision on sigma but
-nothing on v_mean.
+For `sigma`, the posterior half-width is 3–17% wider than the Cramér-Rao
+bound, so the non-parametric flexibility costs a few percent of precision on
+`sigma` and nothing on `v_mean`.
 
-Sigma shows a mild negative bias (typically -0.2 to -0.5 km/s, i.e. about
-1-3% of the true value), with no systematic improvement at higher
-information content. This is consistent with mild prior shrinkage toward a
-narrower distribution and is not a cause for concern given the coverage
-results.
+`sigma` is biased slightly low, typically by 0.2–0.5 km/s (1–3%), with no
+trend with information content. This fits mild prior shrinkage toward a
+narrower distribution and is not a concern given the coverage.
 
-Skewness and kurtosis do not calibrate at any information content in this
-sweep: coverage falls catastrophically for skew_normal_h3 on both metrics,
-and student_t_h4 on kurtosis. This is a known limitation consistent with
-the earlier per-bin coverage results demonstrating the same pattern, and
-not a new finding. Per `TASKS.md`, these metrics are not gating.
+Skewness and kurtosis are not calibrated at any information content: coverage
+collapses for skew_normal_h3 on both and for student_t_h4 on kurtosis. This
+matches the per-bin results above. These metrics are not part of the
+acceptance criteria (see `TASKS.md`).
 
 **Conclusion for binning.** Real oMEGACat bins at ivar 0.39 are well within
-the calibrated range for both `v_mean` and `sigma`. The existing binning is
-adequate; no coarser binning is needed for this dataset. The `min_ivar` floor
-in `fit_all_bins` can be set to a conservative value below 0.1 (e.g., 0.05)
-and acts primarily as a sanitation check rather than a binding constraint.
+the calibrated range for `v_mean` and `sigma`, so the current binning is
+adequate and coarser bins are not needed. The `min_ivar` floor in
+`fit_all_bins` can be set conservatively below 0.1 (for example 0.05); it
+then acts as a sanity check rather than a real constraint.
 
 ## 2D solver results
 
-All results below use the ``gaussian_core`` prior (``prior="gaussian_core"``
-in ``KinematicSolver2D.run``, now the default). The legacy ``gmrf`` prior is
-retained only for comparison.
+Everything below uses the `gaussian_core` prior, the default in
+`KinematicSolver2D.run`. The older `gmrf` prior is kept only for comparison.
 
 **SBC** (`tests/test_calibration_2d.py`, `K=10` (100 cells), `n_stars=250`,
-500 warmup + 1200 samples, `n_sims=30`): 6/6 test quantities pass under both
-priors with 0/30 failures. The 2D model's prior is implemented generatively
-(``z ~ N(0, I)`` plus deterministic Cholesky-whitening, never a bare
-``numpyro.factor`` penalty), following the 1D SBC lesson. Verified via
-``test_prior_predictive_is_smooth_2d``.
+500 warmup + 1200 samples, `n_sims=30`): all 6 test quantities pass for both
+priors, with no failures. Following the 1D lesson, the 2D prior is fully
+generative (`z ~ N(0, I)` followed by a deterministic Cholesky transform,
+never a bare `numpyro.factor` penalty); `test_prior_predictive_is_smooth_2d`
+checks this.
 
-**Recovery**: ``test_coverage_over_mock_realisations_2d`` (moment coverage)
-and ``test_per_cell_losvd_coverage_2d`` (per-cell coverage), parametrised
-over three properly calibrated observing profiles (``HST_BRIGHT``,
-``HST_FAINT``, ``GAIA_OUTER`` from ``calibration2d.py``) and two truths
-(isotropic, anisotropic):
+**Recovery.** `test_coverage_over_mock_realisations_2d` (moment coverage)
+and `test_per_cell_losvd_coverage_2d` (per-cell coverage) run over the three
+calibrated observing profiles in `calibration2d.py` (`HST_BRIGHT`,
+`HST_FAINT`, `GAIA_OUTER`) and two truths (isotropic and anisotropic):
 
 | Profile | err/sigma | N_stars | K (cells) | Moment cov. | Per-cell cov. | Notes |
 |---|---|---|---|---|---|---|
@@ -478,60 +435,59 @@ over three properly calibrated observing profiles (``HST_BRIGHT``,
 | HST_FAINT | 0.147 | 400 | 15 (225) | PASS both truths | PASS both truths | Error kernel resolved at K=15 |
 | GAIA_OUTER | 0.625 | 2000 | 15 (225) | XFAIL | XFAIL | Known-weak; err/sigma exceeds 1D's structural-failure threshold (0.36) |
 
-Parameters: ``num_warmup=300``, ``num_samples=600``, ``prior="gaussian_core"``,
-``n_real=25``, `99%` binomial band `[0.44, 0.92]` on `mean_x/mean_y/sigma_x/
-sigma_y`. ``rho`` is now a gated metric on the same band for `gaussian_core`
-on `HST_BRIGHT`/`HST_FAINT` (both truths); it is excluded only via the same
-`GAIA_OUTER`/`gmrf` exclusions noted in the table above and in
-`test_coverage_2d.py`, not treated as optional the way 1D's h3/h4 are.
+Settings: `num_warmup=300`, `num_samples=600`, `prior="gaussian_core"`,
+`n_real=25`, with the 99% binomial band `[0.44, 0.92]` on `mean_x`,
+`mean_y`, `sigma_x` and `sigma_y`. `rho` is also gated on that band for
+`gaussian_core` on `HST_BRIGHT` and `HST_FAINT` (both truths). It is only
+excluded for `GAIA_OUTER` and `gmrf`, as in the table and in
+`test_coverage_2d.py`; unlike 1D's h3/h4, it is not optional.
 
-Scored against the **continuous truth**. This reversed on 2026-09-01; the
-table above predates the change and the numbers in it were measured against
-the old target.
+**These tests now score against the continuous truth.** This changed on
+2026-09-01, and the table above was measured before the change.
 
-It previously scored against the *discretised* truth (per-cell probability
-mass, moments at cell centres), on the argument that a continuous target
-would charge the model for the `~h²/12` Sheppard offset. That was correct
-for the estimator as it then stood, and wrong once the estimator was fixed.
-Three components disagreed about what a cell value `p_m` means:
+They used to score against the *discretised* truth (probability mass per
+cell, with moments at cell centres), on the grounds that a continuous target
+would penalise the model for the ~h²/12 Sheppard offset. That was right for
+the estimator at the time and wrong once the estimator was fixed. Three
+parts of the code disagreed about what a cell value `p_m` means:
 
-- the **likelihood** integrates each star's error kernel over the cell, so
-  the forward model pulls `p(v) ≈ p_m/h` out of the integral — a
-  piecewise-constant assumption, giving the fitted density
-  `Var(q) = Σ p_m (v_m − μ)² + h²/12`;
-- the **reported moments** treated `p_m` as point masses at cell centres,
+- the **likelihood** integrates each star's error kernel over the cell,
+  which treats the density as constant within the cell, `p(v) ≈ p_m/h`, and
+  gives the fitted density a variance of `Σ p_m (v_m − μ)² + h²/12`;
+- the **reported moments** treated `p_m` as a point mass at the cell centre,
   with no within-cell term;
 - the **truth** used cell-centre moments of the exact masses, `V + h²/12`.
 
-The data drive the first to `V`, so the report was `V − h²/12` against a
-target of `V + h²/12`: a gap of `h²/6` in variance, i.e. `−h²/(12σ)` in
-sigma. Confirmed against an isotropic control at 1600 stars (both axes
-identical by construction, no truncation confound): predicted vs measured
-sigma bias K=15 −0.202 vs −0.196, K=19 −0.126 vs −0.129, K=21 −0.103 vs
-−0.099 — within 4% at every resolution.
+The data push the first of these to `V`, so the reported variance was
+`V − h²/12` against a target of `V + h²/12`. That is a gap of `h²/6` in
+variance, or `−h²/(12σ)` in sigma. An isotropic control at 1600 stars (both
+axes identical by construction, so truncation cannot interfere) confirms
+it. Predicted versus measured sigma bias: K=15 −0.202 vs −0.196, K=19 −0.126
+vs −0.129, K=21 −0.103 vs −0.099, within 4% at every resolution.
 
-The estimator now adds `h²/12` per axis and targets the continuous quantity,
-so the continuous truth is the correct comparison and the old one would
-double-count. See `docs/handoff-2d-tilt-recovery.md` for the full account,
-and the mass-vs-density invariant in `CLAUDE.md` for the bug class.
+The estimator now adds `h²/12` per axis and estimates the continuous
+quantity, so the continuous truth is the right target; the old one would
+count the correction twice. `docs/handoff-2d-tilt-recovery.md` has the full
+account.
 
-**The profiling campaign that set these defaults** is recorded in the
-``cell_per_sigma`` docstring in ``calibration2d.py`` and in TASKS.md. K=15
-(cell_per_sigma=0.47, 1.8 stars/cell) was identified as the effective limit
-for N=400; K=19 (1.1 stars/cell) breaks on anisotropic truths.
+**Grid resolution.** The profiling campaign behind these defaults is
+described in the `cell_per_sigma` docstring in `calibration2d.py` and in
+`TASKS.md`. It found K=15 (`cell_per_sigma=0.47`, 1.8 stars per cell) to be
+the practical limit at N=400, with K=19 (1.1 stars per cell) failing on
+anisotropic truths.
 
-> **That campaign's conclusions are suspect.** It was run with the
-> uncorrected estimator, whose `h²`-scaling bias made fine grids look
-> necessary — the resolution requirement it measured was largely the
-> artefact, not a property of the method. With the correction, K=15 (225
-> cells) gives `sigma_y` bias +0.004 and `rho` +0.003 at 1600 stars. Do not
-> rely on `cell_per_sigma=0.47` being a floor until it is re-measured.
+> **Treat those conclusions with suspicion.** The campaign ran with the
+> uncorrected estimator, whose h²-scaling bias made fine grids look
+> necessary. Much of the resolution requirement it found was that bias, not
+> a property of the method. With the correction, K=15 (225 cells) gives a
+> `sigma_y` bias of +0.004 and a `rho` bias of +0.003 at 1600 stars. Do not
+> treat `cell_per_sigma=0.47` as a floor until it has been re-measured.
 
-**Performance gate** (`PLAN.md` §3.4): the plan defines an explicit,
-measurable gate before considering any SVI/Pathfinder escalation. Run
-`K=20` (400 cells), `N=5000` mock stars, 500 warmup + 1000 samples on CPU
-with 4 chains, and proceed with plain NUTS if wall time < 10 min, minimum
-ESS/`n_samples` > 0.1, and maximum $\hat R$ < 1.01. Measured:
+**Performance gate** (`PLAN.md` §3.4). Before considering SVI or
+Pathfinder, the plan set a measurable gate: run K=20 (400 cells) and
+N=5000 mock stars, with 500 warmup and 1000 samples on CPU over 4 chains,
+and stay with plain NUTS if the wall time is under 10 minutes, the minimum
+ESS/`n_samples` is above 0.1, and the maximum $\hat R$ is below 1.01.
 
 | Criterion | Threshold | Measured | Verdict |
 |---|---|---|---|
@@ -539,20 +495,18 @@ ESS/`n_samples` > 0.1, and maximum $\hat R$ < 1.01. Measured:
 | min(ESS)/n_samples | > 0.1 | 3.11 | PASS |
 | max($\hat R$) | < 1.01 | 1.0023 | PASS |
 
-All three criteria pass with wide margin (ESS and $\hat R$ were checked
-across `smoothness_sigma`, the latent `z` vector, and `intrinsic_pdf`, not
-just the cheapest scalar; `intrinsic_pdf` was the binding constraint on both
-ESS and $\hat R$). All three criteria pass. Per the plan, **no escalation is
-warranted**; the SVI/Pathfinder ladder (K reduction, `dense_mass=True`,
-GPU, Pathfinder-for-init, full SVI) was not built, as the plan instructs. Full numbers and the
-reproduction procedure are recorded in `PLAN.md` §3.4 "Gate result
-(measured)".
+All three pass comfortably. ESS and $\hat R$ were checked on
+`smoothness_sigma`, the latent `z` vector and `intrinsic_pdf`, not just the
+easiest scalar; `intrinsic_pdf` was the limiting quantity for both. No
+escalation is needed, so none of the fallback options (smaller K,
+`dense_mass=True`, GPU, Pathfinder initialisation, full SVI) were built.
+`PLAN.md` §3.4 has the full numbers and how to reproduce them.
 
 ## How to reproduce
 
-The slow tests below run actual NUTS sampling and take from tens of seconds
-to several minutes each; they are excluded from the default fast test run
-(`pytest tests/ -v --tb=short -m "not slow"`).
+These slow tests run real NUTS sampling and take from tens of seconds to
+several minutes each. The default fast run
+(`pytest tests/ -v --tb=short -m "not slow"`) skips them.
 
 ```bash
 # 1D SBC
@@ -574,7 +528,7 @@ pytest tests/test_veldist2d.py -m slow -v
 pytest tests/test_dynamite2d.py tests/test_calibration2d_profile.py -v
 ```
 
-The §3.4 performance gate is a one-off measurement, not a pytest test (it
-calls `numpyro.infer.MCMC`/`NUTS` directly on `model_2d` with `num_chains=4`,
-which `KinematicSolver2D.run()` does not currently expose). See `PLAN.md`
-§3.4 for the exact procedure.
+The §3.4 performance gate is a one-off measurement rather than a pytest
+test. It calls `numpyro.infer.MCMC`/`NUTS` on `model_2d` directly with
+`num_chains=4`, which `KinematicSolver2D.run()` does not expose. See
+`PLAN.md` §3.4 for the procedure.

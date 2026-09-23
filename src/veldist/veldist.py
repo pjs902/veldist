@@ -1,11 +1,11 @@
 # file src/veldist/veldist.py
-"""
-Bayesian Matrix-Based Kinematic Deconvolution
+"""Bayesian Matrix-Based Kinematic Deconvolution
 =============================================
 
-This module infers the intrinsic Line-of-Sight Velocity Distribution (LOSVD)
-from discrete, heteroscedastic stellar observations using a pre-computed
-linear design matrix and a hierarchical smoothness prior.
+Infers the intrinsic line-of-sight velocity distribution (LOSVD) from
+discrete stellar velocities with individual measurement errors. The data
+enter through a design matrix computed once up front; the LOSVD is a
+histogram with a smoothness prior whose strength is inferred.
 """
 
 import contextlib
@@ -89,18 +89,18 @@ NUM_CHAINS = 4
 
 
 def set_host_devices(ncpu=NUM_CHAINS):
-    """Make ``ncpu`` CPU devices visible to JAX, so chains run in parallel.
+    """Make ``ncpu`` CPU devices visible to JAX so that chains run in parallel.
 
-    **Call this before any other JAX work**, ideally right after importing
-    veldist. It sets an XLA flag that is only read when JAX initialises its
-    backend, so once any array operation has run it is a silent no-op --
-    including the design-matrix construction in
-    :meth:`KinematicSolver.add_data`.
+    **Call this before any other JAX work**, ideally straight after importing
+    veldist. It sets an XLA flag that JAX reads only when it starts its
+    backend. After any array operation has run, including the design-matrix
+    construction in :meth:`KinematicSolver.add_data`, the call silently does
+    nothing.
 
-    Without it, ``num_chains=4`` still gives correct results, just sequentially
-    at roughly 4x the wall time.
+    Without it, ``num_chains=4`` still gives the same results, but the chains
+    run one after another and take about four times as long.
 
-    Returns the device count actually available afterwards.
+    Returns the number of devices available afterwards.
     """
     # Set unconditionally, and do NOT guard on jax.local_device_count() first:
     # querying the device count is itself enough to initialise the backend,
@@ -116,27 +116,28 @@ def set_host_devices(ncpu=NUM_CHAINS):
 
 
 def precompute_design_matrix(obs_val, obs_err, bin_centers, bin_width=None):
-    """
-    Computes the Probability Design Matrix (M) for 1D LOSVD inference.
+    """Compute the design matrix M for 1D LOSVD inference.
 
-    This function bakes the observations and uncertainties into a static matrix, converting the
-    deconvolution problem into a single matrix multiplication during inference.
+    Each entry is the probability of a star's observed velocity given that its
+    true velocity lies in a given bin, i.e. the star's Gaussian error kernel
+    integrated over that bin. Computing this once turns the deconvolution into
+    a single matrix-vector product per likelihood evaluation.
 
     Parameters
     ----------
     obs_val : array-like (N,)
         Observed velocities of individual stars.
     obs_err : array-like (N,)
-        Standard deviation (measurement error) for each star.
+        Measurement error (standard deviation) of each star.
     bin_centers : array-like (K,)
-        The velocity grid centers (the intrinsic histogram bins).
+        Centres of the velocity bins.
     bin_width : float, optional
-        Width of bins. If None, inferred from centers.
+        Bin width. If None, it is inferred from the centres.
 
     Returns
     -------
     M : jnp.ndarray (N, K)
-        Probability matrix. M[i, j] = P(Star i | True Velocity is in Bin j)
+        ``M[i, j] = P(star i's observed velocity | true velocity in bin j)``.
     """
     # Reshape for broadcasting: (N, 1)
     y = jnp.array(obs_val)[:, None]
@@ -189,74 +190,49 @@ def precompute_design_matrix(obs_val, obs_err, bin_centers, bin_width=None):
 
 
 def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
-    """
-    Generates a 1D smooth curve from an intrinsic RW1 (random-walk) GMRF prior.
+    """Draw a latent log-density curve from an intrinsic RW1 (random-walk) prior.
 
-    Unlike a cumulative-sum construction that pins ``curve[0] = 0`` and
-    leaves it there, this is translation-invariant in bin index: every bin
-    is regularised identically by its neighbours, with no special edge bin.
-    This matters because the output is later passed through softmax, which
-    is itself shift-invariant, so an asymmetric prior on the un-normalised
-    curve would otherwise bias the *shape* of the inferred LOSVD toward one
-    edge of the velocity grid.
+    The prior treats every bin the same way. A plain cumulative sum would fix
+    ``curve[0] = 0``, so the variance would grow from one edge of the grid to
+    the other; because the curve then goes through a softmax, that asymmetry
+    would bias the shape of the LOSVD toward one edge. Subtracting the mean
+    removes the pinned bin, and ``Var(curve[k])`` becomes symmetric in ``k``
+    (checked numerically) instead of growing as ``k * sigma^2``.
 
-    The construction is a *generative* one: every random quantity
-    is drawn via ``numpyro.sample``, and the returned curve is a purely
-    deterministic function of those draws::
+    The construction is generative. Every random quantity is a
+    ``numpyro.sample`` site and the curve is a deterministic function of
+    them::
 
         sigma_step = smoothness_sigma * sqrt(bin_width)
         step[i] ~ Normal(0, sigma_step),  i = 1 .. N_bins - 1
         raw = concat([0], cumsum(step))              # pinned at bin 0
         curve = raw - mean(raw)                       # remove the pin
 
-    This is deliberately **not** implemented as a ``numpyro.factor`` penalty
-    on an unconditioned base measure. A factor only reweights the *posterior*
-    density used by NUTS. It has no effect on prior-predictive / ancestral
-    sampling (e.g. ``numpyro.infer.Predictive`` with no data conditioning),
-    which forward-simulates only through ``sample`` sites. A factor-based
-    version of this prior would therefore look correct under real inference
-    (NUTS integrates the full unnormalised density regardless of site
-    structure) while silently drawing the wrong thing under
-    ``Predictive``. That is exactly the kind of prior/posterior mismatch that
-    simulation-based calibration (see ``tests/test_calibration.py``) exists
-    to catch, and did catch during development of this function. The
-    increments-then-center construction above sidesteps the issue entirely:
-    ``step`` is what NUTS samples, and its distribution *is* the actual
-    prior, with no separate normalising-constant bookkeeping required
-    (``dist.Normal`` supplies it automatically) and no discrepancy between
-    what NUTS conditions on and what ``Predictive`` draws.
+    Do **not** replace this with a ``numpyro.factor`` penalty on an
+    unconstrained base measure. NUTS would still see the right density, but
+    ``numpyro.infer.Predictive`` only simulates through ``sample`` sites, so
+    prior-predictive draws would come from the wrong distribution. Simulation-
+    based calibration (``tests/test_calibration.py``) caught exactly this bug
+    during development. With the construction above, the distribution of
+    ``step`` is the prior, so NUTS and ``Predictive`` always agree.
 
-    The final ``curve - mean(curve)`` centering is what makes this
-    translation-invariant rather than reproducing the old pinned-at-bin-0
-    asymmetry: subtracting the sample mean of the pinned random walk
-    produces a bowl-shaped, bin-index-symmetric variance profile (verified
-    numerically, ``Var(curve[k])`` is symmetric under ``k -> N_bins-1-k``),
-    rather than the monotonically increasing ``Var(curve[k]) = k * sigma^2``
-    of the raw pinned walk.
-
-    ``smoothness_sigma`` is a *physical* smoothness scale, independent of the
-    velocity-grid resolution: the actual per-bin random-walk step scale is
-    ``smoothness_sigma * sqrt(bin_width)`` (the natural Brownian-motion
-    scaling: a random walk that traverses a fixed velocity range with twice
-    as many, half-width steps has each step scaled by ``sqrt(0.5)``, not
-    ``0.5``). Without this scaling, refining the velocity grid silently
-    changes what the prior means, since ``smoothness_sigma`` would then be a
-    prior on the *per-bin* step regardless of how much velocity each bin
-    spans.
+    ``smoothness_sigma`` is a physical scale, independent of grid resolution.
+    The per-bin step is ``smoothness_sigma * sqrt(bin_width)``, the usual
+    Brownian scaling: covering the same velocity range in twice as many steps
+    shrinks each step by ``sqrt(0.5)``, not ``0.5``. Without this, refining the
+    grid would quietly change what the prior means.
 
     Parameters
     ----------
     N_bins : int
         Number of velocity bins.
     smoothness_sigma : float
-        Physical smoothness scale, independent of grid resolution.
-        - Low sigma: Stiff, very smooth.
-        - High sigma: Flexible, jagged.
+        Physical smoothness scale. Small values give stiff, smooth curves;
+        large values give flexible, jagged ones.
     bin_width : float
-        Width of one velocity bin, used to rescale ``smoothness_sigma`` into
-        the per-bin step scale actually used by the random walk. Default 1.0
-        (i.e. no rescaling, matching the original per-bin-step convention if
-        the caller does not know or care about physical units).
+        Width of one velocity bin, used to turn ``smoothness_sigma`` into the
+        per-bin step. Default 1.0, i.e. no rescaling (the original per-bin
+        convention, for callers who do not use physical units).
 
     Returns
     -------
@@ -274,32 +250,30 @@ def generate_smooth_curve(N_bins, smoothness_sigma, bin_width=1.0):
 
 @cache
 def _rw_deviation_scale(n_bins, order=3):
-    """Sorbye-Rue scaling constant for the constrained RW-k deviation.
+    """Sørbye-Rue scaling constant for the constrained RW-k deviation.
 
-    Returns the factor that makes the generalised variance (the geometric
-    mean of the per-bin marginal variances) of the projected k-fold
-    integrated random walk equal to 1, so that ``sigma3`` means "typical
-    log-density departure from the null space", independent of grid
-    resolution (Sorbye & Rue 2014, Spatial Statistics 8, 39; this is what
-    ``scale.model=TRUE`` does in R-INLA).
+    Returns the factor that makes the generalised variance (the geometric mean
+    of the per-bin marginal variances) of the projected k-fold integrated
+    random walk equal to 1. ``sigma3`` then means "typical log-density
+    departure from the null space" at any grid resolution (Sørbye & Rue 2014,
+    Spatial Statistics 8, 39; the same as ``scale.model=TRUE`` in R-INLA).
 
-    ``order`` sets the null space, and the null space is what the prior does
-    NOT shrink:
+    ``order`` sets the null space, which is the part the prior does not shrink:
 
-    - order 3: null space {1, u, u^2}, i.e. quadratic log-densities.
-      Gaussians are unpenalised, so v and sigma are free, but h3 and h4 are
-      shrunk, being the first things inside the penalised space.
-    - order 4 adds u^3, order 5 adds u^4.
+    - order 3: null space {1, u, u^2}, i.e. quadratic log-densities. Gaussians
+      are unpenalised, so v and sigma are free, while h3 and h4 are shrunk as
+      the first shapes outside the null space.
+    - order 4 adds u^3, and order 5 adds u^4.
 
-    Note that raising the order does NOT free the corresponding *PDF* moments.
-    The null space is a null space of the log-density, and the softmax that
-    turns it into a PDF decouples the two: measured h3 retention is ~0.13-0.16
-    across orders 3-5. See the 2026-08-03 validation campaign; orders 4/5 are
-    kept only because the constant is cheap to generalise.
+    Raising the order does **not** free the matching moments of the PDF. The
+    null space belongs to the log-density, and the softmax separates the two:
+    measured h3 retention is about 0.13-0.16 for orders 3 to 5 (2026-08-03
+    validation campaign). Orders 4 and 5 remain only because supporting them
+    costs nothing.
 
-    Depends only on ``n_bins`` and ``order``. Cached because it costs an
-    O(n^3) QR and matrix product and is evaluated at JAX trace time, where
-    the result is constant-folded into the compiled model.
+    Depends only on ``n_bins`` and ``order``. It is cached because it needs an
+    O(n^3) QR and matrix product and runs at JAX trace time, where the result
+    is folded into the compiled model as a constant.
     """
     # Computed on a uniform index grid. The caller projects on physical bin
     # centres instead, which spans the same polynomial space, and so gives
@@ -320,24 +294,20 @@ def _rw_deviation_scale(n_bins, order=3):
 def _null_space_basis(n_bins, order=3):
     """Orthonormal basis of the RW-k null space: polynomials of degree < k.
 
-    Plain NumPy and cached. An earlier version built the Legendre basis and
-    its QR from ``centers`` in JAX, inside the model function. That looks like
-    a per-leapfrog-step cost, and it is not: ``centers`` reaches the traced
-    graph as a concrete array, so XLA constant-folds the whole QR at compile
-    time. Benchmarked either way at 37 bins, 150 stars, 4 chains, the
-    difference is inside run-to-run noise (1.32s vs 1.44s, best of three).
+    Plain NumPy, cached. An earlier version built the basis and its QR in JAX
+    inside the model. That looks like a cost paid on every leapfrog step but
+    is not: ``centers`` reaches the traced graph as a concrete array, so XLA
+    folds the whole QR at compile time. At 37 bins, 150 stars and 4 chains the
+    two versions time the same within noise (1.32 s vs 1.44 s, best of three).
+    The move to NumPy is for clarity, not speed; do not cite it as a
+    performance fix.
 
-    So this is a clarity change, not a speed-up: nothing here depends on a
-    sampled value, and saying so in NumPy is plainer than trusting a compiler
-    optimisation to notice. Do not cite it as a performance fix.
-
-    Uses a Legendre recurrence rather than the raw monomials for
-    conditioning, and an index grid rather than physical bin centres. Both
-    give the same projector: the orthogonal projector onto a subspace does not
-    depend on which basis spans it, and for a uniformly spaced grid the index
-    and physical coordinates differ only by an affine map (verified equal to
-    1e-16 for n_bins 20-60, orders 3-5). ``setup_grid`` only produces uniform
-    grids. Same caching argument as :func:`_rw_deviation_scale`.
+    The basis uses a Legendre recurrence instead of raw monomials, for better
+    conditioning, and bin indices instead of physical bin centres. Neither
+    changes the projector, which depends only on the subspace, and on a uniform
+    grid index and velocity differ by an affine map (checked equal to 1e-16 for
+    20-60 bins and orders 3-5). ``setup_grid`` only makes uniform grids.
+    Cached for the same reason as :func:`_rw_deviation_scale`.
     """
     idx = np.arange(n_bins, dtype=float)
     u = (idx - idx.mean()) / (n_bins - 1)
@@ -352,98 +322,88 @@ def _null_space_basis(n_bins, order=3):
 
 
 def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
-    """
-    Generate a latent log-density curve whose smoothness prior has a
-    *Gaussian* null space rather than a flat one.
+    """Draw a latent log-density curve whose smoothness prior leaves Gaussians
+    unpenalised.
 
-    This is the discrete, generative analogue of the Silverman (1982)
-    roughness penalty used by Merritt (1997, AJ, 114, 228)::
+    This is a discrete, generative version of the Silverman (1982) roughness
+    penalty used by Merritt (1997, AJ, 114, 228)::
 
         P(N) = integral [ d^3/dV^3 log N(V) ]^2 dV
 
-    A Gaussian's log-density is exactly quadratic in velocity, so its third
-    derivative vanishes identically and the penalty is exactly zero for any
-    Gaussian. The infinite-smoothing limit is therefore a Gaussian with the
-    data's own mean and dispersion, not the uniform-over-the-grid limit of
-    the first-difference prior in :func:`generate_smooth_curve`.
+    A Gaussian's log-density is quadratic in velocity, so its third derivative
+    and the penalty are both zero. With infinite smoothing, the prior therefore
+    gives a Gaussian with the data's own mean and dispersion, instead of the
+    uniform distribution that :func:`generate_smooth_curve` tends to.
 
-    That difference is the whole point. A flat null space means that
-    wherever the data is uninformative the posterior relaxes toward putting
-    probability mass everywhere out to the grid edge. Because kurtosis
-    weights deviations by the fourth power, a bin at 5 sigma carries ~625x
-    the weight of a bin at 1 sigma, so even a small amount of misplaced edge
-    mass produces a large positive kurtosis bias, and, because the grid is
-    wider than the true distribution, a positive velocity-dispersion bias
-    that grows with the number of bins.
+    That is the reason this prior exists. With a flat null space, wherever the
+    data are uninformative the posterior spreads mass out to the grid edges.
+    Kurtosis weights deviations by the fourth power, so a bin at 5 sigma counts
+    about 625 times as much as one at 1 sigma; a little misplaced edge mass
+    gives a large positive kurtosis bias, and, because the grid is wider than
+    the distribution, a positive dispersion bias that grows with the number of
+    bins.
 
-    The construction splits the curve into a free core and a penalised
-    deviation::
+    The curve is a free core plus a penalised deviation::
 
-        core  = -0.5 * ((v - v0) / s0)^2                  # unpenalised
+        core  = log(mass of N(v0, s0^2) in each bin)       # unpenalised
         w     = cumsum(cumsum(cumsum(d3 * sigma3)))       # triple-integrated RW
         dev   = w - Q (Q^T w),  Q = orth basis of {1, u, u^2}
         curve = core + dev
 
-    ``v0`` and ``s0`` are the Gaussian null-space parameters and carry no
-    smoothness penalty at all. ``dev`` is projected orthogonal to the
-    quadratic subspace so it cannot mimic the core; without that projection
-    the two terms trade off freely, ``v0``/``s0`` become unidentifiable, and
-    NUTS diverges. The projection is performed in the normalised coordinate
-    ``u = (v - mean(v)) / (max(v) - min(v))`` because a QR factorisation of
-    the raw velocity Vandermonde ``[1, v, v^2]`` is catastrophically
-    ill-conditioned when velocities are of order hundreds.
+    ``v0`` and ``s0`` are the Gaussian's location and width and carry no
+    smoothness penalty. ``dev`` is projected away from the quadratics so it
+    cannot imitate the core; without the projection the two trade off freely,
+    ``v0`` and ``s0`` cannot be identified, and NUTS diverges. The projection
+    uses the scaled coordinate ``u = (v - mean(v)) / (max(v) - min(v))``,
+    because a QR of the raw ``[1, v, v^2]`` is badly conditioned when
+    velocities are in the hundreds.
 
-    Like :func:`generate_smooth_curve` this is a *generative*
-    construction: every random quantity is drawn via ``numpyro.sample``,
-    never ``numpyro.factor``. A factor-based penalty is invisible to
-    ``numpyro.infer.Predictive``, so the model would behave correctly under
-    NUTS while silently drawing the wrong thing under prior-predictive
-    sampling and SBC. That exact bug has already been hit and fixed once in
-    this codebase; do not reintroduce it.
+    As in :func:`generate_smooth_curve`, every random quantity is a
+    ``numpyro.sample`` site, never a ``numpyro.factor``. A factor is invisible
+    to ``numpyro.infer.Predictive``, so the model would look right under NUTS
+    while prior-predictive draws and SBC used the wrong prior. This bug has
+    already happened once in this code; do not bring it back.
 
-    ``d3`` is drawn standard-normal and scaled by ``sigma3`` afterwards
-    (non-centred parameterisation) rather than drawn from
-    ``Normal(0, sigma3)`` directly, which would produce Neal's funnel and
-    divergences.
+    ``d3`` is drawn as a standard normal and then multiplied by ``sigma3`` (a
+    non-centred parameterisation). Drawing it from ``Normal(0, sigma3)``
+    directly would create Neal's funnel and cause divergences.
 
-    ``sigma3`` is standardised so that the *generalised variance* of the
-    projected deviation (the geometric mean of its per-bin marginal
-    variances) is exactly 1 (see :func:`_rw_deviation_scale`). This is the
-    standard Sorbye & Rue (2014) treatment for intrinsic GMRFs, and it makes
-    ``sigma3`` directly interpretable as the typical log-density departure
-    from a Gaussian LOSVD, independent of grid resolution.
+    The deviation is scaled so that its generalised variance (the geometric
+    mean of the per-bin marginal variances) is exactly 1 (see
+    :func:`_rw_deviation_scale`). This is the standard Sørbye & Rue (2014)
+    treatment of intrinsic GMRFs, and it makes ``sigma3`` the typical
+    log-density departure from a Gaussian, whatever the grid resolution.
 
-    An earlier version instead multiplied by ``(bin_width / span) ** 2.5``.
-    That exponent correctly cancels the resolution dependence, since the
-    measured deviation scale drifts only ~11% between 20 and 120 bins, but it lands
-    on a constant of ~0.0036 rather than 1. A deviation that small is
-    invisible to the likelihood, so the posterior collapsed onto the pure
-    Gaussian null space regardless of the data. Do not reintroduce a
-    dimensional or hand-tuned constant here; the standardisation is exact.
+    An earlier version multiplied by ``(bin_width / span) ** 2.5`` instead.
+    That exponent does remove the resolution dependence (the deviation scale
+    drifts only about 11% between 20 and 120 bins), but the resulting constant
+    is about 0.0036, not 1. A deviation that small is invisible to the
+    likelihood, so the posterior collapsed onto a pure Gaussian whatever the
+    data. Do not go back to a dimensional or hand-tuned constant; the
+    standardisation is exact.
 
-    The prior on ``sigma3`` is a penalised-complexity prior (Simpson et al.):
-    an ``Exponential`` whose base model, ``sigma3 = 0``, is exactly a Gaussian
-    LOSVD. The rate is set by ``SIGMA3_RATE``. This shrinks toward
-    Gaussianity, which is the physically right default, while leaving
-    strongly non-Gaussian shapes reachable when the data demand them.
+    ``sigma3`` has a penalised-complexity prior (Simpson et al. 2017): an
+    exponential with rate ``SIGMA3_RATE`` whose base model, ``sigma3 = 0``, is
+    an exact Gaussian. It shrinks toward a Gaussian, the sensible default,
+    while still allowing strongly non-Gaussian shapes when the data require
+    them.
 
     Parameters
     ----------
     N_bins : int
         Number of velocity bins.
     centers : array-like, shape (N_bins,)
-        Physical centres of the velocity bins. Required because the Gaussian
-        core is quadratic in *velocity*, not in bin index.
+        Bin centres in velocity. Needed because the core is quadratic in
+        velocity, not in bin index.
     bin_width : float
-        Width of one velocity bin. Used by the Gaussian **core**, which is the
-        Gaussian's per-bin probability mass and so must know the bin edges
-        (``centers +/- bin_width/2``) to integrate between. It does NOT enter
-        the *deviation*: the Sorbye-Rue standardisation is already
-        resolution-invariant and the deviation is in dimensionless log-mass
-        units, so no physical scale reaches it. (This parameter was documented
-        as unused while the core point-evaluated a density at bin centres --
-        needing no scale was the symptom of that bug, not a property of the
-        prior. See the mass-vs-density invariant in CLAUDE.md.)
+        Width of one velocity bin. The core uses it to integrate the Gaussian
+        between the bin edges (``centers +/- bin_width/2``), since the core is
+        the Gaussian's mass per bin. The deviation does not use it: the
+        Sørbye-Rue scaling is already resolution-independent and the deviation
+        is in dimensionless log-mass units. (This parameter was once documented
+        as unused, back when the core evaluated a density at bin centres; not
+        needing a bin width was a symptom of that bug. See the mass-vs-density
+        invariant in CLAUDE.md.)
 
     Returns
     -------
@@ -463,25 +423,17 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
     # span/8 with ~1 dex of spread either side.
     v0 = numpyro.sample("v0", dist.Normal(mid, span / 4.0))
     s0 = numpyro.sample("s0", dist.LogNormal(jnp.log(span / 8.0), 1.0))
-    # `intrinsic_pdf` is per-bin probability MASS: precompute_design_matrix
-    # integrates each star's error kernel between bin EDGES, so the likelihood
-    # `matrix @ intrinsic_pdf` only type-checks if the pdf is mass. But
-    # softmax(-((c-v0)/s0)^2 / 2) is the Gaussian DENSITY sampled at bin
-    # centres and renormalised, which is not a Gaussian's bin mass. See the
-    # mass-vs-density invariant in CLAUDE.md; this is the 1D sibling of the bug
-    # fixed in generate_gaussian_core_field_2d.
+    # `intrinsic_pdf` is per-bin probability MASS (precompute_design_matrix
+    # integrates each star's error kernel between bin edges), so the core must
+    # be a Gaussian's bin mass, not its density sampled at bin centres, which
+    # is what softmax(-((c-v0)/s0)^2 / 2) would give:
     #
-    #   mass = int_bin f ~= h*f(c) + (h^3/24)*f''(c),  f''/f = Q_x^2/4 - Q_xx/2
+    #   mass = int_bin f ~= h*f(c) + (h^3/24)*f''(c)
     #
-    # with Q = ((c-v0)/s0)^2, so f''/f = (c-v0)^2/s0^4 - 1/s0^2. Since f'' > 0
-    # in the tails and < 0 near the peak, centre sampling under-weights the
-    # tails and the free (unpenalised) Gaussian core comes out narrower than
-    # the Gaussian it represents, biasing sigma low by O(h^2).
-    # `intrinsic_pdf` is per-bin probability MASS, so the core must be a
-    # Gaussian's bin mass -- NOT its density sampled at bin centres, which is
-    # what softmax(-((c-v0)/s0)^2 / 2) would give. See the mass-vs-density
-    # invariant in CLAUDE.md for why the two differ and why it is easy to get
-    # wrong.
+    # f'' > 0 in the tails and < 0 near the peak, so centre sampling makes the
+    # free core narrower than the Gaussian it represents and biases sigma low
+    # by O(h^2). See the mass-vs-density invariant in CLAUDE.md; this is the
+    # 1D counterpart of the bug fixed in generate_gaussian_core_field_2d.
     #
     # Integrate with 2-point Gauss-Legendre in log space, matching
     # generate_gaussian_core_field_2d.
@@ -529,26 +481,23 @@ def generate_gaussian_core_curve(N_bins, centers, bin_width=1.0, rw_order=3):
 
 
 def model(matrix, n_bins, bin_width=1.0):
-    """
-    The Model definition for NumPyro.
+    """NumPyro model with the RW1 smoothness prior.
 
     Parameters
     ----------
     matrix : jnp.ndarray (N_stars, N_bins)
-        The pre-computed Design Matrix M.
+        Precomputed design matrix M.
     n_bins : int
         Number of velocity bins.
     bin_width : float
-        Width of one velocity bin. Used to make ``smoothness_sigma`` a
-        physical smoothness scale independent of grid resolution (see
-        ``generate_smooth_curve``). Default 1.0 preserves the original
-        per-bin-step convention when the caller does not pass a physical
-        bin width.
+        Width of one velocity bin. Makes ``smoothness_sigma`` a physical scale
+        independent of grid resolution (see ``generate_smooth_curve``). The
+        default of 1.0 keeps the original per-bin convention.
 
     Returns
     -------
     None
-        This function defines the probabilistic graph and has no return value.
+        Defines the probabilistic model; returns nothing.
     """
     # --- Hyperparameters ---
 
@@ -586,29 +535,28 @@ def model(matrix, n_bins, bin_width=1.0):
 
 
 def model_gaussian_core(matrix, n_bins, centers, bin_width=1.0, rw_order=3):
-    """
-    NumPyro model using the Gaussian-null-space prior.
+    """NumPyro model with the Gaussian-core smoothness prior.
 
-    Identical to :func:`model` except that the latent log-density curve comes
-    from :func:`generate_gaussian_core_curve` instead of
-    :func:`generate_smooth_curve`. See that function's docstring for why the
+    Identical to :func:`model` except that the latent curve comes from
+    :func:`generate_gaussian_core_curve` rather than
+    :func:`generate_smooth_curve`. That function's docstring explains why the
     null space matters.
 
     Parameters
     ----------
     matrix : jnp.ndarray, shape (N_stars, N_bins)
-        Pre-computed design matrix M.
+        Precomputed design matrix M.
     n_bins : int
         Number of velocity bins.
     centers : array-like, shape (N_bins,)
-        Physical centres of the velocity bins.
+        Bin centres in velocity.
     bin_width : float
         Width of one velocity bin.
 
     Returns
     -------
     None
-        Defines the probabilistic graph; has no return value.
+        Defines the probabilistic model; returns nothing.
     """
     latent_curve = generate_gaussian_core_curve(n_bins, centers, bin_width, rw_order)
     intrinsic_pdf = jax.nn.softmax(latent_curve)
@@ -624,35 +572,33 @@ def model_gaussian_core(matrix, n_bins, centers, bin_width=1.0, rw_order=3):
 
 
 class KinematicSolver:
-    """
-    A high-level interface for performing Bayesian kinematic deconvolution.
+    """High-level interface for Bayesian LOSVD deconvolution of one spatial bin.
 
-    This class manages the full inference workflow:
-    1.  Defining the velocity grid (``setup_grid``).
-    2.  Ingesting data and building the design matrix (``add_data``).
-    3.  Running the MCMC sampler (``run``).
-    4.  Visualizing the results (``plot_result``).
+    The workflow is:
+
+    1. ``setup_grid``: define the velocity grid.
+    2. ``add_data``: load velocities and errors and build the design matrix.
+    3. ``run``: sample the posterior with NUTS.
+    4. ``plot_result``: plot the recovered LOSVD.
 
     Attributes
     ----------
     matrix : jnp.ndarray or None
-        The pre-computed design matrix of shape (N_stars, N_bins).
+        Design matrix, shape (N_stars, N_bins).
     grid : dict
-        Metadata defining the velocity grid (centers, edges, width).
+        Velocity grid: centres, edges and width.
     n_stars : int or None
-        Number of stars loaded via ``add_data``.  Used as the ``bin_flux``
-        analog when writing Dynamite output (see ``write_dynamite_kinematics``).
+        Number of stars passed to ``add_data``. Written as ``bin_flux`` by
+        ``write_dynamite_kinematics``.
     samples : dict or None
-        Posterior samples from the MCMC run.
+        Posterior samples from ``run``.
     clipped_samples : dict or None
-        Per-bin summary statistics (median LOSVD and clipped uncertainties)
-        populated by ``clip_uncertainties``.
+        Per-bin median LOSVD and floored uncertainties, set by
+        ``clip_uncertainties``.
     """
 
     def __init__(self):
-        """
-        Initializes the KinematicSolver instance.
-        """
+        """Create an empty solver."""
         self.matrix = None
         self.grid = {}
         self.n_stars = None
@@ -730,97 +676,82 @@ class KinematicSolver:
         ncpu=NUM_CHAINS,
         progress_bar=True,
     ):
-        """
-        Run the NUTS sampler.
+        """Sample the posterior with NUTS.
 
         Parameters
         ----------
         num_warmup : int
-            Number of warmup (burn-in) steps.
+            Number of warmup steps.
         num_samples : int
-            Number of MCMC samples to draw. **Default 3000, raised from
-            1000 (2026-08-06)** on the same "more ESS for ~free wall time"
-            finding measured on the 2D solver (:meth:`veldist.veldist2d.
-            KinematicSolver2D.run`'s docstring): tripling ``num_samples`` at
-            fixed ``dense_mass``/``target_accept_prob`` roughly tripled ESS
-            for near-identical per-bin cost once JIT compile is accounted
-            for. Unlike that 2D change, this default sits inside an
-            already-SBC/coverage-validated regime (``docs/validation.md``,
-            ``SIGMA3_RATE=0.35``/``target_accept_prob=0.95``/
-            ``dense_mass=True``/``num_chains=4`` at ``num_samples=1000``) --
-            ``test_sbc_calibration``/``test_per_bin_losvd_coverage`` were
-            re-run at 3000 to confirm the change doesn't regress that
-            calibration before this was adopted as the new default (see
-            TASKS.md).
+            Number of posterior samples per chain. The default of 3000 (raised
+            from 1000 on 2026-08-06) follows the finding on the 2D solver (see
+            :meth:`veldist.veldist2d.KinematicSolver2D.run`) that tripling
+            ``num_samples`` roughly triples ESS at almost the same per-bin cost,
+            since JIT compilation dominates. The 1D defaults were already validated
+            at 1000 samples (``docs/validation.md``), so ``test_sbc_calibration``
+            and ``test_per_bin_losvd_coverage`` were re-run at 3000 to confirm
+            nothing regressed before the change (see TASKS.md).
         gpu : bool or None
-            If True, request GPU acceleration via
-            ``numpyro.set_platform("gpu")`` (raises if none is available).
-            If False, force CPU. If None (default), leave the platform
-            untouched, i.e. whatever was configured before calling ``run()``.
+            True requests a GPU via ``numpyro.set_platform("gpu")`` and raises if
+            none is available. False forces the CPU. None (default) leaves the
+            platform as it was.
         seed : int
-            RNG seed for the NUTS sampler. Default 5567 (kept for backwards
-            compatibility). When running many bins in a batch, pass distinct
-            seeds per bin to avoid any correlation in the sampling chains; a
-            simple convention is ``seed + bin_index`` (see ``fit_all_bins``).
+            RNG seed. Default 5567, kept for backwards compatibility. When fitting
+            many bins, give each its own seed, e.g. ``seed + bin_index`` as
+            ``fit_all_bins`` does.
         target_accept_prob : float
             NUTS target acceptance rate, which sets the adapted step size.
-            **Default 0.95 rather than NumPyro's 0.8, and this matters.**
-            ``sigma3`` sits in a funnel: as the deviation scale approaches
-            zero the posterior narrows into a neck whose curvature a step size
-            tuned on the funnel's mouth cannot handle, so chains stick there.
-            Measured over 100 SBC simulations at ``SIGMA3_RATE = 0.35``:
-            0.8 gives 17% failures with p5 ESS 50, while 0.95 gives 1% with
-            p5 ESS 217, for about twice the wall time. Extra warmup does not
-            substitute (1500 warmup at 0.8 still failed); the step size is the
-            binding constraint.
-            Lowering this to 0.8 will reintroduce the low-ESS failures.
+            **Default 0.95, not NumPyro's 0.8, and it matters.** ``sigma3`` sits in
+            a funnel: as the deviation scale goes to zero the posterior narrows
+            into a neck, and a step size tuned on the wide part cannot get through,
+            so chains stick. Over 100 SBC simulations at ``SIGMA3_RATE = 0.35``,
+            0.8 gave 17% failures (5th-percentile ESS 50) and 0.95 gave 1%
+            (5th-percentile ESS 217), at about twice the wall time. More warmup
+            does not help (1500 warmup steps at 0.8 still failed). Going back to
+            0.8 will bring the failures back.
         dense_mass : bool
-            Adapt a full mass matrix rather than a diagonal one. **Default
-            True, unlike NumPyro.** The ``d3`` components are correlated
-            through the cumulative sum and the null-space projection, and a
-            diagonal mass matrix cannot represent that. Measured on a
-            skew_normal_h3 mock (37 bins, 150 stars, 4 chains): min ESS on
-            ``intrinsic_pdf`` goes 119 -> 1188 and max r_hat 1.0161 -> 1.0015,
-            in *less* wall time (better conditioning means fewer leapfrog
-            steps per sample). It is O(n^2) to adapt, so revisit only if
-            n_bins grows large.
+            Adapt a full mass matrix instead of a diagonal one. **Default True,
+            unlike NumPyro.** The ``d3`` components are correlated through the
+            cumulative sums and the null-space projection, which a diagonal matrix
+            cannot represent. On a skew_normal_h3 mock (37 bins, 150 stars, 4
+            chains), the minimum ESS on ``intrinsic_pdf`` rises from 119 to 1188
+            and the maximum r_hat falls from 1.0161 to 1.0015, and it runs faster,
+            because better conditioning means fewer leapfrog steps per sample.
+            Adaptation costs O(n^2), so reconsider only if ``n_bins`` gets large.
         num_chains : int
-            **Default 4, not 1.** Multiple chains are the only way to compute
-            r_hat, and r_hat is what catches a chain settling into the wrong
-            mode, a live risk here, since a bimodal LOSVD is one of the
-            shapes we expect. On a single-device CPU these run sequentially;
-            call ``numpyro.set_host_device_count(4)`` before fitting to run
-            them in parallel, or pass ``ncpu``.
+            **Default 4, not 1.** r_hat needs several chains, and r_hat is what
+            catches a chain stuck in the wrong mode, a real risk when bimodal
+            LOSVDs are among the expected shapes. On a single CPU device the
+            chains run one after another; call :func:`set_host_devices` right
+            after importing veldist to run them in parallel.
         ncpu : int or None
-            Number of CPU devices to make visible to JAX, so that ``num_chains``
-            chains run in parallel rather than sequentially. Default matches
-            ``num_chains``. Pass None to leave the device count untouched.
+            Number of CPU devices to make visible to JAX, so the chains run in
+            parallel. Defaults to ``num_chains``; None leaves the device count
+            alone.
 
-            **This can only take effect before JAX initialises its backend.**
-            By the time ``run()`` is reached, ``add_data`` has usually already
-            built the design matrix, so the request arrives too late and a
-            warning is emitted telling you to call :func:`set_host_devices`
-            immediately after importing veldist instead. Results are identical
-            either way; only wall time differs.
+            **This only works before JAX starts its backend.** By the time
+            ``run()`` is called, ``add_data`` has usually built the design matrix
+            already, so the request is too late and a warning tells you to call
+            :func:`set_host_devices` after importing veldist instead. The results
+            are the same either way; only the wall time differs.
         progress_bar : bool
-            Show NumPyro's per-chain NUTS progress bar. Default ``True``.
-            Set ``False`` when fitting many bins in a loop (as
-            :func:`fit_all_bins` does) so a single outer progress bar over
-            bins isn't drowned out by 4 chains' worth of bars per bin.
+            Show NumPyro's per-chain progress bars. Default ``True``. Set
+            ``False`` when fitting many bins in a loop (as :func:`fit_all_bins`
+            does), so one progress bar over bins is not buried under four per
+            bin.
         prior : {"rw1", "gaussian_core"}
-            Which smoothness prior to use. ``"gaussian_core"`` (default) uses
-            :func:`generate_gaussian_core_curve`, whose infinite-smoothing
-            limit is a Gaussian (Merritt 1997, AJ, 114, 228) and which does
-            not show the kurtosis/velocity-dispersion biases of the RW1
-            prior. ``"rw1"`` is the original first-difference random walk,
-            retained for comparison; its infinite-smoothing limit is a
-            *uniform* LOSVD over the velocity grid, known to bias kurtosis
-            high by ~+1.1 and dispersion high by ~4-8%.
+            Smoothness prior. ``"gaussian_core"`` (default) uses
+            :func:`generate_gaussian_core_curve`, which tends to a Gaussian with
+            infinite smoothing (Merritt 1997, AJ, 114, 228) and avoids the kurtosis
+            and dispersion biases of RW1. ``"rw1"`` is the original first-difference
+            random walk, kept for comparison. It tends to a *uniform* LOSVD across
+            the grid and is known to bias kurtosis high by about +1.1 and the
+            dispersion high by about 4-8%.
 
         Returns
         -------
         samples : dict
-            Posterior samples (e.g., "intrinsic_pdf", "smoothness_sigma").
+            Posterior samples, e.g. ``"intrinsic_pdf"``, ``"smoothness_sigma"``.
         """
         if self.matrix is None:
             msg = "No data added."
@@ -878,19 +809,19 @@ class KinematicSolver:
         return self.samples
 
     def plot_result(self, ax=None, true_intrinsic=None):
-        """
-        Visualize the inferred LOSVD.
+        """Plot the inferred LOSVD.
 
         Parameters
         ----------
         ax : matplotlib.axes.Axes, optional
-            Axes to plot on. If None, creates a new figure.
+            Axes to draw on. If None, a new figure is created.
         true_intrinsic : array-like, optional
-            True intrinsic velocities for comparison (if available).
+            True intrinsic velocities to overlay, if known.
+
         Returns
         -------
         ax : matplotlib.axes.Axes
-            The plot axes.
+            The axes drawn on.
         """
         # intrinsic_pdf is always probability MASS internally (each row sums
         # to 1). This is what the likelihood, the simplex constraint, and
@@ -952,54 +883,50 @@ class KinematicSolver:
         return ax
 
     def clip_uncertainties(self, floor_fraction=0.01, abs_floor=1e-10):
-        """
-        Apply uncertainty floors and store LOSVD summary statistics.
+        """Summarise the posterior per bin and apply uncertainty floors.
 
-        This is a **post-processing step** that does *not* modify the raw
-        posterior samples in ``self.samples``.  It summarises the posterior
-        as per-bin marginal medians and half-CI-widths in probability-mass
-        space, then raises the uncertainties to a floor so that no bin carries
-        a zero into the Dynamite output writer.
+        A post-processing step: ``self.samples`` is not changed. The posterior is
+        reduced to per-bin marginal medians and half-widths of the 68% interval,
+        in probability mass, and the uncertainties are raised to a floor so that
+        no bin passes a zero to the Dynamite writer.
 
-        Output format matches the Dynamite ``BayesLOSVD`` ECSV convention
-        (see ``context/dynamite_format_spec.md``):
+        The output follows the Dynamite ``BayesLOSVD`` ECSV convention (see
+        ``context/dynamite_format_spec.md``):
 
-        - ``losvd_median`` stores the per-bin **marginal median** of the
-          posterior probability mass.  Because the joint posterior is a
-          simplex but marginals are taken independently, the median values
-          typically *sum to 0.85–0.95*, not 1.  This is expected and correct.
-        - ``losvd_uncertainty`` stores the **half-width** of the 68% credible
-          interval: ``(p84 − p16) / 2``.  Used as symmetric ±error bars.
+        - ``losvd_median`` is the **marginal median** of each bin's mass. The
+          marginals are taken separately from a posterior that lives on a
+          simplex, so the medians usually **sum to 0.85-0.95**, not 1. This is
+          expected.
+        - ``losvd_uncertainty`` is the **half-width** of the 68% credible
+          interval, ``(p84 - p16) / 2``, used as a symmetric error bar.
 
-        Both quantities are **dimensionless probability mass per bin**. They
-        are *not* divided by the bin width.
+        Both are **dimensionless probability mass per bin**, not divided by the
+        bin width.
 
-        Motivation
-        ----------
-        Zero uncertainties in LOSVD bins propagate into Dynamite's internal
-        NNLS projection matrices and produce ``econ`` zeros that cause weight-
-        solving failures in large orbit-library runs.  The relative floor
-        (``floor_fraction * max_uncertainty``) is the primary safeguard; the
-        absolute floor is a numerical backstop for channels where the posterior
-        is pathologically tight across the board.
+        Why the floors: a zero uncertainty in any LOSVD bin reaches Dynamite's
+        NNLS matrices as an ``econ`` zero and makes the weight solving fail in
+        large orbit-library runs. The relative floor
+        (``floor_fraction * max_uncertainty``) is the main protection; the absolute
+        floor is a numerical backstop for posteriors that are extremely tight
+        everywhere.
 
         Parameters
         ----------
         floor_fraction : float
-            Relative floor as a fraction of the maximum per-bin half-CI-width
-            across all bins.  Default 0.01 (1%).
+            Relative floor, as a fraction of the largest per-bin half-width.
+            Default 0.01.
         abs_floor : float
-            Absolute floor applied after the relative floor.  Default 1e-10.
+            Absolute floor, applied after the relative one. Default 1e-10.
 
         Returns
         -------
         None
-            Sets ``self.clipped_samples`` as a dict with keys:
+            Sets ``self.clipped_samples`` to a dict with:
 
-            - ``'losvd_median'``:      per-bin marginal median, probability
-              mass (dimensionless); shape (n_bins,).
-            - ``'losvd_uncertainty'``: clipped half-width of 68% CI,
-              probability mass; shape (n_bins,).
+            - ``'losvd_median'``: per-bin marginal median, probability mass;
+              shape (n_bins,).
+            - ``'losvd_uncertainty'``: floored 68% half-width, probability mass;
+              shape (n_bins,).
         """
         if self.samples is None:
             msg = "No posterior samples found. Call run() before clip_uncertainties()."
@@ -1041,45 +968,37 @@ class KinematicSolver:
         }
 
     def truncate_losvd(self, n_sigma=3.0, abs_floor=1e-10):
-        """
-        Suppress LOSVD bins beyond ``n_sigma`` dispersions from the bulk mean.
+        """Zero the LOSVD in bins more than ``n_sigma`` dispersions from the mean.
 
         .. note::
-            **This method should only be called if tail contamination is
-            observed to be causing problems** (e.g. non-negligible posterior
-            mass in channels well outside the range of the input data, or
-            ``econ`` zeros in Dynamite that persist after
-            ``clip_uncertainties``).  It is *not* part of the standard
-            pipeline and is not called by :func:`fit_all_bins`.  When in
-            doubt, omit it. Modifying the posterior summary without a clear
-            diagnostic reason introduces unnecessary bias.
+            **Only use this if tail contamination is actually causing problems**,
+            for example clear posterior mass well outside the range of the data,
+            or ``econ`` zeros in Dynamite that remain after
+            ``clip_uncertainties``. It is not part of the standard pipeline and
+            :func:`fit_all_bins` does not call it. Changing the posterior summary
+            without a clear reason only adds bias; when in doubt, leave it out.
 
-        Velocity channels far from the data carry unphysical posterior weight
-        due to the random-walk prior leaking into unconstrained tails.  This
-        method zeros the mean density in those channels and sets their
-        uncertainty to ``abs_floor``, preventing Dynamite from trying to fit
-        orbits in unphysical regimes.
+        Far from the data, the prior can leave unphysical mass in the tails. This
+        method sets the median in those bins to zero and their uncertainty to
+        ``abs_floor``, so Dynamite does not try to fit orbits there. The approach
+        follows the velocity-range truncation discussed by Falcón-Barroso & Martig
+        (2021, A&A).
 
-        Approach follows the velocity-range truncation strategy discussed in
-        Falcón-Barroso & Martig (2021, A&A).
-
-        This is a **post-processing step** and does *not* modify
-        ``self.samples``.  It operates on ``self.clipped_samples``, creating
-        it first (with default floors) if it is not already present.
+        A post-processing step: ``self.samples`` is not changed. It works on
+        ``self.clipped_samples``, creating it with default floors if needed.
 
         Parameters
         ----------
         n_sigma : float
-            Number of velocity dispersions beyond which to truncate.
-            Default 3.0.
+            Truncate beyond this many dispersions from the mean. Default 3.0.
         abs_floor : float
-            Uncertainty value assigned to truncated bins (must be > 0 to
-            avoid ``econ`` zeros in Dynamite).  Default 1e-10.
+            Uncertainty given to truncated bins; must be > 0 to avoid ``econ``
+            zeros in Dynamite. Default 1e-10.
 
         Returns
         -------
         None
-            Updates ``self.clipped_samples`` in-place.
+            Updates ``self.clipped_samples`` in place.
         """
         if self.samples is None:
             msg = "No posterior samples found. Call run() before truncate_losvd()."
@@ -1116,32 +1035,31 @@ class KinematicSolver:
 
 
 def aggregate_to_output_grid(pdf_samples, fitted_edges, output_edges):
-    """
-    Sum posterior LOSVD mass from a fitted grid onto the shared output grid.
+    """Sum posterior LOSVD mass from a fitted grid onto the shared output grid.
 
-    Aggregation happens at the *sample* level, so uncertainties propagate:
-    each posterior draw is re-binned independently and the summaries in
-    :meth:`KinematicSolver.clip_uncertainties` are taken afterwards.
+    Each posterior draw is re-binned separately, and summaries are taken
+    afterwards in :meth:`KinematicSolver.clip_uncertainties`, so the
+    uncertainties carry over correctly.
 
-    Exactness requires that every fitted bin lie entirely inside a single
-    output bin.  That single condition implies both halves of the usual
-    statement, that the fitted grid is at least as fine as the output grid and
-    their edges align, and it is what this function enforces.  A coarser or
-    misaligned fitted grid, or one extending past the output grid (which
-    would silently drop mass), raises ``ValueError``.
+    The sum is exact only if every fitted bin lies entirely inside one output
+    bin. That one condition covers both usual requirements (the fitted grid is
+    at least as fine as the output grid, and the edges line up), and it is what
+    this function checks. A coarser or misaligned fitted grid, or one that
+    extends past the output grid and would silently lose mass, raises
+    ``ValueError``.
 
     Parameters
     ----------
     pdf_samples : array-like, shape (n_samples, n_fitted_bins)
         Posterior probability mass per fitted bin, one row per draw.
     fitted_edges, output_edges : array-like
-        Bin edges of the fitted and shared output grids.
+        Bin edges of the fitted grid and of the shared output grid.
 
     Returns
     -------
     ndarray, shape (n_samples, n_output_bins)
-        Probability mass on the output grid.  Row sums are preserved exactly
-        (up to floating-point summation order).
+        Probability mass on the output grid. Row sums are preserved exactly,
+        up to floating-point rounding.
     """
     pdf_samples = np.asarray(pdf_samples)
     fitted_edges = np.asarray(fitted_edges, dtype=float)
@@ -1177,12 +1095,12 @@ def aggregate_to_output_grid(pdf_samples, fitted_edges, output_edges):
 
 
 def _snap_grid(center, width, output_edges):
-    """Widen a matched grid to the nearest output-grid edges.
+    """Widen a matched grid out to the nearest output-grid edges.
 
     Returns ``setup_grid`` kwargs for the smallest run of whole output bins
-    covering ``[center - width/2, center + width/2]``, clipped to the output
-    grid.  Snapping this way makes the fitted grid a sub-range of the output
-    grid, so aggregation is exact by construction.
+    that covers ``[center - width/2, center + width/2]``, clipped to the output
+    grid. The fitted grid is then a sub-range of the output grid, so
+    aggregation is exact by construction.
 
     # ponytail: the fitted grid is a *sub-range* of the output grid, never a
     # refinement of it, so the matched grid can only be narrower, not finer.
@@ -1210,80 +1128,69 @@ def fit_all_bins(
     match_grid=None,
     show_progress=True,
 ):
-    """
-    Run the full inference pipeline for a list of Voronoi bins.
+    """Run the full inference pipeline on a list of Voronoi bins.
 
-    For each bin, this executes the ``setup_grid`` → ``add_data`` → ``run``
-    → ``clip_uncertainties`` pipeline and returns a list of
-    :class:`KinematicSolver` instances ready for the Dynamite output writer.
-    Bins with too few stars are skipped (returning ``None`` at that position)
-    so the writer can mask them.
+    For each bin this runs ``setup_grid``, ``add_data``, ``run`` and
+    ``clip_uncertainties``, and returns the fitted :class:`KinematicSolver`
+    objects ready for the Dynamite writer. Bins with too few stars are skipped
+    and returned as ``None`` so the writer can mask them.
 
-    :meth:`~KinematicSolver.truncate_losvd` is deliberately *not* called
-    here.  It is an optional diagnostic repair step; call it manually on
-    individual solvers only if tail contamination is observed to be causing
-    problems.
+    :meth:`~KinematicSolver.truncate_losvd` is *not* called. It is an optional
+    repair; apply it by hand to individual solvers only if tail contamination
+    is actually causing problems.
 
-    The same velocity grid is used for every bin (``grid_kwargs`` is shared).
-    Each bin receives a unique RNG seed derived as ``base_seed + bin_index``
-    to avoid correlations between sampling chains.
+    All bins share the grid in ``grid_kwargs``. Bin ``i`` is seeded with
+    ``base_seed + i`` so the chains of different bins are independent.
 
     Parameters
     ----------
     bin_data_list : list of dict
-        One dict per Voronoi bin.  Required keys:
+        One dict per Voronoi bin, with keys:
 
-        - ``'vel'``: array of observed stellar velocities.
-        - ``'err'``: array of per-star measurement errors.
+        - ``'vel'``: observed stellar velocities.
+        - ``'err'``: per-star measurement errors.
 
-        Any additional keys (e.g. spatial metadata) are ignored here and
-        can be passed separately to the output writer.
+        Other keys (spatial metadata, say) are ignored here; pass them to the
+        output writer separately.
     grid_kwargs : dict
-        Keyword arguments forwarded to :meth:`KinematicSolver.setup_grid`
-        (``center``, ``width``, ``n_bins``).  Shared across all bins.
+        Arguments for :meth:`KinematicSolver.setup_grid` (``center``,
+        ``width``, ``n_bins``), shared by all bins.
     run_kwargs : dict, optional
-        Keyword arguments forwarded to :meth:`KinematicSolver.run`
-        (e.g. ``num_warmup``, ``num_samples``, ``gpu``).  The ``seed``
-        key, if present, is used as the *base* seed; each bin then receives
-        ``seed + bin_index``.  Defaults to ``{}`` (all ``run`` defaults
-        apply).
+        Arguments for :meth:`KinematicSolver.run` (``num_warmup``,
+        ``num_samples``, ``gpu``, ...). A ``seed`` here is the base seed; bin
+        ``i`` gets ``seed + i``. Default ``{}``, i.e. ``run``'s defaults.
     min_stars : int
-        Minimum number of stars required to attempt inference.  Bins with
-        fewer stars are skipped with a warning.  Default 10.
+        Minimum number of stars needed to fit a bin. Smaller bins are skipped
+        with a warning. Default 10.
     min_ivar : float, optional
-        Minimum information content ``sum_i 1/(sigma_ref^2 + err_i^2)`` for a
-        bin to be fitted. Applied *in addition* to ``min_stars``. Unlike a
-        star count, this accounts for heterogeneous measurement errors: a bin
-        of many noisy stars can clear ``min_stars`` and still constrain
-        nothing. Measure an appropriate value with
+        Minimum information content ``sum_i 1/(sigma_ref^2 + err_i^2)`` needed
+        to fit a bin, applied on top of ``min_stars``. Unlike a star count, it
+        accounts for unequal errors: a bin of many noisy stars can pass
+        ``min_stars`` and still constrain nothing. Measure a value with
         ``veldist.calibration.recovery_curve(...).threshold('sigma')`` rather
         than guessing. Requires ``sigma_ref``.
     sigma_ref : float, optional
-        Representative LOSVD dispersion, km/s, used only to evaluate
-        ``min_ivar``. Required when ``min_ivar`` is given.
+        Representative LOSVD dispersion in km/s, used only for ``min_ivar``.
+        Required when ``min_ivar`` is given.
     match_grid : ObservingProfile, optional
-        If given, each bin is *fitted* on a narrower grid matched to its own
-        dispersion (via :meth:`~veldist.calibration.ObservingProfile.matched_grid`,
-        snapped to whole output bins) and its posterior samples are then
-        aggregated back onto the shared output grid.  This avoids the mostly
-        empty shared grid that collapses h3 coverage at low dispersion.
-        Default ``None``: every bin is fitted on the shared grid, exactly
-        as before.
+        If given, each bin is fitted on a narrower grid matched to its own
+        dispersion (:meth:`~veldist.calibration.ObservingProfile.matched_grid`,
+        snapped to whole output bins), and its posterior samples are then
+        summed back onto the shared output grid. This avoids a mostly empty
+        grid, which ruins h3 coverage at low dispersion. Default ``None``: fit
+        every bin on the shared grid.
     show_progress : bool
-        Show a single ``tqdm`` progress bar over bins instead of the
-        default per-bin, per-chain NUTS progress bars (which otherwise
-        print ``num_chains`` bars for *every* bin -- unreadable for more
-        than a handful of bins). Default ``True``. When enabled, each
-        bin's ``solver.run()`` call has NumPyro's own ``progress_bar``
-        forced to ``False`` unless ``run_kwargs`` already sets it
-        explicitly.
+        Show one ``tqdm`` bar over bins instead of NumPyro's per-chain bars,
+        which would print ``num_chains`` bars for every bin. Default ``True``.
+        When on, NumPyro's ``progress_bar`` is set to ``False`` unless
+        ``run_kwargs`` sets it.
 
     Returns
     -------
     solvers : list
-        One entry per input bin.  Entries are either a fully solved
-        :class:`KinematicSolver` (with ``samples`` and ``clipped_samples``
-        populated) or ``None`` for skipped bins.
+        One entry per input bin: a fitted :class:`KinematicSolver` (with
+        ``samples`` and ``clipped_samples`` set), or ``None`` for a skipped
+        bin.
 
     Examples
     --------
@@ -1292,8 +1199,7 @@ def fit_all_bins(
     ...     grid_kwargs={"center": 0.0, "width": 600.0, "n_bins": 60},
     ...     run_kwargs={"num_warmup": 500, "num_samples": 1000, "gpu": False},
     ... )
-    >>> # Pass to the output writer (Task 2):
-    >>> solver.write_dynamite_kinematics(output_dir, voronoi_bin_metadata)
+    >>> write_dynamite_kinematics(solvers, output_dir, voronoi_bin_metadata)
     """
     if min_ivar is not None and sigma_ref is None:
         msg = "sigma_ref is required when min_ivar is given"
@@ -1402,37 +1308,35 @@ def write_dynamite_kinematics(
     bins_filename="bins.dat",
     bin_flux_mode="nstars",
 ):
-    """
-    Write Dynamite-compatible BayesLOSVD input files from a list of solved bins.
+    """Write Dynamite BayesLOSVD input files for a set of fitted bins.
 
-    Produces three files that Dynamite expects for its ``BayesLOSVD`` kinematics
-    representation (see ``context/dynamite_format_spec.md`` for full format
-    details):
+    Three files are written for Dynamite's ``BayesLOSVD`` kinematics (the
+    format is described in ``context/dynamite_format_spec.md``):
 
-    - ``{kin_filename}``: Astropy ECSV, one row per solved Voronoi bin,
-      containing the per-bin marginal median LOSVD and ±half-CI uncertainties.
+    - ``{kin_filename}``: an Astropy ECSV table with one row per fitted
+      Voronoi bin, holding the per-bin marginal median LOSVD and its
+      half-interval uncertainties.
     - ``{aperture_filename}``: pixel grid geometry.
-    - ``{bins_filename}``: pixel-to-bin mapping.
+    - ``{bins_filename}``: pixel-to-bin map.
 
-    Any ``None`` entries in ``solvers`` (bins skipped by :func:`fit_all_bins`)
-    are automatically masked: their pixels are written as 0 in the bins file
-    and they are omitted from the kinematics table.  The remaining bins are
-    re-numbered sequentially (1-indexed) as required by Dynamite.
+    ``None`` entries in ``solvers`` (bins skipped by :func:`fit_all_bins`) are
+    masked: their pixels are written as 0 in the bins file and they are left
+    out of the table. The remaining bins are renumbered from 1, as Dynamite
+    requires.
 
-    :func:`clip_uncertainties` is called automatically on any solver that has
-    not already had its ``clipped_samples`` populated.
+    Any solver whose ``clipped_samples`` is not yet set has
+    :meth:`~KinematicSolver.clip_uncertainties` called on it first.
 
     Parameters
     ----------
     solvers : list
-        Solved :class:`KinematicSolver` instances (or ``None`` for skipped
-        bins), as returned by :func:`fit_all_bins`.  All non-``None`` entries
-        must share the same velocity grid.
+        Fitted :class:`KinematicSolver` objects, or ``None`` for skipped bins,
+        as returned by :func:`fit_all_bins`. Every non-``None`` entry must use
+        the same velocity grid.
     output_dir : str or path-like
-        Directory in which to write the three output files.  Created if it
-        does not exist.
+        Directory for the three output files; created if needed.
     voronoi_bin_metadata : dict
-        Spatial and observational metadata.  Required structure::
+        Spatial and observational metadata, structured as::
 
             {
                 'bins': [
@@ -1449,23 +1353,21 @@ def write_dynamite_kinematics(
                     'y_start':   float,   # arcsec, lower-left corner y
                     'x_size':    float,   # arcsec, total x extent
                     'y_size':    float,   # arcsec, total y extent
-                    # degrees. DYNAMITE's rule is angle_deg = -theta_maj, where
+                    # degrees. Dynamite expects angle_deg = -theta_maj, where
                     # theta_maj is the RECEDING major axis measured CCW from +x
-                    # in the frame of the file you are writing. Its docs phrase
-                    # this as "90 - position_angle", but that position_angle is
-                    # pafit's, obtained by running pafit on the same x/y/v you
-                    # pass here -- NOT a sky position angle. Substituting a sky
-                    # PA is a 180 deg error (they agree only mod 180), and it
-                    # silently inverts every fitted rotation while leaving
-                    # surface brightness and sigma looking fine. Callers are
-                    # responsible for computing this in their own frame; see
+                    # in the frame of this file. Dynamite's docs write this as
+                    # "90 - position_angle", but that angle is pafit's, from
+                    # running pafit on the same x/y/v -- NOT a sky position
+                    # angle. A sky PA agrees only mod 180; using it silently
+                    # flips every fitted rotation while surface brightness and
+                    # sigma still look fine. Compute it in your own frame; see
                     # omegaCen/dynamite_dataprep/dynamite_frame.py.
                     'angle_deg': float,
                     'nx':        int,     # pixels along x
                     'ny':        int,     # pixels along y
                 },
-                # 1-indexed bin IDs (bin 1 = solvers[0], bin 2 = solvers[1], …)
-                # 0 = masked.  Skipped bins are re-mapped to 0 automatically.
+                # 1-indexed bin IDs (bin 1 = solvers[0], bin 2 = solvers[1], ...)
+                # 0 = masked. Skipped bins are remapped to 0 automatically.
                 'pixel_bin_ids': array-like,   # shape (nx*ny,) or (ny, nx)
                 'psf': {
                     'sigma':  [float, ...],   # Gaussian sigma(s) in arcsec
@@ -1474,43 +1376,38 @@ def write_dynamite_kinematics(
             }
 
     kin_filename : str
-        File name for the kinematics ECSV.  Default ``'bayes_losvd_kins.ecsv'``.
+        Name of the kinematics ECSV. Default ``'bayes_losvd_kins.ecsv'``.
     aperture_filename : str
-        File name for the aperture file.  Default ``'aperture.dat'``.
+        Name of the aperture file. Default ``'aperture.dat'``.
     bins_filename : str
-        File name for the bins file.  Default ``'bins.dat'``.
+        Name of the bins file. Default ``'bins.dat'``.
     bin_flux_mode : {'nstars', 'uniform', 'custom'}
-        Controls what is written to the ``bin_flux`` column.
+        What to write in the ``bin_flux`` column.
 
         ``'nstars'`` *(default)*
-            Use the number of stars in each bin
-            (``solver.n_stars``, set by :meth:`~KinematicSolver.add_data`).
-            This is the physically meaningful analog of IFU surface brightness
-            for discrete stellar kinematic data.  ``bin_flux`` is used by
-            Dynamite **only** for flux-weighted systemic velocity centering
-            (``center_v_systemic``); it does **not** enter the NNLS chi²
-            (confirmed from ``NNLS.construct_nnls_matrix_and_rhs`` and
-            ``BayesLOSVD.get_observed_values_and_uncertainties`` in
-            Dynamite's source).  N_stars is the physically appropriate
-            quantity to pass for discrete stellar data.
+            The number of stars in each bin (``solver.n_stars``, set by
+            :meth:`~KinematicSolver.add_data`), the discrete-data counterpart
+            of IFU surface brightness. Dynamite uses ``bin_flux`` **only** to
+            flux-weight the systemic velocity (``center_v_systemic``); it does
+            **not** enter the NNLS chi² (see
+            ``NNLS.construct_nnls_matrix_and_rhs`` and
+            ``BayesLOSVD.get_observed_values_and_uncertainties`` in Dynamite).
 
         ``'uniform'``
-            Write 1.0 for every bin.  Use this if you want equal weighting
-            of all bins in any flux-weighted calculation, or if you are
-            uncertain about the right quantity and want a neutral default.
+            1.0 for every bin, for equal weighting or as a neutral choice.
 
         ``'custom'``
-            Read ``bin_flux`` from ``voronoi_bin_metadata['bins'][i]['bin_flux']``
-            for each bin.  Useful if you have an external flux estimate
-            (e.g. sum of photometric counts in each Voronoi cell).
+            Read from ``voronoi_bin_metadata['bins'][i]['bin_flux']``, for an
+            external flux estimate such as summed photometric counts per
+            Voronoi cell.
 
     Raises
     ------
     ValueError
-        If no solved bins are found, or if solvers share inconsistent grids.
+        If there are no fitted bins, or if the solvers' grids differ.
     AssertionError
-        If any LOSVD uncertainty is ≤ 0 after clipping (would cause ``econ``
-        zeros in Dynamite).
+        If any LOSVD uncertainty is <= 0 after clipping, which would give
+        ``econ`` zeros in Dynamite.
 
     Returns
     -------

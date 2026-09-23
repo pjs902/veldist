@@ -1,19 +1,17 @@
-"""
-Observing profiles for the 2D (proper-motion) solver.
+"""Observing profiles for the 2D (proper-motion) solver.
 
-The 1D harness derives its velocity grid from the observing regime rather than
-having it chosen by hand (see ``calibration.py``); this is the 2D counterpart.
-It exists because the 2D test harness previously had no profile at all: its
-grid and errors were inherited from the SBC harness, whose own comment calls
-the grid an "arbitrary physical span", and its star count was copied from the
-*line-of-sight* profile. Proper motions reach ~6 magnitudes deeper than the
-spectroscopy, so both the star counts and the errors are quite different.
+As in 1D (``calibration.py``), the velocity grid is derived from the
+observing regime rather than chosen by hand. Before this module existed,
+the 2D tests had no profile: the grid and errors came from the SBC harness
+(whose own comment calls the grid an "arbitrary physical span"), and the
+star count was copied from the *line-of-sight* profile. Proper motions
+reach about 6 magnitudes deeper than the spectroscopy, so both star counts
+and errors are very different.
 
-Calibration source: the oMEGaCat proper-motion uncertainty-vs-magnitude
-figures. The unit conversion uses the standard 1 mas/yr = 4.740470 *
-distance[kpc] km/s relation at the adopted cluster distance of 5494 pc
-(Peter, 2026-08-06), giving 1 mas/yr = 26.04 km/s. The quality cut is
-0.3 mas/yr.
+Calibration source: the oMEGaCat proper-motion error-versus-magnitude
+figures. Units are converted with 1 mas/yr = 4.740470 * distance[kpc] km/s
+at the adopted cluster distance of 5494 pc (set 2026-08-06), so
+1 mas/yr = 26.04 km/s. The quality cut is 0.3 mas/yr.
 """
 
 from dataclasses import dataclass, field
@@ -80,38 +78,36 @@ _CPS_ANCHORS = ((0.13, 0.58), (1.22, 0.85))
 
 
 def cell_per_sigma_for(err_over_sigma):
-    """Target cell width in units of sigma, for a given measurement-error
-    regime.
+    """Target cell width in units of sigma for a given measurement-error regime.
 
-    A single global constant is the wrong shape. HST and Gaia disagree by
-    ~1.5x, and the reason is that ``rms_z`` is bias over interval width:
-    HST's err/sigma_lo is 0.13 against Gaia's 1.22, so its posterior is sharp
-    and there is nothing to hide a residual discretisation bias behind. Gaia
-    tolerates coarse cells because its large errors inflate the intervals
-    enough to swallow the same absolute error. **Precise data needs FINER
-    grids** -- the opposite of the usual intuition.
+    One global constant does not work: HST and Gaia need values about 1.5x
+    apart. The reason is that ``rms_z`` is bias divided by interval width.
+    HST's err/sigma_lo is 0.13 against Gaia's 1.22, so HST's posterior is
+    sharp and leaves nothing to hide a leftover discretisation bias behind,
+    while Gaia's large errors widen the intervals enough to absorb the same
+    absolute bias. **Precise data need FINER grids**, the opposite of the
+    usual intuition.
 
-    This is an **empirical two-point power law**, not a derived result. The
-    obvious physical model -- keep the discretisation bias below the
-    statistical error, which scales as ``(1 + (err/sigma)^2)^(1/4)`` --
-    predicts a ratio of 1.20 between these two regimes, against 1.47
-    measured. Something else contributes, most plausibly that a weak
-    likelihood lets the roughness prior smooth the recovered pdf, so coarse
-    cells cost less than the error budget alone suggests. Until that is
-    understood, do not extrapolate this far outside the anchors; the
-    exponent is fitted to two points and carries no theory.
+    This is an **empirical power law through two points**, not a derived
+    result. The obvious model, keeping the discretisation bias below the
+    statistical error (which scales as ``(1 + (err/sigma)^2)^(1/4)``),
+    predicts a ratio of 1.20 between the two regimes, against 1.47 measured.
+    Something else contributes, most likely that a weak likelihood lets the
+    roughness prior smooth the recovered pdf, so coarse cells cost less than
+    the error budget alone suggests. Until that is understood, do not
+    extrapolate far beyond the two anchor points.
 
     Parameters
     ----------
     err_over_sigma : float
-        Median per-star measurement error divided by the dispersion the grid
-        has to resolve (``profile.err_median / profile.sigma_lo``).
+        Median per-star error divided by the dispersion the grid must resolve
+        (``profile.err_median / profile.sigma_lo``).
 
     Returns
     -------
     float
-        Cell width in units of sigma, clipped to the measured range so a
-        wild input cannot silently produce an absurd grid.
+        Cell width in units of sigma, clipped to the measured range so a wild
+        input cannot silently give an absurd grid.
     """
     (e_lo, c_lo), (e_hi, c_hi) = _CPS_ANCHORS
     p = np.log(c_hi / c_lo) / np.log(e_hi / e_lo)
@@ -127,7 +123,7 @@ def _log_sigma_from_p95(err):
 
 @dataclass(frozen=True)
 class ObservingProfile2D:
-    """A proper-motion observing regime, and the velocity grid it implies.
+    """A proper-motion observing regime and the velocity grid it implies.
 
     Parameters
     ----------
@@ -136,36 +132,34 @@ class ObservingProfile2D:
     sigma_ref : float
         Representative intrinsic velocity dispersion, km/s.
     err_median : float
-        Sample-median per-star measurement error, km/s.
+        Median per-star measurement error, km/s.
     err_cut : float
-        Upper truncation on the error distribution, km/s (the quality cut).
-        Must exceed ``err_median``, since a truncation below the median of
-        the thing it truncates is not a cut but a collapse -- see
-        :meth:`draw_errors`.
+        Upper limit of the error distribution (the quality cut), km/s. Must
+        exceed ``err_median``: a cut below the median of the distribution it
+        truncates would collapse it (see :meth:`draw_errors`).
     err_log_sigma : float or None
-        Log-normal width of the per-star error distribution. ``None`` (the
-        default) back-derives it from ``err_cut`` on the assumption that the
-        cut sits at the 95th percentile. Set it explicitly whenever it has
-        been measured; ``from_data`` always does. Mirrors
-        :attr:`ObservingProfile.err_log_sigma` in 1D, which has always been
-        an independent field for exactly this reason.
+        Log-normal width of the per-star error distribution. ``None``
+        (default) derives it from ``err_cut``, assuming the cut sits at the
+        95th percentile. Set it whenever it has been measured, as ``from_data``
+        always does. It is a separate field for the same reason as
+        :attr:`ObservingProfile.err_log_sigma` in 1D.
     n_stars : int
-        Stars per spatial (Voronoi) bin -- the science target. Fewer stars per
-        bin means more bins, hence better spatial coverage, so this is a
-        resolution choice and not a convenience value.
+        Stars per spatial (Voronoi) bin, the science target. Fewer stars per
+        bin means more bins and better spatial coverage, so this is a
+        resolution choice, not a convenience value.
     n_sigma_grid : float
         Half-width of the velocity grid in units of ``sigma_ref``.
     cell_per_sigma : float or None
-        Target cell width in units of ``sigma_lo``. ``None`` (the default)
-        derives it from this profile's own error regime via
-        :func:`cell_per_sigma_for` -- the right behaviour, since the
-        requirement is regime-dependent and a shared constant fails one of
-        the two measured datasets. Set it explicitly only to pin a grid.
+        Target cell width in units of ``sigma_lo``. ``None`` (default) derives
+        it from this profile's error regime with :func:`cell_per_sigma_for`,
+        which is what you want, since the right value depends on the regime
+        and a shared constant fails one of the two measured datasets. Set it
+        only to pin a grid.
 
-        **Re-measured 2026-09-01** against the real Gaia profile (435 stars,
-        the measured dispersion range and rotation span), post-h^2/12-fix,
-        sweeping {0.85, 1.10, 1.40, 1.80} on both truths, 40 realisations
-        each:
+        **Re-measured on 2026-09-01** against the real Gaia profile (435
+        stars, the measured dispersion range and rotation span), after the
+        h^2/12 fix, sweeping {0.85, 1.10, 1.40, 1.80} on both truths with 40
+        realisations each:
 
             cps    K   stars/cell   sigma_y bias   sigma_y rms_z   rho rms_z
             0.85  25      0.70      +0.150 (2.8%)      0.97          1.18
@@ -173,31 +167,30 @@ class ObservingProfile2D:
             1.40  15      1.93      +0.439 (8.2%)      1.17          1.05
             1.80  13      2.57      +0.670 (12.5%)     1.53          1.50
 
-        (bias on the ANISOTROPIC truth's narrow axis; percentages are of that
-        axis's own sy=5.34. The isotropic truth stays flat across the whole
-        range -- the failure only appears on an anisotropic velocity
-        ellipsoid, so an isotropic-only check does not see it.)
+        The bias is on the narrow axis of the ANISOTROPIC truth; percentages
+        are of that axis's own sy = 5.34. The isotropic truth is flat across
+        the whole range, so a check on an isotropic truth alone would miss
+        the problem.
 
-        0.85 is chosen for <3% bias with both rms_z near 1. 1.10 is
-        defensible if compute forces it; 1.40 and beyond are not -- rms_z 1.5
-        at 1.80 means the reported intervals are half the width they should
-        be, on both sigma_y and rho.
+        0.85 is chosen for a bias under 3% with both rms_z near 1. 1.10 is
+        defensible if compute requires it; 1.40 and above are not. An rms_z of
+        1.5 at 1.80 means the reported intervals are about two-thirds of the
+        width they should be, on both sigma_y and rho.
 
-        Note the scale mismatch this exposes: cell_per_sigma is defined
-        against ``sigma_lo``, but the narrow axis of an anisotropic ellipsoid
-        is smaller still (0.65x here), so the cells are ~1.3x that axis's own
-        sigma even at 0.85. Resolution has the same per-axis character extent
-        does; defining it against the narrowest AXIS rather than the
-        narrowest BIN would be the cleaner fix, and is not done yet.
+        This also exposes a scale mismatch. cell_per_sigma is defined relative
+        to ``sigma_lo``, but the narrow axis of an anisotropic ellipsoid is
+        smaller still (0.65x here), so even at 0.85 the cells are about 1.3x
+        that axis's sigma. Defining resolution against the narrowest *axis*
+        rather than the narrowest *bin* would be cleaner, and has not been
+        done yet.
 
-        The previous value (0.47) came from a sweep run BEFORE the h^2/12
-        correction, when refining the grid shrank a bias the estimator itself
-        was manufacturing -- that sweep measured the bug's
-        resolution-dependence and read it as a resolution requirement. (That
-        sweep ran cell_per_sigma in {0.78 ... 0.37} at N=400 under the
-        gaussian_core prior; its conclusion that "K=19 breaks on anisotropic
-        truths" is superseded -- the breakage was the estimator's, not the
-        grid's.)
+        The previous value, 0.47, came from a sweep run BEFORE the h^2/12
+        correction. Refining the grid then shrank a bias that the estimator
+        itself was creating, so the sweep measured how the bug scaled with
+        resolution and read it as a resolution requirement. (That sweep ran
+        cell_per_sigma from 0.78 to 0.37 at N=400 with the gaussian_core
+        prior; its conclusion that "K=19 breaks on anisotropic truths" no
+        longer holds: the failure was the estimator's, not the grid's.)
     """
 
     name: str
@@ -241,49 +234,52 @@ class ObservingProfile2D:
     def grid_width(self):
         """Total width of the (square) velocity grid, km/s.
 
-        DYNAMITE takes one scalar ``vxrange``/``vyrange`` per map, so a single
-        grid must serve every spatial bin: it has to hold the widest LOSVD in
-        the field plus the mean-velocity offset of the bins furthest from
-        systemic. Mirrors :attr:`ObservingProfile.grid_width` in 1D.
+        Dynamite takes one ``vxrange``/``vyrange`` per map, so a single grid has
+        to serve every spatial bin: it must hold the widest distribution in the
+        field plus the mean-velocity offset of the bins furthest from systemic.
+        Same as :attr:`ObservingProfile.grid_width` in 1D.
         """
         return 2.0 * self.n_sigma_grid * self.sigma_hi + self.rotation_span
 
     @property
     def cells_per_sigma_target(self):
-        """Cell width in units of sigma: explicit override, else derived from
-        this profile's own error regime via :func:`cell_per_sigma_for`."""
+        """Cell width in units of sigma: the explicit value if set, otherwise
+        derived from this profile's error regime with :func:`cell_per_sigma_for`.
+        """
         if self.cell_per_sigma is not None:
             return self.cell_per_sigma
         return cell_per_sigma_for(self.err_median / self.sigma_lo)
 
     @property
     def cell_width(self):
-        """Target cell width, km/s: resolve the narrowest LOSVD in the field.
+        """Target cell width, km/s, chosen to resolve the narrowest distribution
+        in the field.
 
-        Uses ``sigma_lo``, not ``sigma_ref`` -- one shared grid must resolve
-        every bin, and the narrowest one is the binding case.
+        Uses ``sigma_lo``, not ``sigma_ref``: one shared grid has to resolve
+        every bin, and the narrowest one is the limiting case.
         """
         return self.cells_per_sigma_target * self.sigma_lo
 
     @property
     def error_floor_width(self):
-        """Cell width below which refining buys nothing, km/s.
+        """Cell width below which refining the grid gains nothing, km/s.
 
-        1D sets its bin width to exactly this (``bins_per_error *
-        err_median``): the measurement errors have already smeared the signal
-        at that scale. It is reported rather than imposed here because in 2D
-        cells cost quadratically, and because when it EXCEEDS
-        :attr:`cell_width` the two rules genuinely conflict -- the errors
-        dominate and no grid resolves the narrowest bins. That is the Gaia
-        regime (err/sigma approaches 1) and it is a fact about the data, not
-        a tuning choice. :func:`recommend_grid_2d` flags it.
+        In 1D the bin width is set to exactly this (``bins_per_error *
+        err_median``), since the measurement errors have already blurred the
+        signal on that scale. In 2D it is only reported, because the number of
+        cells grows quadratically, and because when it is LARGER than
+        :attr:`cell_width` the two requirements conflict: the errors dominate
+        and no grid can resolve the narrowest bins. That is the Gaia regime
+        (err/sigma near 1), and it is a property of the data, not a tuning
+        choice. :func:`recommend_grid_2d` flags it.
         """
         return self.bins_per_error * self.err_median
 
     @property
     def n_bins(self):
-        """Cells per axis. Always odd: DYNAMITE's ProperMotions reader
-        (``set_default_hist_bins``) raises ValueError on even counts."""
+        """Cells per axis. Always odd, because Dynamite's ProperMotions reader
+        (``set_default_hist_bins``) rejects even counts.
+        """
         n = int(round(self.grid_width / self.cell_width))
         n = max(n, 5)
         return n if n % 2 == 1 else n + 1
@@ -296,16 +292,16 @@ class ObservingProfile2D:
     def draw_errors(self, n, rng):
         """Draw ``n`` per-star measurement errors, km/s.
 
-        Log-normal about ``err_median``, truncated at ``err_cut``. The spread
-        is :attr:`err_log_sigma` when known; otherwise it is back-derived from
-        ``err_cut`` on the assumption that the cut sits at roughly the 95th
-        percentile, which is what the magnitude-dependent error distribution
-        looks like once a quality cut is applied.
+        Log-normal around ``err_median``, truncated at ``err_cut``. The spread is
+        :attr:`err_log_sigma` when known. Otherwise it is derived from
+        ``err_cut`` assuming the cut sits near the 95th percentile, which is
+        roughly what a magnitude-dependent error distribution looks like after a
+        quality cut.
 
-        That back-derivation is only as good as the assumption. Gaia's real
-        cut is 10 mas/yr = 260 km/s, i.e. no cut at all, so its spread is set
-        by the magnitude distribution (measured ``err_log_sigma`` 0.727) and
-        not by any truncation. Prefer measuring it.
+        That fallback is only as good as its assumption. Gaia's real cut is
+        10 mas/yr = 260 km/s, effectively no cut, so its spread comes from the
+        magnitude distribution (measured ``err_log_sigma`` 0.727), not from any
+        truncation. Measure it where possible.
         """
         sigma_log = (
             self.err_log_sigma
@@ -319,31 +315,29 @@ class ObservingProfile2D:
     def from_data(cls, pm1, pm2, err1, err2, bin_ids, err_cut, name="measured", min_stars=10):
         """Measure a profile from a real proper-motion catalogue.
 
-        Mirrors :meth:`ObservingProfile.from_data`: both HST and Gaia
-        dataprep notebooks independently hand-rolled this exact per-bin
-        estimator, so it belongs here instead of duplicated per notebook.
+        The 2D version of :meth:`ObservingProfile.from_data`. The HST and Gaia
+        data-preparation notebooks had each written this same per-bin estimator,
+        so it lives here instead.
 
-        ``err_cut`` is a quality cut applied upstream (Gaia's is ~4x HST's),
-        not something measurable from post-cut data, so it is a required
-        argument rather than derived.
+        ``err_cut`` is a quality cut applied upstream (Gaia's is about 4x HST's)
+        and cannot be measured from the data after the cut, so it is a required
+        argument.
 
         Parameters
         ----------
         pm1, pm2 : array-like, shape (n_stars,)
-            Proper-motion components, km/s, in the frame the grid is defined
-            in.
+            Proper-motion components in km/s, in the frame of the grid.
         err1, err2 : array-like, shape (n_stars,)
-            Per-star measurement errors on ``pm1``/``pm2``, km/s.
+            Per-star errors on ``pm1`` and ``pm2``, km/s.
         bin_ids : array-like, shape (n_stars,)
-            Spatial bin index for each star. Values need not be contiguous.
+            Spatial bin index of each star; need not be contiguous.
         err_cut : float
-            Upper truncation on the error distribution, km/s.
+            Upper limit of the error distribution, km/s.
         name : str
-            Label carried into the returned profile.
+            Label for the returned profile.
         min_stars : int
-            Bins with fewer stars are excluded from every measured
-            statistic (``sigma_ref``, ``err_median``, ``n_stars``), applied
-            consistently rather than per-statistic.
+            Bins with fewer stars are left out of every measured statistic
+            (``sigma_ref``, ``err_median``, ``n_stars``).
 
         Returns
         -------
@@ -352,7 +346,7 @@ class ObservingProfile2D:
         Raises
         ------
         ValueError
-            If fewer than 2 bins survive the *min_stars* cut.
+            If fewer than 2 bins pass the *min_stars* cut.
         """
         pm1 = np.asarray(pm1, dtype=float)
         pm2 = np.asarray(pm2, dtype=float)
@@ -406,15 +400,14 @@ class ObservingProfile2D:
         )
 
     def cells_per_sigma(self, axis_sigma):
-        """Cell width in units of an axis's own intrinsic dispersion.
+        """Cell width in units of one axis's own intrinsic dispersion.
 
         ``cell_per_sigma`` and ``n_bins`` are defined relative to the single
-        scalar ``sigma_ref``, which only describes the actual per-axis
-        resolution when the velocity ellipsoid is isotropic. For an
-        anisotropic truth, a narrow axis (smaller ``axis_sigma``) gets a
-        LARGER (coarser) number here than ``sigma_ref`` does, and a wide axis
-        gets a smaller (finer) one -- the grid itself doesn't change, only
-        how fine it is relative to that axis's own spread.
+        scalar ``sigma_ref``, which describes the real per-axis resolution only
+        for an isotropic velocity ellipsoid. For an anisotropic truth, a narrow
+        axis (smaller ``axis_sigma``) gets a LARGER, coarser value here and a wide
+        axis a smaller, finer one. The grid is the same; only its resolution
+        relative to each axis's spread differs.
         """
         return (self.grid_width / self.n_bins) / axis_sigma
 
@@ -444,11 +437,11 @@ class ObservingProfile2D:
 
 
 def truths_for(sigma):
-    """Scale the two test truths (isotropic, anisotropic) to a profile's
-    sigma_ref rather than hardcoding absolute km/s values.
+    """Scale the two test truths (isotropic and anisotropic) to a profile's
+    ``sigma_ref`` instead of hard-coding km/s values.
 
-    Shared by ``test_coverage_2d.py`` and :func:`recovery_curve_2d` so the
-    two never drift apart -- previously duplicated in the test module only.
+    Shared by ``test_coverage_2d.py`` and :func:`recovery_curve_2d` so the two
+    cannot drift apart.
     """
     return {
         "isotropic": dict(mux=0.0, muy=0.0, sx=sigma, sy=sigma, rho=0.0),
@@ -460,9 +453,10 @@ def truths_for(sigma):
 
 
 def _draw_stars(rng, truth, n_stars, profile):
-    """Draw one mock bin's observed (x, y) proper motions and per-star
-    diagonal covariance for a given truth, star count, and profile's error
-    distribution."""
+    """Draw one mock bin: observed (x, y) proper motions and per-star
+    diagonal covariances, for a given truth, star count and profile error
+    distribution.
+    """
     mean = [truth["mux"], truth["muy"]]
     cov_true = [
         [truth["sx"] ** 2, truth["rho"] * truth["sx"] * truth["sy"]],
@@ -482,42 +476,29 @@ def _draw_stars(rng, truth, n_stars, profile):
 
 
 def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
-    """Moments to compare the recovered fit against, plus the TRUE exact
-    per-cell probability mass (used for per-cell coverage, not for the
-    returned moments).
+    """Moments to score the fit against, plus the exact per-cell mass of the
+    truth (for per-cell coverage).
 
-    Returns the CONTINUOUS analytic truth's mean/sigma/rho -- i.e. exactly
-    ``t``'s own ``mux``/``muy``/``sx``/``sy``/``rho``, independent of the
-    grid -- alongside the exact per-cell mass array on ``edges_x``/
-    ``edges_y`` (still needed by callers that check per-cell coverage
-    against ``mass``, e.g. ``test_per_cell_losvd_coverage_2d``).
+    The returned mean, sigma and rho are those of the CONTINUOUS truth, i.e.
+    exactly ``t``'s own ``mux``, ``muy``, ``sx``, ``sy`` and ``rho``,
+    independent of the grid. The exact per-cell mass on ``edges_x`` /
+    ``edges_y`` is also returned, for callers that check per-cell coverage
+    (e.g. ``test_per_cell_losvd_coverage_2d``).
 
-    This function used to return cell-centre POINT-MASS moments of ``mass``
-    instead (i.e. Sheppard-inflated: ``V + h^2/12`` per axis), on the
-    argument that this was "the fair comparison" because comparing a
-    cell-centre moment against the continuous truth "charges the model for
-    grid discretisation". That argument was correct for the OLD
-    ``_moments_from_pdf_samples_2d``, which computed the same kind of
-    point-mass moment on the recovered posterior (``V_hat - h^2/12``, since
-    the likelihood's forward model spreads each cell's mass uniformly
-    across the cell -- see that function's docstring for the full
-    three-way derivation). Comparing two point-mass estimators of the same
-    biased quantity was consistent.
+    This function used to return point-mass moments of the cell masses at the
+    cell centres (``V + h^2/12`` per axis, Sheppard-inflated), on the grounds
+    that comparing against the continuous truth would "charge the model for
+    grid discretisation". That was consistent while
+    ``_moments_from_pdf_samples_2d`` also computed point-mass moments. It now
+    adds ``h^2/12`` so it estimates the continuous variance that the
+    likelihood fits (see its docstring). Scoring that against the old
+    Sheppard-inflated target would count the ``h^2/12`` term twice and leave
+    an ``h^2/6`` gap the other way. The correct target is the continuous
+    truth, which is also independent of the grid, as it should be.
 
-    ``_moments_from_pdf_samples_2d`` now adds ``h^2/12`` back so it
-    estimates the CONTINUOUS variance instead (matching what the
-    likelihood actually fits). Once the recovered side targets the
-    continuous quantity, comparing it against the OLD Sheppard-inflated
-    target here would double-count the ``h^2/12`` term (add it once on
-    "truth", once again implicitly via the recovered side, netting a
-    ``h^2/6`` gap in the wrong direction). The correct target now is the
-    quantity `_moments_from_pdf_samples_2d` actually estimates: the
-    continuous truth, full stop -- which is also grid-independent, as it
-    should be.
-
-    ``edges_x``/``edges_y`` need not have the same length -- a rectangular
-    grid (``kx != ky``) is fine. The flat index follows the same row-major
-    convention as ``setup_grid_2d``: ``m = ix * ky + iy``.
+    ``edges_x`` and ``edges_y`` may differ in length (a rectangular grid,
+    ``kx != ky``). The flat index follows ``setup_grid_2d``'s row-major
+    convention, ``m = ix * ky + iy``.
     """
     from scipy.stats import multivariate_normal
 
@@ -544,50 +525,44 @@ def _discretised_truth_moments(t, edges_x, edges_y, centers_2d):
 
 
 def _moments_from_pdf_samples_2d(pdf_samples, centers_2d, grid):
-    """Per-sample mean_x, mean_y, sigma_x, sigma_y, rho from 2D pdf draws.
+    """Per-sample mean_x, mean_y, sigma_x, sigma_y and rho from 2D pdf draws.
 
-    ``grid`` must supply the per-axis cell widths (``grid["width_x"]``,
-    ``grid["width_y"]`` -- despite the name these are the CELL width, i.e.
-    ``edges_x[1] - edges_x[0]``, not the grid's total span; see
-    ``setup_grid_2d``'s docstring). Pass the same grid dict the caller used
-    to build ``centers_2d`` (e.g. ``solver.grid``).
+    ``grid`` must provide the per-axis cell widths ``grid["width_x"]`` and
+    ``grid["width_y"]``. Despite the names, these are CELL widths
+    (``edges_x[1] - edges_x[0]``), not the total span of the grid; see
+    ``setup_grid_2d``. Pass the grid dict used to build ``centers_2d``
+    (e.g. ``solver.grid``).
 
-    Why this needs the cell width at all
-    --------------------------------------
-    ``p_m`` (one entry of ``pdf_samples``) is interpreted THREE different,
-    mutually inconsistent ways across this codebase:
+    Why the cell width is needed
+    ----------------------------
+    A cell value ``p_m`` was interpreted three inconsistent ways in this
+    code:
 
-    1. THE LIKELIHOOD (``precompute_design_matrix`` / its 2D counterpart)
-       treats ``p_m`` as mass spread UNIFORMLY across cell ``m`` -- that is
-       the piecewise-constant assumption implicit in pulling ``p(v) ~= p_m/h``
-       out of the per-cell integral when deriving the forward model. The
-       density the likelihood actually fits, ``q(v)``, therefore has
-       ``Var(q) = sum_m p_m (v_m - mu)^2 + h^2/12`` -- the ``h^2/12`` is the
-       exact variance of a Uniform(cell) distribution.
-    2. THIS FUNCTION, before this fix, treated ``p_m`` as a POINT MASS at
-       the cell centre: ``Var = sum_m p_m (v_m - mu)^2``, with no
-       within-cell term -- i.e. it was reporting a different, smaller
-       quantity than the one the likelihood fits.
-    3. ``_discretised_truth_moments`` computes exact cell masses of the
-       analytic truth and (before this fix) ALSO took point-mass moments at
-       cell centres, giving ``V + h^2/12`` (Sheppard's correction) where
-       ``V`` is the continuous truth variance.
+    1. THE LIKELIHOOD (``precompute_design_matrix`` and its 2D counterpart)
+       treats ``p_m`` as mass spread UNIFORMLY over cell ``m``: taking
+       ``p(v) ~= p_m/h`` out of the per-cell integral assumes a
+       piecewise-constant density. The fitted density ``q(v)`` therefore has
+       ``Var(q) = sum_m p_m (v_m - mu)^2 + h^2/12``, where ``h^2/12`` is the
+       variance of a uniform distribution over one cell.
+    2. THIS FUNCTION, before the fix, treated ``p_m`` as a POINT MASS at the
+       cell centre, ``Var = sum_m p_m (v_m - mu)^2``, with no within-cell
+       term, and so reported a smaller quantity than the one fitted.
+    3. ``_discretised_truth_moments`` took point-mass moments of the exact
+       cell masses of the truth, giving ``V + h^2/12`` (Sheppard's
+       correction), where ``V`` is the continuous variance.
 
-    Since the data drive the likelihood's ``Var(q)`` toward the true
-    continuous ``V``, the old (2) reported ``V - h^2/12`` while the old (3)
-    target was ``V + h^2/12`` -- a resolution-dependent gap of ``h^2/6`` in
-    variance (about ``h^2/(12*sigma)`` in sigma) between what this function
-    reported and what it was compared against. Adding ``h^2/12`` here makes
-    (2) estimate the same continuous quantity the likelihood fits and
-    ``_discretised_truth_moments`` now targets (see that function's
-    docstring for the other half of the fix).
+    The data push the likelihood's ``Var(q)`` toward the true ``V``, so (2)
+    reported ``V - h^2/12`` while (3) expected ``V + h^2/12``: a gap of
+    ``h^2/6`` in variance, about ``h^2/(12*sigma)`` in sigma, that depends on
+    resolution. Adding ``h^2/12`` here makes (2) estimate the same continuous
+    quantity the likelihood fits and that ``_discretised_truth_moments`` now
+    targets (see its docstring for the other half of the fix).
 
-    The x/y COVARIANCE term gets no correction: cells are axis-aligned
-    rectangles, so the within-cell distribution is a uniform product over
-    the cell and x/y are independent within a cell -- zero cross-covariance
-    contribution. ``rho`` is recomputed from the corrected variances, which
-    slightly reduces ``|rho|`` -- that is the correct consequence of the
-    correction, not a separate bug.
+    The x/y covariance needs no correction: cells are axis-aligned
+    rectangles, so within a cell x and y are independent and add no
+    covariance. ``rho`` is recomputed from the corrected variances, which
+    reduces ``|rho|`` slightly; that is the intended effect of the
+    correction.
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     cx = centers_2d[:, 0]
@@ -614,47 +589,40 @@ def _moments_from_pdf_samples_2d(pdf_samples, centers_2d, grid):
 
 @dataclass
 class RecoveryCurve2D:
-    """How well each 2D moment (including tilt, ``rho``) is recovered as a
-    function of raw star count.
+    """How well each 2D moment, including the tilt ``rho``, is recovered as a
+    function of star count.
 
-    2D counterpart of :class:`RecoveryCurve`, swept over ``n_stars`` directly
-    rather than an information-content proxy (no 2D ``ivar`` equivalent
-    exists yet -- see :func:`recovery_curve_2d`'s docstring).
+    The 2D counterpart of :class:`RecoveryCurve`. It sweeps ``n_stars``
+    directly, because there is no 2D equivalent of ``ivar`` yet (see
+    :func:`recovery_curve_2d`).
 
     Notes
     -----
-    ``cr_bound`` for ``rho`` uses the standard bivariate-normal MLE
-    approximation ``Var(rho_hat) ~= (1 - rho**2)**2 / n``, i.e.
-    ``(1 - rho**2) / sqrt(n)`` as a CI-width-like quantity. Like 1D's
-    skewness/kurtosis Cramer-Rao bounds, this is only exact for homogeneous
-    per-star errors; with the heterogeneous errors this package actually
-    fits, this approximation is not reliable for ``rho``. Because of that,
-    :meth:`threshold` does not gate ``rho`` on the CI/CR efficiency check --
-    only on coverage. The ratio is still computed and printed by
-    :meth:`report` for every metric, ``rho`` included, but it is advisory
-    only there.
+    ``cr_bound`` for ``rho`` uses the bivariate-normal approximation
+    ``Var(rho_hat) ~= (1 - rho**2)**2 / n``, i.e. ``(1 - rho**2) / sqrt(n)``
+    as an interval-width scale. Like the 1D bounds for skewness and kurtosis,
+    this is exact only when all stars have the same error, and it is not
+    reliable with the unequal errors this package handles. So
+    :meth:`threshold` gates ``rho`` on coverage only, not on the CI/CR
+    ratio. :meth:`report` still prints the ratio for every metric, but for
+    ``rho`` it is advisory.
 
-    ``rms_z`` (see :func:`recovery_curve_2d`) sidesteps this entirely: it
+    ``rms_z`` (see :func:`recovery_curve_2d`) avoids this problem. It
     measures interval calibration directly from the standardised residuals
-    ``(median - truth) / half68``, with no analytic Cramer-Rao bound
-    involved at all. That makes it a Cramer-Rao-FREE efficiency measure --
-    unlike the ``ci_width``/``cr_bound`` ratio, it is reliable for ``rho``
-    too, and is not exempted from anything.
+    ``(median - truth) / half68``, with no Cramér-Rao bound involved, so it
+    is reliable for ``rho`` as well.
 
-    It also fixes a resolution problem with ``coverage`` itself: coverage
-    thresholds the continuous residual at 1.0 (hit or miss), so a fit that
-    misses by 1.01 half-widths counts identically to one that misses by
-    3.0. Measured on an isotropic truth, where ``sigma_x`` and ``sigma_y``
-    are provably identical in expectation (an A/A test whose true
-    difference is zero), the observed coverage difference between them at
-    n_real=100 was 0.14 -- the end-to-end noise floor of the coverage
-    statistic. The bias statistic's A/A spread over the same run was only
-    0.052, about 3x better resolution. Several conclusions had been drawn
-    from coverage differences of 0.04-0.09, i.e. below its noise floor.
-    ``rms_z`` keeps the continuous residual instead of thresholding it, and
-    is the preferred statistic for reading off small differences between
-    runs; use :meth:`aa_noise` to measure the noise floor of any of these
-    statistics for your own data.
+    It also has better resolution than ``coverage``. Coverage turns each
+    residual into hit or miss at 1.0, so missing by 1.01 half-widths counts
+    the same as missing by 3.0. On an isotropic truth, where ``sigma_x`` and
+    ``sigma_y`` are identical in expectation (an A/A test with a true
+    difference of zero), their coverage differed by 0.14 at n_real=100: that
+    is the end-to-end noise floor of coverage. The bias differed by only
+    0.052 in the same run, about three times better. Several earlier
+    conclusions rested on coverage differences of 0.04-0.09, below the noise
+    floor. ``rms_z`` keeps the continuous residual and is the better
+    statistic for small differences between runs; use :meth:`aa_noise` to
+    measure the noise floor of any of these statistics on your own setup.
     """
 
     profile: object
@@ -663,19 +631,16 @@ class RecoveryCurve2D:
     n_real: int = None
 
     def threshold(self, metric, min_coverage=None, max_ci_ratio=1.5, band=0.99):
-        """Smallest ``n_stars`` at which *metric* is trustworthy, or ``None``.
+        """Smallest ``n_stars`` at which *metric* can be trusted, or ``None``.
 
-        Same two-condition, walk-down-from-the-top logic as
-        :meth:`RecoveryCurve.threshold`, keyed on ``n_stars`` instead of
-        ``ivar``. See that method's docstring for the full rationale.
+        Uses the same two conditions and top-down walk as
+        :meth:`RecoveryCurve.threshold`, over ``n_stars`` instead of ``ivar``;
+        see that method for the reasoning.
 
-        The ``ci_width <= max_ci_ratio * cr_bound`` efficiency check does
-        NOT gate ``metric == "rho"`` -- only the coverage floor does. This is
-        because ``rho``'s ``cr_bound`` uses the bivariate-normal MLE
-        approximation, which (see the class docstring) is only exact for
-        homogeneous per-star errors; under this package's heterogeneous
-        errors it is not a reliable efficiency yardstick, so ``max_ci_ratio``
-        is advisory-only for ``rho``. Every other metric keeps both checks.
+        For ``metric == "rho"`` only the coverage floor applies, not the
+        ``ci_width <= max_ci_ratio * cr_bound`` check, because ``rho``'s
+        ``cr_bound`` is not reliable with unequal errors (see the class
+        docstring). Every other metric uses both checks.
         """
         sel = [r for r in self.rows if r["metric"] == metric]
         if not sel:
@@ -743,31 +708,27 @@ class RecoveryCurve2D:
         return "\n".join(lines)
 
     def aa_noise(self, metric_a, metric_b, n_stars):
-        """Observed difference between two metrics that are exchangeable
-        under the truth used, i.e. an A/A test whose true difference is
-        zero.
+        """Observed difference between two metrics that should be identical under
+        the truth used: an A/A test whose true difference is zero.
 
-        Returns the observed difference in coverage, bias, and rms_z, which
-        together estimate the end-to-end noise floor of each statistic --
-        including mock-draw noise and NUTS sampling noise, not just the
-        binomial term the coverage floor assumes.
+        Returns the differences in coverage, bias and rms_z, which estimate the
+        end-to-end noise floor of each statistic, including mock-draw and NUTS
+        sampling noise, not just the binomial term the coverage floor assumes.
 
-        This is ONLY meaningful when *metric_a* and *metric_b* really are
-        exchangeable under the truth this curve was built with --
-        specifically ``("sigma_x", "sigma_y")`` or ``("mean_x", "mean_y")``
-        on the ``"isotropic"`` truth, where the square grid and symmetric
-        prior make x and y statistically identical. On an anisotropic truth
-        these metrics are NOT exchangeable and the result is meaningless.
-        This method cannot verify the pair itself, only the truth, so it
-        raises if ``self.truth_name`` is not ``"isotropic"`` -- callers are
-        responsible for only passing an exchangeable pair.
+        This only makes sense if *metric_a* and *metric_b* really are
+        interchangeable, which means ``("sigma_x", "sigma_y")`` or
+        ``("mean_x", "mean_y")`` on the ``"isotropic"`` truth, where the square
+        grid and symmetric prior make x and y statistically identical. On an
+        anisotropic truth the result is meaningless. The method can only check
+        the truth, not the pair, so it raises unless ``self.truth_name`` is
+        ``"isotropic"``; choosing an interchangeable pair is up to the caller.
 
         Parameters
         ----------
         metric_a, metric_b : str
-            The two metric names to compare.
+            The two metrics to compare.
         n_stars : float or int
-            The swept star count to compare at.
+            Star count at which to compare them.
 
         Returns
         -------
@@ -778,8 +739,8 @@ class RecoveryCurve2D:
         Raises
         ------
         ValueError
-            If ``self.truth_name != "isotropic"``, or if either metric lacks
-            a row at ``n_stars``.
+            If ``self.truth_name != "isotropic"``, or if either metric has no row
+            at ``n_stars``.
         """
         if self.truth_name != "isotropic":
             msg = (
@@ -808,46 +769,39 @@ class RecoveryCurve2D:
         }
 
     def mcnemar(self, other, metric, n_stars):
-        """Paired comparison of this curve against *other* at one metric and
-        star count, valid only when both were produced at the same seed and
-        n_stars (so the mock datasets are identical).
+        """Paired comparison with *other* at one metric and star count.
 
-        ``recovery_curve_2d`` reseeds its RNG from the same base ``seed`` at
-        the start of every ``n_stars`` sweep point, so two curves built with
-        the same ``seed`` and the same ``n_stars`` see byte-identical mock
-        datasets realisation-for-realisation. That pairing is what makes a
-        McNemar test meaningful here: it isolates the effect of whatever
-        differs between the two curves (e.g. grid settings) from
-        realisation-to-realisation noise. If the two curves were built with
-        different seeds -- or if one of them just happens to share a coverage
-        number with the other by coincidence -- the discordant counts
-        returned here mean nothing, and this method has no way to detect
-        that mismatch on its own; the caller is responsible for only
-        comparing curves that share a seed and n_stars.
+        Only valid if both curves were built with the same seed and ``n_stars``.
+        ``recovery_curve_2d`` reseeds from the base ``seed`` at every ``n_stars``
+        point, so two such curves see identical mock datasets, realisation by
+        realisation. That pairing is what makes a McNemar test meaningful: it
+        isolates whatever differs between the curves (grid settings, say) from
+        realisation noise. If the seeds differ, the discordant counts mean
+        nothing, and this method cannot detect that; it is up to the caller.
 
         Parameters
         ----------
         other : RecoveryCurve2D
-            The curve to compare against.
+            The curve to compare with.
         metric : str
-            One of the five 2D moment names.
+            One of the five 2D moments.
         n_stars : float or int
-            The swept star count to compare at.
+            Star count at which to compare.
 
         Returns
         -------
         b, c : int
-            Discordant counts: ``b`` is the count where this curve hit and
-            ``other`` missed; ``c`` is the reverse.
+            Discordant counts: ``b`` where this curve hit and ``other`` missed,
+            ``c`` the reverse.
         pvalue : float
-            Two-sided exact binomial p-value for ``b`` vs ``b + c`` trials
-            at p=0.5 (``scipy.stats.binomtest``).
+            Two-sided exact binomial p-value for ``b`` out of ``b + c`` at
+            p = 0.5 (``scipy.stats.binomtest``).
 
         Raises
         ------
         ValueError
-            If either curve lacks a row for ``metric``/``n_stars``, or if
-            the two rows' hit vectors differ in length.
+            If either curve has no row for ``metric`` at ``n_stars``, or the two
+            hit vectors differ in length.
         """
         from scipy.stats import binomtest
 
@@ -887,12 +841,12 @@ class RecoveryCurve2D:
 
 
 def _validate_grid_override(grid):
-    """Check a ``recovery_curve_2d`` ``grid`` override dict for values that
-    would silently corrupt DYNAMITE output or the grid itself.
+    """Check a ``grid`` override for ``recovery_curve_2d`` for values that
+    would silently break the grid or the Dynamite output.
 
-    DYNAMITE requires an odd bin count per axis (a centre bin at zero);
-    widths must be positive. Raises ``ValueError`` with a message naming the
-    offending axis/value on failure.
+    Dynamite needs an odd bin count on each axis (so there is a centre bin at
+    zero), and widths must be positive. Raises ``ValueError`` naming the
+    offending axis and value.
     """
     width = grid["width"]
     n_bins = grid["n_bins"]
@@ -910,14 +864,13 @@ def _validate_grid_override(grid):
 
 
 def _resolve_grid(profile, grid):
-    """Single source of truth for the (center, width, n_bins) used by
-    ``recovery_curve_2d``'s truth-moment solver, the per-realisation solver,
-    and ``_discretised_truth_moments`` -- see the module docstring warning
-    about those three needing to agree.
+    """The one place that decides the (center, width, n_bins) used by
+    ``recovery_curve_2d``'s truth-moment solver, its per-realisation solver,
+    and ``_discretised_truth_moments``, which must all agree.
 
-    ``grid`` is ``None`` (profile-derived square grid, original behaviour)
-    or an override dict with keys ``width`` and ``n_bins``, each a scalar or
-    a 2-tuple.
+    ``grid`` is ``None`` (a square grid from the profile, the original
+    behaviour) or an override dict with keys ``width`` and ``n_bins``, each a
+    scalar or a 2-tuple.
     """
     center = (0.0, 0.0)
     if grid is None:
@@ -931,28 +884,25 @@ def square_cell_grid(sigma_ref, half_extent_x_sigma, half_extent_y_sigma, cell_s
     """Rectangular grid with SQUARE cells, sized per axis in units of
     ``sigma_ref``.
 
-    ``sigma_ref`` cancels out of the returned bin counts (only the widths
-    scale with it) -- it is here so callers can pass a profile's own
-    ``sigma_ref`` without doing the multiplication themselves.
+    ``sigma_ref`` cancels out of the bin counts and only scales the widths;
+    it is a parameter so callers can pass a profile's ``sigma_ref`` directly.
 
-    The cell width is ``h = cell_sigma * sigma_ref``. Per-axis bin count is
-    ``2 * half_extent_*_sigma * sigma_ref / h`` rounded UP to the nearest ODD
-    integer (DYNAMITE requires odd per-axis counts), then that axis's width
-    is set to exactly ``n_bins * h`` so the cells stay exactly square. This
-    means the returned width on each axis is always >= the requested extent,
-    never smaller -- rounding up preserves the requested minimum extent, it
-    just doesn't hit it exactly.
+    The cell width is ``h = cell_sigma * sigma_ref``. Each axis gets
+    ``2 * half_extent_*_sigma * sigma_ref / h`` bins, rounded UP to the next
+    ODD integer (Dynamite needs odd counts), and its width is then set to
+    exactly ``n_bins * h`` so the cells stay square. Each axis is therefore
+    at least as wide as requested, never narrower.
 
-    Square cells matter here because the GMRF prior's diagonal-neighbour
-    weighting (``diag_weight=1/sqrt(2)`` in ``build_gmrf_precision``) assumes
-    a square lattice; non-square cells would change what the smoothness
-    prior actually means, and supporting that is deliberately out of scope.
+    Square cells matter because the GMRF prior's diagonal weighting
+    (``diag_weight=1/sqrt(2)`` in ``build_gmrf_precision``) assumes a square
+    lattice. Non-square cells would change what the smoothness prior means,
+    and supporting them is out of scope.
 
     Returns
     -------
     dict
-        ``{"width": (wx, wy), "n_bins": (kx, ky)}``, suitable for
-        ``recovery_curve_2d``'s ``grid`` parameter.
+        ``{"width": (wx, wy), "n_bins": (kx, ky)}``, suitable for the
+        ``grid`` argument of ``recovery_curve_2d``.
     """
     h = cell_sigma * sigma_ref
 
@@ -979,29 +929,38 @@ def recovery_curve_2d(
     seed=20260805,
     grid=None,
 ):
-    """Sweep raw star count and measure bias, coverage, and efficiency for
-    all five 2D moments, including tilt (``rho``).
+    """Sweep star count and measure bias, coverage and efficiency for all
+    five 2D moments, including the tilt ``rho``.
 
-    2D counterpart of :func:`veldist.calibration.recovery_curve`. Swept over
-    ``n_stars`` directly rather than an information-content proxy -- there is
-    no 2D ``ivar`` equivalent yet (a correlation coefficient's information
-    content is not a simple sum of per-star terms the way a mean's is), so
-    this only answers "does it calibrate at this star count", not "does it
-    transfer to a dataset with different errors". Build that generalisation
-    only if a second regime beyond Gaia's actually needs it.
+    The 2D counterpart of :func:`veldist.calibration.recovery_curve`. It
+    sweeps ``n_stars`` directly, because there is no 2D ``ivar`` yet: the
+    information in a correlation coefficient is not a simple sum over stars
+    the way it is for a mean. So it answers "is it calibrated at this star
+    count", not "does that carry over to data with different errors". Build
+    the generalisation only if a regime beyond Gaia needs it.
 
-    ``profile.n_stars`` is ignored; only its error-drawing behaviour
-    (``profile.draw_errors``) and grid (``profile.grid_width``/``n_bins``)
-    are used, with the swept ``n_stars_values`` substituted per cell.
+    ``profile.n_stars`` is ignored. Only the profile's error distribution
+    (``profile.draw_errors``) and grid (``profile.grid_width``,
+    ``profile.n_bins``) are used, with each swept ``n_stars`` value
+    substituted.
 
-    Cost is ``len(n_stars_values) * n_real`` NUTS runs. Reduce ``n_real`` for
-    a smoke test; do not reduce it for a result meant to set a threshold.
+    The cost is ``len(n_stars_values) * n_real`` NUTS runs. Lower ``n_real``
+    for a smoke test, but not for a result meant to set a threshold.
+
+    Each row also holds the standardised residuals ``z``, one per
+    realisation, ``(median - truth) / half68`` (``nan`` where ``half68`` is
+    zero or not finite; see ``n_z_excluded``), and their summaries:
+    ``rms_z`` (1.0 if calibrated; above 1 means intervals too narrow, below 1
+    too wide), ``mean_abs_z`` (target sqrt(2/pi) ~= 0.7979) and ``mean_z``
+    (standardised bias, target 0). These keep the information that
+    ``coverage`` discards by thresholding at 1.0; :class:`RecoveryCurve2D`
+    explains why that matters.
 
     Parameters
     ----------
     profile : ObservingProfile2D
-        Error distribution and grid come from here; ``n_stars`` is
-        overridden per sweep point.
+        Source of the error distribution and grid; ``n_stars`` is replaced at
+        each sweep point.
     truth_name : str
         ``"isotropic"`` or ``"anisotropic"`` (see :func:`truths_for`).
     n_stars_values : sequence of int
@@ -1009,31 +968,19 @@ def recovery_curve_2d(
     n_real : int
         Mock realisations per ``n_stars`` value.
     prior, num_warmup, num_samples
-        Passed through to ``KinematicSolver2D.run``.
+        Passed to ``KinematicSolver2D.run``.
     seed : int
-        Base RNG seed; realisation ``i`` at a given ``n_stars`` uses
-        ``seed + i``, matching :func:`veldist.calibration.recovery_curve`'s
-        convention.
+        Base seed; realisation ``i`` at each ``n_stars`` uses ``seed + i``,
+        as in :func:`veldist.calibration.recovery_curve`.
     grid : dict, optional
-        Overrides the profile-derived grid. ``{"width": w, "n_bins": k}``
-        with each of ``w``/``k`` a scalar (square grid, original behaviour)
-        or a ``(x, y)`` 2-tuple (rectangular grid). ``center`` is always
-        ``(0.0, 0.0)`` and is not configurable here. When ``None`` (default),
-        the grid is derived from ``profile`` exactly as before -- this
-        parameter changes nothing about the default numerical behaviour.
-        See :func:`square_cell_grid` for a helper that builds a rectangular,
-        square-celled override from a target resolution and extent.
-        Validated by :func:`_validate_grid_override`: per-axis bin counts
-        must be odd (DYNAMITE requirement) and widths must be positive.
-
-    Each row also carries the standardised residual vector ``z`` (one entry
-    per realisation, ``(median - truth) / half68``, ``nan`` where ``half68``
-    is zero or non-finite -- see ``n_z_excluded``) and its aggregates
-    ``rms_z`` (target 1.0 under correct calibration; >1 means intervals too
-    narrow, <1 too wide), ``mean_abs_z`` (target sqrt(2/pi) ~= 0.7979), and
-    ``mean_z`` (standardised bias, target 0). These keep the continuous
-    information ``coverage`` throws away by thresholding at 1.0 -- see
-    :class:`RecoveryCurve2D`'s docstring for why that matters.
+        Replaces the grid derived from the profile:
+        ``{"width": w, "n_bins": k}``, each a scalar (square grid) or an
+        ``(x, y)`` tuple (rectangular grid). ``center`` is always
+        ``(0.0, 0.0)``. With ``None`` (default) the grid comes from
+        ``profile`` as before. :func:`square_cell_grid` builds a rectangular,
+        square-celled override from a target resolution and extent. Checked by
+        :func:`_validate_grid_override`: per-axis counts must be odd (a
+        Dynamite requirement) and widths positive.
 
     Returns
     -------
@@ -1142,28 +1089,29 @@ def recovery_curve_2d(
 
 
 def recommend_grid_2d(profile, v_systemic=(0.0, 0.0)):
-    """``KinematicSolver2D.setup_grid`` / ``fit_all_bins_2d(grid_kwargs=...)``
-    from a measured :class:`ObservingProfile2D`, instead of hand-picking a
-    grid. The 2D counterpart of :func:`veldist.calibration.recommend_grid`.
+    """Grid arguments for ``KinematicSolver2D.setup_grid`` or
+    ``fit_all_bins_2d(grid_kwargs=...)`` from a measured
+    :class:`ObservingProfile2D`, instead of choosing a grid by hand. The 2D
+    counterpart of :func:`veldist.calibration.recommend_grid`.
 
-    The returned ``warnings`` list is the part worth reading: it names the
-    cases where the profile's own numbers say no grid will do, rather than
-    silently returning one that looks fine.
+    Read the returned ``warnings``: they name the cases where the profile's
+    own numbers say no grid will work, instead of quietly returning one that
+    looks fine.
 
     Parameters
     ----------
     profile : ObservingProfile2D
-        Typically ``ObservingProfile2D.from_data(...)`` on the real catalogue.
+        Usually ``ObservingProfile2D.from_data(...)`` on the real catalogue.
     v_systemic : tuple of float
-        Grid centre ``(v1, v2)``, km/s. Default ``(0, 0)``: DYNAMITE requires
-        a zero-centred PM grid, so this is here for diagnostics, not for
-        production use.
+        Grid centre ``(v1, v2)``, km/s. Default ``(0, 0)``. Dynamite requires
+        a proper-motion grid centred on zero, so other values are for
+        diagnostics only.
 
     Returns
     -------
     dict
-        ``center``, ``width``, ``n_bins`` (as ``setup_grid`` wants them), plus
-        ``cell_width``, ``stars_per_cell`` and ``warnings``.
+        ``center``, ``width`` and ``n_bins`` (as ``setup_grid`` takes them),
+        plus ``cell_width``, ``stars_per_cell`` and ``warnings``.
     """
     n = profile.n_bins
     width = profile.grid_width

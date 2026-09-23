@@ -1,10 +1,11 @@
 """Calibrating veldist to a dataset.
 
-The methodology has to be re-tuned whenever the observational regime changes:
-the velocity grid, the regularisation strength, and the achievable precision
-all depend on how many stars there are per spatial bin, how precise their
-velocities are, and how broad the LOSVD is. This module makes those
-assumptions declarative and checkable rather than scattered constants.
+The velocity grid, the regularisation strength and the achievable
+precision all depend on the observing regime: how many stars each spatial
+bin holds, how precise their velocities are, and how broad the LOSVD is.
+When the regime changes, the method has to be re-tuned. This module
+states those assumptions in one place, where they can be checked, instead
+of leaving them as scattered constants.
 
 Typical use::
 
@@ -89,18 +90,17 @@ PROXY_TO_GH = {
 
 @dataclass(frozen=True)
 class ObservingProfile:
-    """Everything about a dataset that the methodology must be tuned to.
+    """Everything about a dataset that the method has to be tuned to.
 
-    The velocity grid is *derived* from these rather than chosen. Two ratios
-    govern whether it is sane, and both were wrong in this repo before being
-    made explicit:
+    The velocity grid is derived from these values rather than chosen by hand.
+    Two ratios decide whether it is sensible, and both were wrong in this
+    repository before they were made explicit:
 
     - ``bin_width / median_error``: the grid cannot resolve structure finer
-      than the measurement error, because the errors convolve it away. Much
-      below 1 wastes latent dimensions; much above 2-3 discards real
-      resolution.
-    - ``informative_fraction``: bins with no mass are pure prior-driven
-      dimensions with no data to anchor them. They are what post-hoc tail
+      than the measurement errors, which blur it out. Well below 1 wastes
+      latent dimensions; well above 2-3 throws away real resolution.
+    - ``informative_fraction``: bins with no mass are dimensions driven only
+      by the prior, with no data to anchor them. They are what post-hoc tail
       truncation exists to suppress.
     """
 
@@ -119,26 +119,26 @@ class ObservingProfile:
         return self.err_median
 
     def draw_errors(self, n, rng):
-        """Per-star measurement errors. Log-normal rather than uniform: real
-        errors are magnitude-dependent with a tail, and Sanders & Evans (2020)
-        find the *floor* matters more than the spread for kurtosis sign
-        determination."""
+        """Draw per-star measurement errors.
+
+        Log-normal rather than uniform, because real errors depend on magnitude
+        and have a tail, and Sanders & Evans (2020) find that the error *floor*
+        matters more than the spread for getting the sign of the kurtosis right.
+        """
         return np.exp(rng.normal(np.log(self.err_median), self.err_log_sigma, size=n))
 
     @staticmethod
     def ivar(sigma, err):
-        """Total Fisher information on the mean velocity, for these stars.
+        """Total Fisher information on the mean velocity for these stars.
 
-        Deliberately ``1/(sigma^2 + err_i^2)`` and not ``1/err_i^2``: a star's
-        velocity is informative about the LOSVD centroid only up to the
-        intrinsic spread it is drawn from, so the relevant variance is that of
-        the *observed* velocity. Using ``1/err_i^2`` would claim unbounded
-        information from perfectly measured stars, which is wrong, and would
-        make the resulting bins far too small.
+        This is ``sum 1/(sigma^2 + err_i^2)``, not ``sum 1/err_i^2``. A star's
+        velocity tells you about the LOSVD centre only to within the intrinsic
+        spread it was drawn from, so the relevant variance is that of the observed
+        velocity. Using ``1/err_i^2`` would claim unlimited information from
+        perfectly measured stars and make bins far too small.
 
-        The reciprocal square root of this quantity is the Cramer-Rao bound on
-        ``v_mean``, which is what makes it the natural target for spatial
-        binning: ``ivar = 1`` means ``v_mean`` good to 1 km/s.
+        Its inverse square root is the Cramér-Rao bound on ``v_mean``, which makes
+        it a natural binning target: ``ivar = 1`` means ``v_mean`` to 1 km/s.
         """
         err = np.asarray(err, dtype=float)
         return float(np.sum(1.0 / (sigma**2 + err**2)))
@@ -146,11 +146,10 @@ class ObservingProfile:
     def draw_sample(self, target_ivar, sigma, rng):
         """Draw per-star errors until the bin reaches *target_ivar*.
 
-        The recovery curve varies information content while holding the error
-        distribution fixed, so the star count is an output here, not an input.
-        That inversion is the point: it is what lets the sweep report a
-        threshold in units that transfer between datasets with different
-        error properties.
+        The recovery curve varies the information content while keeping the error
+        distribution fixed, so the number of stars is an output here, not an
+        input. That is what lets the sweep report thresholds in units that carry
+        over between datasets with different errors.
 
         Parameters
         ----------
@@ -163,9 +162,8 @@ class ObservingProfile:
         Returns
         -------
         ndarray
-            Per-star measurement errors, km/s. The smallest number of stars
-            whose total ``ivar`` reaches the target, so the total slightly
-            overshoots by at most one star's contribution.
+            Per-star errors in km/s, for the smallest number of stars whose total
+            ``ivar`` reaches the target (so it overshoots by at most one star).
 
         Raises
         ------
@@ -194,9 +192,12 @@ class ObservingProfile:
 
     @property
     def grid_width(self) -> float:
-        """Shared velocity grid width. DYNAMITE requires one grid for all
-        spatial bins, so it must hold the widest LOSVD plus the rotation
-        offset of the bins furthest from the systemic velocity."""
+        """Width of the shared velocity grid.
+
+        Dynamite needs one grid for all spatial bins, so it must hold the widest
+        LOSVD plus the rotation offset of the bins furthest from the systemic
+        velocity.
+        """
         return 2.0 * self.n_sigma_grid * self.sigma_max + self.rotation_span
 
     @property
@@ -209,8 +210,11 @@ class ObservingProfile:
 
     @property
     def err_over_sigma(self) -> tuple:
-        """Deconvolution difficulty. Amorisco & Evans (2012) show the
-        attenuation of non-Gaussian signal depends on this ratio alone."""
+        """How hard the deconvolution is.
+
+        Amorisco & Evans (2012) show that the loss of non-Gaussian signal depends
+        on this ratio alone.
+        """
         return (self.median_error / self.sigma_max, self.median_error / self.sigma_min)
 
     def informative_fraction(self, sigma: float) -> float:
@@ -218,10 +222,10 @@ class ObservingProfile:
         return min(1.0, 2.0 * self.n_sigma_grid * sigma / self.grid_width)
 
     def moment_precision(self) -> dict:
-        """Best achievable per-bin precision, as sanity limits on any claim.
+        """Best achievable per-bin precision, as a sanity limit on any claim.
 
-        mean and sigma are the Gaussian Cramer-Rao bounds; h3/h4 use the
-        (2N)^-1/2 approximation Sanders & Evans (2020) recommend for small
+        The mean and sigma use the Gaussian Cramér-Rao bounds; h3 and h4 use the
+        (2N)^-1/2 approximation that Sanders & Evans (2020) recommend for small
         samples.
         """
         n = self.n_stars
@@ -235,13 +239,12 @@ class ObservingProfile:
     def matched_grid(self, sigma):
         """Grid width and bin count matched to a single dispersion.
 
-        DYNAMITE requires one shared grid across all spatial bins, but that
-        constraint is on the *output*. Nothing stops veldist fitting each bin
-        on a grid matched to its own dispersion and aggregating the posterior
-        samples onto the shared output grid afterwards. If the fitted grid is
-        at least as fine as the output grid and their edges align, that
-        aggregation is exact, being just a sum of mass within output bins
-        taken per sample, so uncertainties propagate correctly.
+        Dynamite needs one shared grid across all spatial bins, but only for its
+        input. veldist can fit each bin on a grid matched to its own dispersion
+        and then sum the posterior samples onto the shared output grid. If the
+        fitted grid is at least as fine as the output grid and the edges line up,
+        this is exact (a per-sample sum of mass within output bins), so the
+        uncertainties carry over correctly.
         """
         width = 2.0 * self.n_sigma_grid * sigma
         return width, int(round(width / self.bin_width))
@@ -269,28 +272,28 @@ class ObservingProfile:
     def from_data(cls, vel, err, bin_ids, name="measured", min_stars=10):
         """Measure a profile from a real catalogue.
 
-        Every parameter of this class was originally hand-typed (see
-        ``OMEGACAT``), which meant the mock suite validated the method against
-        a guess about the data rather than the data. This measures them
-        instead. Only scalars come out, so the result is safe to commit as a
-        test fixture even when the catalogue itself is not redistributable.
+        Every parameter of this class was once typed in by hand (see
+        ``OMEGACAT``), so the mock suite was testing the method against a guess
+        about the data. This measures them instead. The result contains only
+        scalars, so it can be committed as a test fixture even when the catalogue
+        itself cannot be shared.
 
-        Per-bin dispersions come from ``gaussian_mle`` rather than
-        ``numpy.std``: the latter returns ``sqrt(sigma^2 + err^2)``, which
-        would inflate ``sigma_min`` most in exactly the low-dispersion bins
-        that set the hardest deconvolution regime.
+        Per-bin dispersions come from ``gaussian_mle`` rather than ``numpy.std``.
+        ``numpy.std`` returns ``sqrt(sigma^2 + err^2)``, which would inflate
+        ``sigma_min`` most in the low-dispersion bins that define the hardest
+        regime.
 
         Parameters
         ----------
         vel, err : array-like, shape (n_stars,)
-            Velocities and per-star uncertainties for the whole field, km/s.
+            Velocities and per-star errors for the whole field, km/s.
         bin_ids : array-like, shape (n_stars,)
-            Spatial bin index for each star. Values need not be contiguous.
+            Spatial bin index of each star; need not be contiguous.
         name : str
-            Label carried into the returned profile.
+            Label for the returned profile.
         min_stars : int
-            Bins with fewer stars are excluded from the dispersion and
-            rotation estimates.
+            Bins with fewer stars are left out of the dispersion and rotation
+            estimates.
 
         Returns
         -------
@@ -299,7 +302,7 @@ class ObservingProfile:
         Raises
         ------
         ValueError
-            If fewer than 2 bins survive the *min_stars* cut.
+            If fewer than 2 bins pass the *min_stars* cut.
         """
         from veldist.baseline import gaussian_mle
 
@@ -389,66 +392,65 @@ OMEGACAT_MEASURED = ObservingProfile(
 
 
 def recommend_grid(profile: ObservingProfile, v_systemic: float = 0.0) -> dict:
-    """``KinematicSolver.setup_grid`` / ``fit_all_bins(grid_kwargs=...)`` from
-    a measured :class:`ObservingProfile`, instead of hand-picking ``n_bins``.
+    """Grid arguments for ``KinematicSolver.setup_grid`` or
+    ``fit_all_bins(grid_kwargs=...)`` from a measured :class:`ObservingProfile`,
+    instead of choosing ``n_bins`` by hand.
 
-    Just exposes ``profile.grid_width``/``n_bins`` (already derived from the
-    error and dispersion scale, see the class docstring) in the shape those
-    callers expect.
+    It returns ``profile.grid_width`` and ``profile.n_bins`` (already derived
+    from the error and dispersion scales; see the class docstring) in the form
+    those functions take.
 
     Parameters
     ----------
     profile : ObservingProfile
-        Typically ``ObservingProfile.from_data(...)`` on the real catalogue.
+        Usually ``ObservingProfile.from_data(...)`` on the real catalogue.
     v_systemic : float
-        Grid centre, km/s. Default 0.0 (velocities already systemic-subtracted).
+        Grid centre, km/s. Default 0.0, for velocities with the systemic
+        velocity already removed.
     """
     return {"center": v_systemic, "width": profile.grid_width, "n_bins": profile.n_bins}
 
 
 def recommend_cuts(profile: ObservingProfile, recovery=None, metric="sigma", min_stars=10, **threshold_kwargs) -> dict:
-    """``fit_all_bins(min_stars=, min_ivar=, sigma_ref=)`` from a measured
-    :class:`ObservingProfile`.
+    """Arguments ``min_stars``, ``min_ivar`` and ``sigma_ref`` for
+    ``fit_all_bins`` from a measured :class:`ObservingProfile`.
 
-    ``min_ivar`` cannot be derived from the profile alone: it is a coverage
-    threshold, which requires actually running recovery sims (see
-    ``RecoveryCurve.threshold``, the mechanism ``fit_all_bins``'s own
-    ``min_ivar`` docstring points to). That sweep is expensive (~hours), so
-    it is opt-in here rather than run implicitly.
+    ``min_ivar`` cannot come from the profile alone. It is a coverage
+    threshold, which needs recovery simulations (``RecoveryCurve.threshold``,
+    as referenced by ``fit_all_bins``). That sweep takes hours, so it is only
+    used if you pass one in.
 
     Parameters
     ----------
     profile : ObservingProfile
     recovery : RecoveryCurve, optional
-        Output of ``recovery_curve(profile, ..., sigma=profile.sigma_min)`` --
-        must be built at ``sigma_min``, the hardest case in the field, so the
-        threshold is conservative rather than optimistic; a curve built at a
-        higher dispersion would pass bins that actually fail at low
-        dispersion. Checked: raises if ``recovery.sigma != profile.sigma_min``.
-        If omitted, the returned ``min_ivar`` is ``None`` and only the
-        ``min_stars`` cut applies -- the same default ``fit_all_bins`` already
-        uses on its own.
+        Output of ``recovery_curve(profile, ..., sigma=profile.sigma_min)``.
+        It must be built at ``sigma_min``, the hardest case in the field, so
+        the threshold is conservative: a curve built at a larger dispersion
+        would accept bins that fail at low dispersion. An error is raised if
+        ``recovery.sigma != profile.sigma_min``. Without it, ``min_ivar`` is
+        ``None`` and only ``min_stars`` applies, as in ``fit_all_bins`` by
+        default.
     metric : str
-        Passed to ``recovery.threshold``. Default ``"sigma"``, since ``v_mean``
-        is not the binding constraint for a dispersion-map data product.
+        Passed to ``recovery.threshold``. Default ``"sigma"``; for a
+        dispersion map, ``v_mean`` is not the limiting quantity.
     min_stars : int
-        Floor applied regardless of ``recovery`` (avoids degenerate fits
-        below this even where ``min_ivar`` alone would pass). Default 10,
-        matching ``fit_all_bins``'s own default.
+        Floor applied whatever ``recovery`` says, to avoid degenerate fits.
+        Default 10, as in ``fit_all_bins``.
     **threshold_kwargs
-        Forwarded to ``recovery.threshold`` (``min_coverage``, ``max_ci_ratio``,
+        Passed to ``recovery.threshold`` (``min_coverage``, ``max_ci_ratio``,
         ``band``).
 
     Returns
     -------
     dict
-        ``min_stars``, ``min_ivar`` (``None`` if ``recovery`` was not given),
-        ``sigma_ref`` -- unpack straight into ``fit_all_bins(**recommend_cuts(...))``.
+        ``min_stars``, ``min_ivar`` (``None`` without ``recovery``) and
+        ``sigma_ref``, ready for ``fit_all_bins(**recommend_cuts(...))``.
 
     Raises
     ------
     ValueError
-        If ``recovery`` is given but was built at a ``sigma`` other than
+        If ``recovery`` was built at a ``sigma`` other than
         ``profile.sigma_min``.
     """
     min_ivar = None
@@ -468,9 +470,9 @@ def recommend_cuts(profile: ObservingProfile, recovery=None, metric="sigma", min
 class Truth:
     """A mock LOSVD shape, defined at unit dispersion and scaled on demand.
 
-    Shapes are specified in dimensionless form so the same library rescales
-    to any dataset. ``scaled(sigma)`` returns (pdf, rvs) with zero mean and
-    the requested dispersion.
+    Shapes are dimensionless so the same library works for any dataset.
+    ``scaled(sigma)`` returns ``(pdf, rvs)`` with zero mean and the requested
+    dispersion.
     """
 
     name: str
@@ -503,9 +505,12 @@ class Truth:
 
 
 def _uniform_gauss(a, s):
-    """Uniform(-a, a) convolved with a Gaussian, the Sanders & Evans (2020)
-    negative-excess-kurtosis kernel. Excess kurtosis is -1.2 r^2 where r is the
-    fraction of variance carried by the uniform part; -1.2 is the hard floor."""
+    """Uniform(-a, a) convolved with a Gaussian: the Sanders & Evans (2020)
+    kernel for negative excess kurtosis.
+
+    The excess kurtosis is -1.2 r^2, where r is the fraction of the variance
+    in the uniform part, so -1.2 is the lower limit.
+    """
 
     def pdf(x):
         x = np.asarray(x, dtype=float)
@@ -518,10 +523,12 @@ def _uniform_gauss(a, s):
 
 
 def _split_uniform_gauss(a1, a2, s):
-    """Two-piece uniform kernel, equal weight but different widths either side
-    of zero, convolved with a Gaussian: the SE20 skewness option. Note a
-    *shifted* uniform is still symmetric about its own midpoint and gives no
-    skewness at all; the widths must differ."""
+    """Two-piece uniform kernel convolved with a Gaussian: the Sanders & Evans
+    (2020) option for skewness.
+
+    The two halves have equal weight but different widths. Simply shifting a
+    uniform would not work, since it stays symmetric about its own midpoint.
+    """
 
     def pdf(x):
         x = np.asarray(x, dtype=float)
@@ -553,11 +560,12 @@ def _mixture(locs, scales, weights):
 
 
 def make_truths():
-    """The mock LOSVD shapes, dimensionless. Scale with ``Truth.scaled(sigma)``.
+    """The library of mock LOSVD shapes, dimensionless; scale them with
+    ``Truth.scaled(sigma)``.
 
-    Chosen to span the non-Gaussianity expected in a rotating,
-    anisotropic globular cluster, at realistic h3/h4 amplitude (``|h3|`` <~ 0.15,
-    ``|h4|`` <~ 0.05-0.1). Physical motivation for each is in its ``note``.
+    They cover the non-Gaussianity expected in a rotating, anisotropic
+    globular cluster at realistic amplitudes (``|h3|`` <~ 0.15, ``|h4|`` <~
+    0.05-0.1). Each truth's ``note`` gives its physical motivation.
     """
     t = []
     t.append(
@@ -626,40 +634,36 @@ CATASTROPHIC = 0.30
 def coverage_floor(n_real, band=0.99, nominal=0.68):
     """Lower edge of a binomial coverage band, as a fraction of ``n_real``.
 
-    Empirical coverage from ``n_real`` mock realisations is a binomial
-    proportion, not a free-floating number: its acceptable range depends on
-    ``n_real``. This is the same convention as :data:`NOMINAL_BAND` (the
-    ``binom(25, 0.68)`` 99% band), generalised to any ``n_real`` instead of
-    being hardcoded for 25. ``coverage_floor(25)`` reproduces
-    ``NOMINAL_BAND[0]`` exactly.
+    Coverage measured from ``n_real`` mocks is a binomial proportion, so the
+    acceptable range depends on ``n_real``. This follows the convention of
+    :data:`NOMINAL_BAND` (the 99% band of ``binom(25, 0.68)``) for any
+    ``n_real``; ``coverage_floor(25)`` reproduces ``NOMINAL_BAND[0]``
+    exactly.
 
     Parameters
     ----------
     n_real : int
-        Number of mock realisations the coverage fraction was estimated
-        from.
+        Number of mock realisations behind the coverage fraction.
     band : float
-        Confidence level of the two-sided binomial interval, e.g. 0.99 for
-        a 99% band.
+        Confidence level of the two-sided binomial interval, e.g. 0.99.
     nominal : float
-        Nominal coverage of the credible interval being checked, e.g. 0.68
-        for a 68% interval.
+        Nominal coverage of the interval being tested, e.g. 0.68.
 
     Returns
     -------
     float
-        The lower edge of the band, as a fraction of ``n_real``.
+        Lower edge of the band, as a fraction of ``n_real``.
     """
     return float(binom.ppf((1 - band) / 2, n_real, nominal)) / n_real
 
 
 def true_moments(pdf, lo=-500.0, hi=500.0, n_grid=400001):
-    """Moments of a truth, on a dense grid.
+    """Moments of a truth, computed on a dense grid.
 
-    Deliberately not ``scipy.integrate.quad``: its adaptive subdivision
-    silently under-samples a narrow component sitting on a broad base. For the
-    cold-disk truth quad returned skewness +0.0000 against a true -0.0320, and
-    a silently wrong truth invalidates a coverage test rather than failing it.
+    Not ``scipy.integrate.quad``: its adaptive subdivision can miss a narrow
+    component on a broad base. For the cold-disk truth, quad gave a skewness of
+    +0.0000 against a true -0.0320, and a wrong truth silently invalidates a
+    coverage test instead of failing it.
     """
     v = np.linspace(lo, hi, n_grid)
     p = np.asarray(pdf(v), dtype=float)
@@ -694,17 +698,16 @@ class CalibrationResult:
     def efficiency(self):
         """Actual estimator scatter divided by the statistical optimum.
 
-        ~1 means the estimator extracts what the data contain. >1 means
-        information is being lost. **<1 is not better than optimal**: it
-        means the prior is shrinking estimates, and must be read alongside the
-        bias.
+        About 1 means the estimator extracts what the data contain; above 1 means
+        information is lost. **Below 1 is not better than optimal**: it means the
+        prior is shrinking the estimates, so read it together with the bias.
 
-        This is the check coverage cannot do. A posterior can reach nominal
-        coverage by reporting large error bars on a poor estimator; efficiency
-        is what distinguishes that from a good estimator with honest ones.
+        Coverage cannot check this. A posterior can reach nominal coverage by
+        putting large error bars on a poor estimator; efficiency separates that
+        from a good estimator with honest error bars.
 
-        Uses a robust scatter, because with a few dozen realisations a single
-        failed fit dominates a standard deviation.
+        Uses a robust scatter, because with a few dozen realisations one failed
+        fit would dominate a standard deviation.
         """
         n = self.profile.n_stars
         g = self.medians["gaussian"]
@@ -747,14 +750,15 @@ def calibrate(
     num_samples=600,
     n_sigma_truncate=None,
 ):
-    """Fit mock realisations of each truth; measure coverage and efficiency.
+    """Fit mock realisations of each truth and measure coverage and
+    efficiency.
 
-    ``sigma`` defaults to the profile's widest LOSVD. **Run it at
-    ``profile.sigma_min`` as well.** Across omega Cen's 7-22 km/s range
-    err/sigma goes from 0.11 to 0.36 and the informative bin fraction from 95%
-    to 30%, so a regularisation tuned at one end is not necessarily calibrated
-    at the other, since the narrow bins sit in the dwarf-spheroidal difficulty
-    regime (Amorisco & Evans 2012 quote Sculptor at 0.33).
+    ``sigma`` defaults to the widest LOSVD in the profile. **Run it at
+    ``profile.sigma_min`` as well.** With the original hand-typed omega Cen
+    profile (7-22 km/s), err/sigma ran from 0.11 to 0.36 and the informative
+    fraction of bins from 95% to 30%, so a regularisation tuned at one end
+    need not be calibrated at the other; the narrowest bins sat in the
+    dwarf-spheroidal regime (Amorisco & Evans 2012 give 0.33 for Sculptor).
     """
     from veldist.veldist import KinematicSolver
     from veldist.analysis import compute_summary
@@ -800,24 +804,23 @@ RECOVERY_METRICS = ["v_mean", "sigma", "skewness", "kurtosis"]
 
 @dataclass
 class RecoveryCurve:
-    """How well each statistic is recovered as a function of information content.
+    """How well each statistic is recovered as a function of information
+    content.
 
-    The question this answers is the one behind both ``min_stars=10`` and any
-    spatial binning target: how much information does a bin need before the
-    posterior can be believed? Answering it empirically, in units of Fisher
-    information rather than star count, gives a threshold that transfers to
-    datasets with different measurement errors.
+    This answers the question behind both ``min_stars=10`` and any spatial
+    binning target: how much information does a bin need before its posterior
+    can be trusted? Measuring it in units of Fisher information rather than
+    star count gives a threshold that carries over to datasets with different
+    errors.
 
     Notes
     -----
-    The ``cr_bound`` column is exact for ``v_mean`` by construction (the
-    swept ``ivar`` IS the Fisher information of the mean). For ``sigma``,
-    ``skewness`` and ``kurtosis`` it uses an equal-error Gaussian
-    approximation built from the same effective sample size, which is exact
-    only for homogeneous per-star errors. With the heterogeneous errors this
-    package actually fits, that approximation is indicative rather than
-    exact, so treat the CI/CR ratio for those three metrics as a rough
-    efficiency check, not a precise one.
+    The ``cr_bound`` column is exact for ``v_mean``, since the swept ``ivar``
+    is the Fisher information of the mean. For ``sigma``, ``skewness`` and
+    ``kurtosis`` it uses an equal-error Gaussian approximation with the same
+    effective sample size, which is exact only when all stars have the same
+    error. With unequal errors it is indicative only, so treat the CI/CR
+    ratio of those three as a rough efficiency check.
     """
 
     profile: object
@@ -826,56 +829,50 @@ class RecoveryCurve:
     n_real: int = None
 
     def threshold(self, metric, min_coverage=None, max_ci_ratio=1.5, band=0.99):
-        """Smallest ``ivar`` at which *metric* is trustworthy, or ``None``.
+        """Smallest ``ivar`` at which *metric* can be trusted, or ``None``.
 
-        Trustworthy means two things at once, because either alone is
-        gameable: coverage at least the floor (an interval that contains
-        the truth often enough) **and** a credible interval no wider than
-        *max_ci_ratio* times the Cramer-Rao bound (an interval that is not
-        merely wide enough to contain everything).
+        Trusted means two things together, since either alone can be gamed: the
+        coverage is at least the floor (the interval contains the truth often
+        enough) **and** the credible interval is no wider than *max_ci_ratio*
+        times the Cramér-Rao bound (the interval is not simply wide enough to
+        contain everything).
 
-        A point qualifies only if every higher-``ivar`` point also qualifies,
-        so a single lucky low-information point cannot set the threshold.
+        A point counts only if every point at higher ``ivar`` also passes, so one
+        lucky low-information point cannot set the threshold.
 
         Parameters
         ----------
         metric : str
             One of :data:`RECOVERY_METRICS`.
         min_coverage : float, optional
-            Required empirical coverage of the nominal 68% interval. Coverage
-            is a binomial proportion estimated from ``n_real`` mock draws, so
-            a fixed floor is only correct at the ``n_real`` it was tuned for:
-            at ``n_real=40`` the standard error is ``sqrt(0.68*0.32/40) =
-            0.074``, and a fixed 0.60 sits one standard error below nominal,
-            rejecting perfectly calibrated methods roughly one sweep cell in
-            ten. This module already treats coverage this way in
-            :data:`NOMINAL_BAND`, the ``binom(25, 0.68)`` 99% band used by
-            :meth:`CalibrationResult.score`; this parameter generalises that
-            convention to whatever ``n_real`` the curve was actually built
-            with instead of hardcoding it for 25.
+            Required coverage of the nominal 68% interval. Coverage from
+            ``n_real`` mocks is a binomial proportion, so a fixed floor is right
+            only for one ``n_real``. At ``n_real=40`` the standard error is
+            ``sqrt(0.68*0.32/40) = 0.074``, so a fixed 0.60 is one standard error
+            below nominal and rejects a well-calibrated method in about one cell in
+            ten. :data:`NOMINAL_BAND` already handles coverage this way for
+            ``n_real=25``; this generalises it to the ``n_real`` the curve was
+            built with.
 
-            Resolution order: if given explicitly, used as-is (this keeps
-            every existing caller and test working unchanged). Otherwise, if
-            ``self.n_real`` is set, the floor is
-            :func:`coverage_floor` ``(self.n_real, band)``. Otherwise it falls
-            back to the historical constant 0.60.
+            If given, it is used as-is. Otherwise, if ``self.n_real`` is set, the
+            floor is :func:`coverage_floor` ``(self.n_real, band)``. Otherwise it
+            falls back to the old constant 0.60.
         max_ci_ratio : float
-            Required efficiency, as a multiple of the Cramer-Rao bound.
+            Required efficiency, as a multiple of the Cramér-Rao bound.
         band : float
-            Confidence level of the binomial coverage band used to derive
-            the floor when ``min_coverage`` is not given and ``self.n_real``
-            is set. Ignored otherwise.
+            Confidence level of the binomial band used when ``min_coverage`` is
+            not given and ``self.n_real`` is set; ignored otherwise.
 
         Returns
         -------
         float or None
-            ``None`` if no swept ``ivar`` value qualifies, which means the
-            sweep did not reach high enough information content.
+            ``None`` if no swept ``ivar`` passes, meaning the sweep did not reach
+            enough information.
 
         Raises
         ------
         ValueError
-            If *metric* appears in no row.
+            If *metric* does not appear in any row.
         """
         sel = [r for r in self.rows if r["metric"] == metric]
         if not sel:
@@ -918,8 +915,8 @@ class RecoveryCurve:
         Parameters
         ----------
         min_coverage, max_ci_ratio, band
-            Passed straight through to :meth:`threshold`, so the printed
-            table can never disagree with a threshold computed directly.
+            Passed to :meth:`threshold`, so the table always agrees with a
+            threshold computed directly.
         """
         floor, floor_desc = self._resolve_coverage_floor(min_coverage, band)
         lines = [
@@ -961,51 +958,50 @@ def recovery_curve(
     num_samples=600,
     prior="gaussian_core",
 ):
-    """Sweep information content and measure bias, coverage, and efficiency.
+    """Sweep information content and measure bias, coverage and efficiency.
 
-    For each ``ivar`` in *ivar_values* and each truth, draws *n_real* mock
-    realisations sized to hit that information content, fits each with
-    ``KinematicSolver`` and with the ``gaussian_mle`` baseline, and records
-    per metric: the median bias, the empirical coverage of the nominal 68%
-    interval, the mean credible-interval width, the Cramer-Rao bound, and the
-    baseline's interval width.
+    For each ``ivar`` in *ivar_values* and each truth, this draws *n_real*
+    mock bins with that information content, fits each with
+    ``KinematicSolver`` and with the ``gaussian_mle`` baseline, and records for
+    every metric the median bias, the coverage of the nominal 68% interval,
+    the mean interval width, the Cramér-Rao bound, and the baseline's interval
+    width.
 
-    The Cramer-Rao column is what makes the result actionable. Coverage alone
-    can be bought by inflating uncertainties; the ratio of interval width to
-    the bound says whether the method is actually extracting the information
-    present.
+    The Cramér-Rao column is what makes the result useful. Coverage alone can
+    be bought by inflating the uncertainties; the ratio of interval width to
+    the bound shows whether the method actually extracts the information in
+    the data.
 
     ``sigma`` defaults to ``profile.sigma_max``. **Run it at
-    ``profile.sigma_min`` too** for the same reason ``calibrate`` says so:
-    across omega Cen's range ``err/sigma`` spans 0.11 to 0.36 and a
-    regularisation calibrated at one end need not hold at the other.
+    ``profile.sigma_min`` too**, for the reason given in ``calibrate``: a
+    regularisation calibrated at one end of the dispersion range need not hold
+    at the other.
 
-    Cost is ``len(ivar_values) * len(truths) * n_real`` NUTS runs. At the
-    defaults with 6 ivar values and 3 truths that is 900 runs, several hours.
-    Reduce *n_real* for a smoke test; do not reduce it for a result.
+    The cost is ``len(ivar_values) * len(truths) * n_real`` NUTS runs: 900 for
+    6 ivar values and 3 truths at the default ``n_real``, which takes several
+    hours. Lower *n_real* for a smoke test, but not for a result.
 
-    ``cr_bound`` is exact for ``v_mean`` only, since *target_ivar* IS its
-    Fisher information. For ``sigma``, ``skewness`` and ``kurtosis`` it is an
-    equal-error Gaussian approximation via ``n_eff = target_ivar * sigma**2``.
-    With heteroscedastic errors that ``n_eff`` is a centroid-weighted
-    effective sample size and is not the correct effective N for a second or
-    fourth moment, which weight the per-star variances differently, so it is
-    optimistic for those three and the reported CI over CR ratio
-    UNDERSTATES their inefficiency. See the ``RecoveryCurve`` Notes.
+    ``cr_bound`` is exact only for ``v_mean``, whose Fisher information is
+    *target_ivar*. For ``sigma``, ``skewness`` and ``kurtosis`` it is an
+    equal-error Gaussian approximation with ``n_eff = target_ivar * sigma**2``.
+    With unequal errors that ``n_eff`` is the right effective sample size for
+    the mean but not for the second or fourth moments, so the bound is
+    optimistic and the reported CI/CR ratio UNDERSTATES their inefficiency
+    (see the ``RecoveryCurve`` notes).
 
     Parameters
     ----------
     profile : ObservingProfile
     truths : list of Truth
     ivar_values : sequence of float
-        Information contents to sweep, as returned by ``ObservingProfile.ivar``.
+        Information contents to sweep, as from ``ObservingProfile.ivar``.
     sigma : float, optional
-        LOSVD dispersion for the mocks. Defaults to ``profile.sigma_max``.
+        LOSVD dispersion of the mocks. Defaults to ``profile.sigma_max``.
     n_real : int
         Mock realisations per (ivar, truth) cell.
     seed : int
     num_warmup, num_samples, prior
-        Passed through to ``KinematicSolver.run``.
+        Passed to ``KinematicSolver.run``.
 
     Returns
     -------
@@ -1079,38 +1075,36 @@ def recovery_curve(
 
 
 def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0.10):
-    """Measure the mapping from robust shape proxies to Gauss-Hermite h3/h4.
+    """Measure how the robust shape statistics map onto Gauss-Hermite h3/h4.
 
     ``SKEW_PER_H3`` and ``EXKURT_PER_H4`` at the top of this module are
-    *analytic* small-amplitude conversions between ordinary moments and GH
-    coefficients. They say nothing about the percentile-based proxies in
-    ``compute_percentile_summary``, which are the statistics actually worth
-    reporting for noisy discrete data. This measures that relation directly,
-    by evaluating both on the same set of analytic truths discretised onto the
-    working grid.
+    analytic small-amplitude conversions between ordinary moments and GH
+    coefficients. They say nothing about the percentile statistics from
+    ``compute_percentile_summary``, which are the ones worth reporting for
+    noisy discrete data. This function measures that relation directly by
+    evaluating both kinds of statistic on the same analytic truths,
+    discretised onto the working grid.
 
-    No sampling and no MCMC: truths are evaluated exactly, so the result is
-    a property of the statistics and the grid, not of any dataset.
+    There is no sampling or MCMC: the truths are evaluated exactly, so the
+    result depends only on the statistics and the grid, not on any dataset.
 
-    The conversion is calibrated only within the amplitude envelope given by
-    ``max_h3``/``max_h4``, which defaults to the range ``make_truths()``'s own
-    docstring claims to span (``|h3| <~ 0.15``, ``|h4| <~ 0.05-0.1``). Truths
-    outside that envelope, such as ``bimodal_counter_rotation`` and
-    ``flat_top_tangential``, are strongly non-Gaussian, a low-order
-    Gauss-Hermite series is a poor description of them in the first place,
-    and their large amplitude would otherwise dominate an origin-fit slope
-    through ``sum(x * x)`` weighting. They are excluded from the fit, not
-    just down-weighted. Do not apply this conversion to curves with larger
-    non-Gaussianity than the envelope; ``bimodality_score`` is the right
-    diagnostic for those instead. Even within the envelope, at least one
-    truth in the library (``cold_disk_component``) has a proxy and a GH
-    coefficient of opposite sign, so the conversion is not reliable for
-    individual low-amplitude curves. It is a population-level guide only.
+    The mapping is calibrated only inside the amplitude limits
+    ``max_h3``/``max_h4``, which default to the range ``make_truths()``
+    covers (``|h3|`` <~ 0.15, ``|h4|`` <~ 0.05-0.1). Truths outside it, such as
+    ``bimodal_counter_rotation`` and ``flat_top_tangential``, are strongly
+    non-Gaussian and poorly described by a low-order GH series anyway, and
+    their large amplitudes would dominate a slope fitted through the origin.
+    They are excluded from the fit, not just down-weighted. Do not apply the
+    mapping to more strongly non-Gaussian curves; use ``bimodality_score``
+    for those. Even inside the limits, ``cold_disk_component`` has a proxy and
+    a GH coefficient of opposite sign, so the mapping is unreliable for an
+    individual low-amplitude curve and should be used only as a guide across
+    a population.
 
     Parameters
     ----------
     truths : list of Truth
-        At least 2. More, and more varied, gives a better-constrained slope.
+        At least 2. More, and more varied, truths constrain the slope better.
     sigma : float
         Dispersion to scale each truth to, km/s.
     n_bins : int
@@ -1118,11 +1112,11 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0
     grid_width : float
         Full grid width, km/s.
     max_h3 : float
-        Truths with ``abs(h3) > max_h3`` are excluded from the ``h3`` fit.
-        Filtering is per mapping: a truth can be in-range for ``h3`` and out
-        of range for ``h4``, or vice versa.
+        Truths with ``abs(h3) > max_h3`` are left out of the ``h3`` fit. The
+        cut is per mapping, so a truth can be used for ``h3`` but not ``h4``,
+        or the other way round.
     max_h4 : float
-        Truths with ``abs(h4) > max_h4`` are excluded from the ``h4`` fit.
+        Truths with ``abs(h4) > max_h4`` are left out of the ``h4`` fit.
 
     Returns
     -------
@@ -1130,49 +1124,41 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0
         ``'skew_pct_to_h3'`` and ``'kurtosis_pct_to_h4'``, each a dict with:
 
         ``slope``
-            Least-squares slope of GH coefficient against proxy through the
-            origin, fit only over truths that survive the amplitude envelope
-            for that mapping.
+            Least-squares slope of the GH coefficient against the proxy,
+            through the origin, over the truths inside the amplitude limits.
         ``median_ratio``
             Median of the per-truth ratios ``y / x`` (GH coefficient over
-            proxy), over included truths with ``abs(x) > 3e-3`` (below that
-            the ratio is numerically meaningless: several truths have a
-            proxy of exactly 0 by symmetry, and the ``3e-3`` cut also
-            excludes ``gaussian``'s grid-discretisation residual while
-            keeping ``cold_disk_component`` in). This is the number to apply
-            in practice, because unlike ``slope`` it is robust to a single
-            sign-flipped truth.
+            proxy) for included truths with ``abs(x) > 3e-3``. Below that the
+            ratio means nothing: several truths have a proxy of exactly 0 by
+            symmetry. The cut also removes the ``gaussian`` truth's
+            discretisation residual while keeping ``cold_disk_component``.
+            This is the value to use in practice, because unlike ``slope`` it
+            is robust to one truth with the opposite sign.
         ``ratio_std``
-            Standard deviation of those same ratios. Kept alongside
-            ``median_ratio`` so no information is lost, but do not read it
-            as "the mapping is uncertain by this much": a single outlier
-            truth can dominate it while the rest of the population is tight
-            (see ``outliers`` below).
+            Standard deviation of the same ratios. It is kept for
+            completeness, but it is not the uncertainty of the mapping: one
+            outlying truth can dominate it while the rest agree closely (see
+            ``outliers``).
         ``n_truths``
-            Number of truths whose ratio entered the ``median_ratio`` and
-            ``ratio_std`` statistics. The two mappings are not equally
-            trustworthy on this count: ``kurtosis_pct_to_h4`` rests on 5
-            ratio-eligible truths, while ``skew_pct_to_h3`` rests on only 3,
-            one of which is the flagged ``cold_disk_component`` outlier. A
-            MAD outlier test on 3 points has very little power, so the h3
-            ``median_ratio`` and its ``outliers`` entry should be read with
-            substantially less confidence than the h4 ones.
+            Number of truths behind ``median_ratio`` and ``ratio_std``. The
+            two mappings differ here: ``kurtosis_pct_to_h4`` uses 5 truths,
+            ``skew_pct_to_h3`` only 3, one of them the outlier
+            ``cold_disk_component``. An outlier test on 3 points has very
+            little power, so trust the h3 ``median_ratio`` and its
+            ``outliers`` much less than the h4 ones.
         ``outliers``
-            Names of included truths whose ratio is more than 3 scaled
-            median-absolute-deviations (MAD * 1.4826) from ``median_ratio``.
-            Computed, not hardcoded, so it stays correct if the truth
-            library changes. Empty if the MAD is zero (all ratios equal) or
-            if there are too few truths to define an outlier.
+            Included truths whose ratio is more than 3 scaled MADs
+            (MAD * 1.4826) from ``median_ratio``. Computed rather than
+            hard-coded, so it stays correct if the library changes. Empty if
+            the MAD is zero or there are too few truths.
 
-        A large ``ratio_std`` relative to ``median_ratio`` (as for
-        ``kurtosis_pct_to_h4``, where ``cold_disk_component`` disagrees in
-        sign with the rest) means the mapping is genuinely shape-dependent
-        for that one truth, not that it is universally loose. This directly
-        reports how shape-dependent the conversion is, unlike an RMS
-        residual about the fit, which can look small even when the fit is
-        dominated by a few extreme points. If fewer than 2 truths clear the
-        ``3e-3`` threshold, ``median_ratio`` and ``ratio_std`` are
-        ``float("nan")`` rather than fabricated numbers.
+        A ``ratio_std`` that is large relative to ``median_ratio`` (as for
+        ``kurtosis_pct_to_h4``, where ``cold_disk_component`` has the opposite
+        sign) means the mapping depends on shape for that truth, not that it
+        is loose for all of them. It shows the shape dependence directly, which
+        an RMS residual about the fit would not, since that can look small when
+        a few extreme points dominate the fit. If fewer than 2 truths pass the
+        ``3e-3`` cut, ``median_ratio`` and ``ratio_std`` are ``float("nan")``.
 
     Raises
     ------

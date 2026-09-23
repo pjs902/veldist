@@ -3,15 +3,17 @@
 Non-parametric Bayesian inference of the line-of-sight velocity distribution
 (LOSVD) from discrete stellar velocities.
 
-Given individual stellar velocities and per-star measurement uncertainties,
-`veldist` recovers the intrinsic LOSVD as a histogram posterior, marginalising
-over a smoothing hyperparameter that adapts to the signal-to-noise of the
-data. The default prior (`gaussian_core`) shrinks toward a Gaussian LOSVD
-wherever the data are uninformative, rather than toward a flat histogram;
-see [Methodology](theory) for why that matters. Designed for resolved
-stellar kinematics in globular clusters, dwarf galaxies, and the extended
-halos of nearby galaxies. Includes a batch pipeline for Voronoi-binned data
-and a writer for the Dynamite `BayesLOSVD` input format.
+`veldist` takes individual stellar velocities and their measurement errors
+and returns a posterior for the intrinsic LOSVD as a histogram. The amount of
+smoothing is inferred from the data rather than set by hand. The default
+prior (`gaussian_core`) falls back to a Gaussian wherever the data say
+little, instead of to a flat histogram; [Methodology](theory) explains why
+that matters.
+
+It is built for resolved stellar kinematics: globular clusters, dwarf
+galaxies and the outer halos of nearby galaxies. It includes a batch
+pipeline for Voronoi-binned data and a writer for Dynamite's `BayesLOSVD`
+input format.
 
 ## Installation
 
@@ -58,9 +60,9 @@ solver.plot_result()
 
 ## Batch workflow (Voronoi bins) and Dynamite output
 
-Use `fit_all_bins` to run the full inference pipeline across many bins, then
-export directly to Dynamite `BayesLOSVD` files with
-`write_dynamite_kinematics`.
+`fit_all_bins` runs the full inference on every bin, and
+`write_dynamite_kinematics` writes the results as Dynamite `BayesLOSVD`
+files.
 
 ```python
 from veldist import fit_all_bins, write_dynamite_kinematics
@@ -80,10 +82,9 @@ write_dynamite_kinematics(
 )
 ```
 
-Bins with fewer than `min_stars` stars are returned as `None` and written as
-masked pixels in `bins.dat`.  The Dynamite writer requires `astropy`.  See
-the [Examples](examples) page for a complete walkthrough including spatial
-map extraction.
+Bins with fewer than `min_stars` stars come back as `None` and are masked in
+`bins.dat`. The Dynamite writer needs `astropy`. [Examples](examples) has a
+complete walkthrough, including kinematic maps.
 
 ```{toctree}
 :hidden:

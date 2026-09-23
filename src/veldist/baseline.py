@@ -1,34 +1,26 @@
 """Reference estimators that veldist is checked against.
 
-A method with a 1500-line probabilistic model and an MCMC sampler needs to
-justify itself against the simplest thing that could work. For a Gaussian
-LOSVD observed with known per-star Gaussian errors, that simplest thing is a
-two-parameter maximum-likelihood fit, and it is not merely a strawman: it is
-*exactly optimal* in that case. On a Gaussian truth the two-parameter MLE
-*is* the exact optimum, so matching it is the pass condition, and always
-was. Measured: v_mean interval ratio 0.999 +/- 0.003, sigma 1.016 +/- 0.005,
-over 60 realisations.
+A non-parametric model sampled with MCMC should be compared with the
+simplest method that could do the job. For a Gaussian LOSVD with known
+Gaussian errors, that is a two-parameter maximum-likelihood fit, and it is
+exactly optimal in that case. Matching it on a Gaussian truth is therefore
+the pass condition. Measured over 60 realisations, the ratio of interval
+widths is 0.999 +/- 0.003 for v_mean and 1.016 +/- 0.005 for sigma.
 
-Across all nine mock truths in this repo's truth library, the two methods
-tie on the first two moments (v_mean and sigma): 260 paired MCMC fits, 18 of
-18 cells, maximum |t| = 1.41. That tie is the desired result, not a
-disappointment: the non-parametric model costs essentially nothing on the
-first two moments, paired sd about 0.05 km/s against errors of about
-1 km/s. It happens for a structural reason, not by luck: ``Truth.scaled``
-constructs every truth with the same second moment, so a correct
-second-moment estimator recovers it whatever the shape, and the MLE's
-measured sigma bias is a uniform -0.07 to -0.12 km/s across all nine
-truths.
+Across all nine mock truths in the truth library, the two methods tie on
+v_mean and sigma (260 paired fits, 18 of 18 cells, maximum |t| = 1.41; paired
+sd about 0.05 km/s against errors of about 1 km/s). That is expected:
+``Truth.scaled`` gives every truth the same second moment, so any correct
+estimator recovers sigma regardless of shape. The MLE's sigma bias is a
+uniform -0.07 to -0.12 km/s across all nine.
 
-So the claim here is not superiority on v_mean or sigma. It is equivalence
-there at no cost, plus the ability to recover shape that a two-parameter
-fit cannot represent at all. Measured on ``bimodal_counter_rotation``: total
-variation distance from the true LOSVD is 0.0712 for veldist versus 0.2168
-for the MLE, paired t = 31.8.
+So veldist does not claim to beat this fit on v_mean or sigma. It matches it
+at no cost and also recovers shape, which a two-parameter fit cannot. On
+``bimodal_counter_rotation`` the total variation distance from the true LOSVD
+is 0.0712 for veldist and 0.2168 for the MLE (paired t = 31.8).
 
-This module is deliberately free of JAX and NumPyro so it stays fast enough
-to call once per spatial bin over a real catalogue (see
-``ObservingProfile.from_data``).
+The module has no JAX or NumPyro dependency, so it is fast enough to run once
+per spatial bin over a real catalogue (see ``ObservingProfile.from_data``).
 """
 
 import numpy as np
@@ -54,9 +46,9 @@ def gaussian_mle(vel, err):
     """Maximum-likelihood Gaussian deconvolution of discrete velocities.
 
     Maximises ``sum_i log N(v_i | mu, sqrt(sigma^2 + err_i^2))`` over
-    ``(mu, sigma)``. Because each star's error enters its own variance, this
-    is a true deconvolution: it returns the *intrinsic* dispersion, not the
-    observed scatter, and stays correct when the errors are heteroscedastic.
+    ``(mu, sigma)``. Each star's error enters its own variance, so this is a
+    true deconvolution: it returns the intrinsic dispersion, not the observed
+    scatter, and handles unequal errors correctly.
 
     Parameters
     ----------
