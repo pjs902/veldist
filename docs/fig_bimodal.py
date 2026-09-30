@@ -55,7 +55,7 @@ med = np.percentile(samples, 50, axis=0)
 # --------------------------------------------------------------------------
 fig, ax = plt.subplots(figsize=(5.5, 3.5))
 
-ax.fill_between(v, p16, p84, color="steelblue", alpha=0.30, label="68% credible interval")
+ax.fill_between(v, p16, p84, color="steelblue", alpha=0.30, label=r"68\% credible interval")
 ax.plot(v, med, color="steelblue", linewidth=2.0, label="Posterior median")
 ax.plot(v, pmf, color="black", linewidth=1.8, linestyle="--", label="True LOSVD")
 

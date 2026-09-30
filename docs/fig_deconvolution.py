@@ -182,7 +182,7 @@ if not args.no_inference:
         p84 = np.percentile(pdf_density, 84, axis=0)
         med = np.percentile(pdf_density, 50, axis=0)
 
-        ax.fill_between(vc, p16, p84, color="steelblue", alpha=0.30, label="68% credible interval")
+        ax.fill_between(vc, p16, p84, color="steelblue", alpha=0.30, label=r"68\% credible interval")
         ax.plot(vc, med, color="steelblue", linewidth=2.0, label="Posterior median")
         ax.plot(v_grid, true_pdf, color="black", linewidth=1.8, linestyle="--", label="True LOSVD")
 

@@ -213,3 +213,9 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 .worktrees/
+
+# Local junk
+.DS_Store
+.pi/
+scratchpad/
+fit_all_bins_2d_failures.jsonl

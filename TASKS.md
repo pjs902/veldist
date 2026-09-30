@@ -857,3 +857,85 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
 - Bayesian optimisation for Dynamite parameter space exploration (P3, feature)
 - Science: DM halo shapes in dwarf galaxies (core/cusp, triaxiality) (P4)
 - Science: simultaneous sBH + IMBH modelling, revisit literature detections (P4)
+- [IN FLIGHT 2026-09-14] Three Sonnet subagents, one per track, isolated worktrees, no commits. T1 resolution diagnostics (eb550a1a). T2 null-space spatial coupling 1D opt-in (a60dfe89). T3 joint-info gate, analytic only (3fb48ab4). Earlier triple-dispatch failed on API rate limit; worktrees cleaned. Notes update as each lands: findings → docs/inverse-problem-improvements.md + this list. CHECK mid-run: T1/T2 alive but slow (10/18 tool uses), T3 DIED on provider timeout after wandering outside repo (19 uses) — T1/T2 steered to time-boxed interim deliverables, T3 relaunched narrow (analytic-only, in-repo). TAKEOVER 2026-09-14: user directed main-session execution. All three subagents STOPPED with nothing usable (T1 still reading code, T2/T3 empty; ~890k tokens burned). Tracks proceed below in main session, cheapest first (T3 gate → T1 audit → T2 coupling).
+- Inverse-problem / tomography methods — see
+  `docs/inverse-problem-improvements.md` for the plan (three tracks) and
+  `context/tomography_inverse_problems.md` for citations:
+  - TRACK 1 (method as-is). Uniform-resolution audit: compute a local impulse
+    response / averaging kernel per Voronoi bin from existing posterior draws and
+    check whether effective velocity resolution is flat across the star-count
+    range. Fessler & Rogers 1996 proves resolution is non-uniform under a shared
+    penalty weight; the SIGN must be computed here, not imported (Stayman &
+    Fessler measured high-count regions blurring MORE, but for an
+    emission-tomography system matrix, and F = M'WM differs). If confirmed, any
+    radial trend is partly a resolution gradient - affects shipped results. Fix
+    is certainty-weighted penalty scaling (P1, bug-risk)
+  - TRACK 1. Report d_s = trace(A) per bin. Run it FIRST against the open 2D
+    question of why sigma_y intervals run ~1.8x the CR bound while sigma_x sits
+    at ~1.3x - the averaging kernel rows give per-axis smearing directly, so that
+    is a real test case rather than a synthetic one. Caveats: softmax
+    linearisation; Lambda_prior is singular (3 dims in 1D, 6 in 2D) so needs a
+    pseudo-inverse; theory is derived at fixed penalty weight so it is a
+    sigma3-fixed slice. Complements, not replaces, RecoveryCurve.efficiency (P2)
+  - TRACK 1. Unit test: posterior-MEAN marginals sum to 1 to Monte Carlo error
+    (linearity of expectation). Medians do not, which is where 0.85-0.95 comes
+    from - a derived consequence, not a tolerance. Fix the CLAUDE.md wording,
+    which reads as though it applies to marginals generally (P2)
+  - TRACK 1. Check the prior correlation length is short relative to any peak
+    separation we claim. Bayes-LOSVD's bimodality failure was an order-2 prior at
+    60 km/s sampling; order-1 at 30 km/s recovered both peaks. Same
+    grid-vs-regularisation coupling as cell_per_sigma (P2)
+  - TRACK 1. Delta-function / checkerboard injection tests as slow tests: the
+    recovered posterior mean from a spike truth IS a row of the empirical
+    resolution matrix. Reuses the SBC harness, needs new truth generators (P2)
+  - TRACK 1. Huber/GGMRF on the RW3 increments of the penalised deviation -
+    WEAKENED. gaussian_core already relaxes to a Gaussian, so Merritt's argument
+    is answered; what remains is whether p<2 passes one large departure more
+    cheaply. rw_order 3-5 measured only 0.13-0.16 h3 retention, so confirm the
+    penalty-SHAPE knob differs from the ORDER knob before investing (P3)
+  - TRACK 2 (spatial regularisation). Motivation is OCCUPANCY, not accuracy: the
+    companion paper's gain was 0.1-0.3%, but shape-information-limits.md says
+    MUSE's binding constraint is occupancy not errors (152 stars/bin vs 398
+    needed) and bigger bins were declined - so spatial coupling is the only way
+    left to buy effective occupancy (P2)
+  - TRACK 2. Couple the NULL-SPACE coefficients only (v0/s0 in 1D, the 6
+    bivariate-Gaussian components in 2D), not every velocity channel: ~2-6
+    coupled numbers per bin instead of K, the velocity-dependent-sigma_CAR
+    problem does not arise, much lower funnel risk, and it borrows strength on
+    exactly the quantities the acceptance criterion names. build_gmrf_precision
+    is already an ICAR - point it at a Voronoi adjacency graph; dense is fine
+    there (n_bins x n_bins). Validate in 1D against the existing SBC and
+    coverage gates: better point estimates with worse coverage is a failure (P2)
+    [NEGATIVE 2026-09-14] Confirmation round (B=30 x 2 seeds, pooled n=60):
+    v0-coupled proper CAR (alpha=0.9, non-centred) gives v_mean RMSE 4.26 vs
+    4.22 independent (zero gain) and coverage 0.38 vs 0.60 (active degradation,
+    ~3sigma). Prototype's -26% at B=15 was seed luck. sig_sp unstable across
+    seeds (2.97 vs 1.25) - funnel signature. NO-GO at this design; do not build
+    src/veldist/spatial.py. Revisit only with a different design (e.g. fixed
+    spatial scale, or coupling s0 instead of v0).
+  - TRACK 3 (joint LOS+PM 3D). GATE FIRST: extend the Gauss-Hermite attenuation
+    result to cross terms. <v_los v_x> is constrained only by the N_both overlap
+    stars, attenuation (1+r^2)^-1 per component. If N_both is small the
+    anisotropy is unconstrained regardless of architecture. RESOLVED 2026-09-14 (main session): formula verified <3% by simulation; N_both counted = 101/bin median (min 57), 100% of fiducial MUSE stars have HST PMs. Per-bin 3σ threshold ρ≈0.30; physical signals ρ~0.05-0.15 need spatial pooling. Verdict: CONDITIONAL GO — joint 3D only with ellipsoid pooling (Track 2 generalised); standalone per-bin 3D NO-GO; outer field NO-GO. See docs/inverse-problem-improvements.md §3.6. (P1)
+  - TRACK 3. Build inside gaussian_core, not by bolting v_los onto the 2D
+    solver: the 3D null space {1,x,y,z,x^2,y^2,z^2,xy,xz,yz} is exactly the
+    trivariate Gaussian log-densities, i.e. the full velocity ellipsoid left
+    unpenalised, so the smoothness prior cannot shrink anisotropy toward
+    isotropy. Partial observation falls out of the design matrix: a missing axis
+    contributes a row of ones (marginalisation), so RV-only stars are
+    ones(Kx) x ones(Ky) x m_los, and PM-only stars are M_pm x ones(Kv). Same
+    mechanism as Extreme Deconvolution's missing dimensions. Gated on the item
+    above (P2)
+  - TRACK 3. Use FACE-ONLY (6-)connectivity in the joint cube. Two axes are
+    proper motions and the third a LOS velocity, so a corner-touching neighbour
+    spans a diagonal in a space with no common metric across axes and
+    diag_weight=1/sqrt(2) is meaningless (build_gmrf_precision's docstring
+    already flags this for non-square cells). Verified: the DCT basis
+    diagonalises Q exactly for edge-only connectivity and NOT for the default
+    8-conn (max offdiag 1.04 at k=9), so face-only also makes the analytic
+    lattice-eigenvalue route exact, removing the O(k^6)->O(k^9) pinv blocker.
+    Also needed: Kronecker-sum structure instead of the dense (n_cells, n_cells)
+    precision, and the matrix-free cumsum route from 1D instead of a Cholesky
+    factor. NOTE: there is NO "-12% drift bug" in _gmrf_deviation_scale_2d - the
+    constant is supposed to vary with k, that is what the Sorbye-Rue
+    standardisation does (P2)
