@@ -721,6 +721,9 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
 - Spatially coherent velocity distribution inference (joint across bins,
   shared smoothness scale-length) — feasibility unclear, revisit once 2D
   solver and export pipeline are both tested and stable
+- 3D velocity / 6D phase-space extension, possibly via NIFTy.re (FFT/ICR
+  priors, GPU VI). Evaluated 2026-10-16: no gain at 1D/2D. See
+  `docs/future-nifty.md`.
 
 ## Completed
 
