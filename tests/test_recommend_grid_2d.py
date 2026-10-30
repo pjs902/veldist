@@ -25,7 +25,7 @@ def test_extent_covers_the_widest_bin_plus_rotation(profile):
     """One shared grid serves every spatial bin, so it must hold the widest
     LOSVD AND the mean-velocity offset of the fastest-rotating bins."""
     needed = 2.0 * profile.n_sigma_grid * profile.sigma_hi + profile.rotation_span
-    assert recommend_grid_2d(profile)["width"] == pytest.approx(needed)
+    assert recommend_grid_2d(profile)["width"] == pytest.approx((needed, needed))
 
 
 @pytest.mark.parametrize("profile", MEASURED, ids=lambda p: p.name)
@@ -36,7 +36,7 @@ def test_extent_uses_sigma_max_not_sigma_ref(profile):
     sigma_max, so a grid built on it looks plausible and clips silently.
     """
     on_ref = dataclasses.replace(profile, sigma_min=None, sigma_max=None)
-    assert recommend_grid_2d(profile)["width"] > recommend_grid_2d(on_ref)["width"]
+    assert recommend_grid_2d(profile)["width"][0] > recommend_grid_2d(on_ref)["width"][0]
 
 
 @pytest.mark.parametrize("profile", MEASURED, ids=lambda p: p.name)
@@ -122,3 +122,19 @@ def test_cell_per_sigma_is_clipped_outside_the_measured_range():
 def test_explicit_cell_per_sigma_overrides_the_derived_one():
     p = dataclasses.replace(GAIA_OUTER_MEASURED, cell_per_sigma=0.5)
     assert p.cells_per_sigma_target == 0.5
+
+
+@pytest.mark.parametrize("profile", MEASURED, ids=lambda p: p.name)
+def test_recommendation_feeds_setup_grid(profile):
+    """The returned center/width/n_bins must be usable as setup_grid kwargs."""
+    from veldist.veldist2d import KinematicSolver2D
+
+    g = recommend_grid_2d(profile)
+    s = KinematicSolver2D()
+    s.setup_grid(center=g["center"], width=g["width"], n_bins=g["n_bins"])
+    assert s.grid["shape"] == (g["n_bins"], g["n_bins"])
+
+
+def test_tiny_errors_on_coarse_cells_are_warned():
+    p = dataclasses.replace(HST_MEASURED, err_median=0.1, err_cut=1.0)
+    assert any("within-cell" in w for w in recommend_grid_2d(p)["warnings"])

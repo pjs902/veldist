@@ -17,6 +17,7 @@ Typical use::
 """
 
 import json
+import warnings
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from collections.abc import Callable
@@ -206,7 +207,8 @@ class ObservingProfile:
 
     @property
     def n_bins(self) -> int:
-        return int(round(self.grid_width / self.bin_width))
+        # Floor as in 2D: errors far above sigma would otherwise round to 0 bins.
+        return max(int(round(self.grid_width / self.bin_width)), 5)
 
     @property
     def err_over_sigma(self) -> tuple:
@@ -247,7 +249,7 @@ class ObservingProfile:
         uncertainties carry over correctly.
         """
         width = 2.0 * self.n_sigma_grid * sigma
-        return width, int(round(width / self.bin_width))
+        return width, max(int(round(width / self.bin_width)), 5)
 
     def report(self) -> str:
         p = self.moment_precision()
@@ -654,7 +656,17 @@ def coverage_floor(n_real, band=0.99, nominal=0.68):
     float
         Lower edge of the band, as a fraction of ``n_real``.
     """
-    return float(binom.ppf((1 - band) / 2, n_real, nominal)) / n_real
+    if n_real < 1:
+        msg = f"n_real must be >= 1, got {n_real}"
+        raise ValueError(msg)
+    floor = float(binom.ppf((1 - band) / 2, n_real, nominal)) / n_real
+    if n_real < 10:
+        warnings.warn(
+            f"coverage_floor({n_real}) = {floor:.2f}: with fewer than ~10 "
+            "realisations the band is too wide to fail anything.",
+            stacklevel=2,
+        )
+    return floor
 
 
 def true_moments(pdf, lo=-500.0, hi=500.0, n_grid=400001):
@@ -763,6 +775,11 @@ def calibrate(
     from veldist.veldist import KinematicSolver
     from veldist.analysis import compute_summary
 
+    if "gaussian" not in [t.name for t in truths]:
+        # CalibrationResult.efficiency() is defined against the Gaussian truth;
+        # fail now rather than after hours of sampling.
+        msg = "truths must include the 'gaussian' truth (see make_truths())"
+        raise ValueError(msg)
     sigma = profile.sigma_max if sigma is None else sigma
     n_bins = profile.n_bins if n_bins is None else n_bins
     coverage, medians, tvals = {}, {}, {}
@@ -1178,7 +1195,9 @@ def measure_proxy_to_gh(truths, sigma, n_bins, grid_width, max_h3=0.15, max_h4=0
     names_kurt, proxies_kurt, gh4 = [], [], []
     for t in truths:
         pdf, _ = t.scaled(sigma)
-        mass = np.asarray(pdf(centers), dtype=float)
+        # Cell mass, not density at the centre (CLAUDE.md invariant): 2-point Gauss-Legendre.
+        off = 0.5 * (edges[1] - edges[0]) / np.sqrt(3.0)
+        mass = np.asarray(pdf(centers - off), dtype=float) + np.asarray(pdf(centers + off), dtype=float)
         mass = mass / mass.sum()
         # gauss_hermite_fit needs at least 2 successful fits to report a
         # median rather than nan, and it only ever fits n_samples rows

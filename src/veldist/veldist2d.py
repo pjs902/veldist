@@ -22,7 +22,6 @@ intentional; see the Gotchas in ``PLAN.md`` §3.1/§3.2.
 
 import contextlib
 import io
-import json
 import traceback
 import warnings
 from functools import cache
@@ -40,7 +39,7 @@ from jax.scipy.special import logsumexp
 from numpyro.infer import MCMC, NUTS
 from scipy.special import ndtr, owens_t
 
-from .veldist import _drop_off_grid_stars, precompute_design_matrix
+from .veldist import _drop_off_grid_stars, _log_bin_failure, precompute_design_matrix
 
 __all__ = [
     "KinematicSolver2D",
@@ -888,6 +887,8 @@ class KinematicSolver2D:
         mcmc.run(jax.random.PRNGKey(int(seed)), **model_kwargs)
 
         self.samples = mcmc.get_samples()
+        # Invalidate any previously computed clipped summary when re-running.
+        self.clipped_samples = None
         print("Inference Complete.")
         return self.samples
 
@@ -997,20 +998,6 @@ def _array_stats(x):
     }
 
 
-def _log_bin_failure(failure_log_path, failure):
-    """Append one failure record to the log as a JSON line.
-
-    Safe with several writers (``n_jobs`` > 1): the record goes out as one
-    unbuffered ``write()`` to a file opened with ``O_APPEND``, so records do
-    not interleave whatever their size (tracebacks can exceed 8 KB, where a
-    buffered text write would split into several syscalls).
-    """
-    if failure_log_path is None:
-        return
-    with Path(failure_log_path).open("ab", buffering=0) as f:
-        f.write((json.dumps(failure) + "\n").encode())
-
-
 def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, failure_log_path=None, thin=10):
     """Fit one bin. Defined at module level, not as a closure, so that it can be
     pickled for ``ProcessPoolExecutor`` (see ``n_jobs`` in
@@ -1043,6 +1030,15 @@ def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, 
         solver.setup_grid(**grid_kwargs)
         with contextlib.redirect_stdout(io.StringIO()):
             solver.add_data(pm1=pm1, pm2=pm2, cov=cov)
+        # add_data drops off-grid stars, so re-check the count it kept.
+        if solver.n_stars < min_stars:
+            warnings.warn(
+                f"Bin {i} keeps only {solver.n_stars} star(s) on the grid "
+                f"(minimum is {min_stars}). Skipping.",
+                stacklevel=2,
+            )
+            return i, None
+        with contextlib.redirect_stdout(io.StringIO()):
             solver.run(seed=seed, **run_kwargs)
         solver.clip_uncertainties()
     except Exception as exc:  # noqa: BLE001 -- intentionally broad: any failure here must not kill the whole run
@@ -1255,8 +1251,15 @@ def fit_all_bins_2d(
 
                 completed = tqdm(completed, total=n_total, desc="Fitting bins", unit="bin")
             for future in completed:
-                i, solver = future.result()
-                solvers[i] = solver
+                i = futures[future]
+                try:
+                    _, solvers[i] = future.result()
+                except Exception as exc:  # noqa: BLE001 -- e.g. a worker killed for memory (BrokenProcessPool)
+                    _log_bin_failure(
+                        failure_log_path,
+                        {"bin": i, "seed": base_seed + i, "error_type": type(exc).__name__, "error_message": str(exc)},
+                    )
+                    warnings.warn(f"Bin {i} lost: worker failed with {type(exc).__name__}: {exc}.", stacklevel=2)
 
     n_solved = sum(s is not None for s in solvers)
     n_below_min_stars = sum(1 for bin_data in bin_data_list if len(bin_data["pm1"]) < min_stars)

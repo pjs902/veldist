@@ -149,3 +149,27 @@ def test_recommend_cuts_rejects_recovery_curve_built_at_wrong_sigma():
 
     with pytest.raises(ValueError, match="sigma_min"):
         recommend_cuts(OMEGACAT, recovery=_StubCurve())
+
+
+def test_n_bins_never_rounds_to_zero():
+    # Errors far above sigma used to give n_bins = 0 and matched_grid(.., 0).
+    p = ObservingProfile("x", 100, 10.0, 0.3, 1.0, 0.5, 0.0)
+    assert p.n_bins >= 5
+    assert p.matched_grid(0.5)[1] >= 5
+
+
+def test_coverage_floor_rejects_zero_and_warns_when_tiny():
+    from veldist.calibration import coverage_floor
+
+    with pytest.raises(ValueError):
+        coverage_floor(0)
+    with pytest.warns(UserWarning, match="too wide"):
+        coverage_floor(3)
+
+
+def test_calibrate_requires_gaussian_truth_up_front():
+    from veldist.calibration import calibrate, make_truths
+
+    others = [t for t in make_truths() if t.name != "gaussian"]
+    with pytest.raises(ValueError, match="gaussian"):
+        calibrate(OMEGACAT, others, n_real=1)

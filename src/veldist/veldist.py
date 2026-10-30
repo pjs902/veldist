@@ -15,8 +15,11 @@ Only precision and cost change, and which one you get depends on import order.
 
 import contextlib
 import io
+import json
+import traceback
 import warnings
 from functools import cache
+from pathlib import Path
 
 import numpy as np
 import jax
@@ -1149,6 +1152,20 @@ def _snap_grid(center, width, output_edges):
     }
 
 
+def _log_bin_failure(failure_log_path, failure):
+    """Append one failure record to the log as a JSON line.
+
+    Safe with several writers (``n_jobs`` > 1): the record goes out as one
+    unbuffered ``write()`` to a file opened with ``O_APPEND``, so records do
+    not interleave whatever their size (tracebacks can exceed 8 KB, where a
+    buffered text write would split into several syscalls).
+    """
+    if failure_log_path is None:
+        return
+    with Path(failure_log_path).open("ab", buffering=0) as f:
+        f.write((json.dumps(failure) + "\n").encode())
+
+
 def fit_all_bins(
     bin_data_list,
     grid_kwargs,
@@ -1159,6 +1176,7 @@ def fit_all_bins(
     match_grid=None,
     show_progress=True,
     thin=10,
+    failure_log_path=None,
 ):
     """Run the full inference pipeline on a list of Voronoi bins.
 
@@ -1222,13 +1240,19 @@ def fit_all_bins(
         after ``clip_uncertainties()``, so the DYNAMITE output is unchanged.
         Default 10, as in :func:`~veldist.veldist2d.fit_all_bins_2d`.
         ``thin=1`` keeps every draw; ``thin=0`` leaves ``samples`` untouched.
+    failure_log_path : str or path-like or None
+        If a bin's fit raises, the bin is returned as ``None`` with a warning
+        instead of stopping the run; with a path, the error and traceback are
+        also appended there as a JSON line (the format of
+        :func:`~veldist.veldist2d.fit_all_bins_2d`). Default ``None``: warn
+        only.
 
     Returns
     -------
     solvers : list
         One entry per input bin: a fitted :class:`KinematicSolver` (with
         ``samples`` and ``clipped_samples`` set), or ``None`` for a skipped
-        bin.
+        bin (too few stars, too little information, or a failed fit).
 
     Examples
     --------
@@ -1297,31 +1321,59 @@ def fit_all_bins(
                 continue
 
         solver = KinematicSolver()
-        if match_grid is None:
-            solver.setup_grid(**grid_kwargs)
-        else:
-            # Deconvolved dispersion of this bin, floored at the measurement
-            # error so a pathologically tight bin still gets a usable grid.
-            sigma = np.sqrt(max(np.var(vel) - np.mean(err**2), np.median(err) ** 2))
-            width, _ = match_grid.matched_grid(sigma)
-            solver.setup_grid(**_snap_grid(np.median(vel), width, output_edges))
+        try:
+            if match_grid is None:
+                solver.setup_grid(**grid_kwargs)
+            else:
+                # Deconvolved dispersion of this bin, floored at the measurement
+                # error so a pathologically tight bin still gets a usable grid.
+                sigma = np.sqrt(max(np.var(vel) - np.mean(err**2), np.median(err) ** 2))
+                width, _ = match_grid.matched_grid(sigma)
+                solver.setup_grid(**_snap_grid(np.median(vel), width, output_edges))
 
-        # add_data/run print progress lines of their own; redirect those to
-        # keep the single outer tqdm bar clean instead of interleaving with
-        # ~3 printed lines per bin.
-        with contextlib.redirect_stdout(io.StringIO()) if show_progress else contextlib.nullcontext():
-            solver.add_data(vel=vel, err=err)
-            solver.run(seed=base_seed + i, **run_kwargs)
+            # add_data/run print progress lines of their own; redirect those to
+            # keep the single outer tqdm bar clean instead of interleaving with
+            # ~3 printed lines per bin.
+            with contextlib.redirect_stdout(io.StringIO()) if show_progress else contextlib.nullcontext():
+                solver.add_data(vel=vel, err=err)
+                # add_data drops off-grid stars, so re-check the count it kept.
+                if solver.n_stars < min_stars:
+                    warnings.warn(
+                        f"Bin {i} keeps only {solver.n_stars} star(s) on the grid "
+                        f"(minimum is {min_stars}). Skipping.",
+                        stacklevel=2,
+                    )
+                    solvers.append(None)
+                    continue
+                solver.run(seed=base_seed + i, **run_kwargs)
 
-        if match_grid is not None:
-            solver.fitted_grid = solver.grid
-            solver.samples = dict(solver.samples)
-            solver.samples["intrinsic_pdf"] = aggregate_to_output_grid(
-                solver.samples["intrinsic_pdf"], solver.grid["edges"], output_edges
+            if match_grid is not None:
+                solver.fitted_grid = solver.grid
+                solver.samples = dict(solver.samples)
+                solver.samples["intrinsic_pdf"] = aggregate_to_output_grid(
+                    solver.samples["intrinsic_pdf"], solver.grid["edges"], output_edges
+                )
+                solver.setup_grid(**grid_kwargs)
+
+            solver.clip_uncertainties()
+        except Exception as exc:  # noqa: BLE001 -- one bad bin must not lose the whole run
+            _log_bin_failure(
+                failure_log_path,
+                {
+                    "bin": i,
+                    "seed": base_seed + i,
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc),
+                    "traceback": traceback.format_exc(),
+                },
             )
-            solver.setup_grid(**grid_kwargs)
-
-        solver.clip_uncertainties()
+            warnings.warn(
+                f"Bin {i} ({len(vel)} stars) failed: {type(exc).__name__}: {exc}. "
+                "Skipping; it will appear as None in the output list.",
+                stacklevel=2,
+            )
+            solvers.append(None)
+            continue
         # Without this the returned list holds every draw and M per bin (GBs at ~2000 bins).
         if thin:
             solver.samples = {
@@ -1515,13 +1567,7 @@ def write_dynamite_kinematics(
     -------
     None
     """
-    try:
-        from astropy.table import Table
-    except ImportError as exc:
-        msg = "astropy is required for write_dynamite_kinematics(). " "Install it with: pip install astropy"
-        raise ImportError(msg) from exc
-
-    from pathlib import Path
+    from astropy.table import Table
 
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)

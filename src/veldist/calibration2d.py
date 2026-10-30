@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from veldist.baseline import gaussian_mle
 from veldist.calibration import coverage_floor
 
 __all__ = [
@@ -365,9 +366,13 @@ class ObservingProfile2D:
             e1, e2 = err1[sel], err2[sel]
             err_mag = np.hypot(e1, e2) / np.sqrt(2)
             err_med = np.median(err_mag)
-            var1 = np.var(pm1[sel]) - np.mean(e1**2)
-            var2 = np.var(pm2[sel]) - np.mean(e2**2)
-            sigma = np.sqrt(max(0.5 * (var1 + var2), err_med**2))
+            # Deconvolved per axis with the same estimator as 1D's from_data.
+            s1 = gaussian_mle(pm1[sel], e1)["sigma"]
+            s2 = gaussian_mle(pm2[sel], e2)["sigma"]
+            # Floored at the error scale on purpose: cells finer than the
+            # errors resolve nothing (see error_floor_width), and an MLE sigma
+            # of ~0 for an error-dominated bin would otherwise size the grid.
+            sigma = max(np.sqrt(0.5 * (s1**2 + s2**2)), err_med)
             per_bin_n.append(n)
             per_bin_sigma.append(sigma)
             per_bin_err_med.append(err_med)
@@ -385,8 +390,9 @@ class ObservingProfile2D:
             err_median=float(np.median(per_bin_err_med)),
             err_cut=float(err_cut),
             n_stars=int(round(float(np.median(per_bin_n)))),
-            sigma_min=float(np.min(per_bin_sigma)),
-            sigma_max=float(np.max(per_bin_sigma)),
+            # Percentiles, as in 1D: one badly fit bin should not set the grid.
+            sigma_min=float(np.percentile(per_bin_sigma, 5)),
+            sigma_max=float(np.percentile(per_bin_sigma, 95)),
             rotation_span=float(
                 max(np.ptp(per_bin_mean1), np.ptp(per_bin_mean2))
             ),
@@ -1140,9 +1146,18 @@ def recommend_grid_2d(profile, v_systemic=(0.0, 0.0)):
             "2026-09-01 sweeps, so this is extrapolation."
         )
 
+    # Below err/h ~ 1/8 the within-cell correction over-states sigma by
+    # more than ~1.5% (measured; see analysis.within_cell_variance).
+    if profile.err_median < cell / 8:
+        warnings.append(
+            f"median error {profile.err_median:.2f} km/s is below 1/8 of the "
+            f"{cell:.2f} km/s cell: the within-cell sigma correction over-"
+            "states sigma by >1.5% in this regime (see analysis.within_cell_variance)."
+        )
+
     return {
         "center": tuple(v_systemic),
-        "width": width,
+        "width": (width, width),
         "n_bins": n,
         "cell_width": cell,
         "stars_per_cell": stars_per_cell,

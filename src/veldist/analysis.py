@@ -43,6 +43,18 @@ def within_cell_variance(grid_centers, bin_width=None):
     (predicted and measured sigma bias agree within 4% at every resolution
     tested).
 
+    **When this holds.** The correction assumes the data constrain the
+    fitted density's *variance* rather than its individual cell masses,
+    which is the case when measurement errors are not much smaller than a
+    cell. With errors far below a cell the posterior instead approaches the
+    true cell masses, whose point-mass variance already carries ``+h**2/12``,
+    so adding it again over-states sigma. Measured with the
+    maximum-likelihood histogram (sigma = 10, h = 6.7, 2e5 stars), sigma
+    bias against err/h: +0.07% at 0.3, +0.3% at 0.25, +0.6% at 0.2, +1.0% at
+    0.15, +1.8% at 0.1, +2.6% at 0.05 (and +4% at err/h = 0.03, h = 7.8).
+    ``recommend_grid_2d`` warns below err/h = 1/8; 1D's ``recommend_grid``
+    sets cells to twice the median error, so it never enters this regime.
+
     Parameters
     ----------
     grid_centers : array-like, shape (n_bins,)
@@ -166,7 +178,7 @@ def compute_moments(pdf_samples, grid_centers, bin_width=None):
 # ---------------------------------------------------------------------------
 
 
-def cdf_percentile(pdf_samples, grid_centers, p):
+def cdf_percentile(pdf_samples, grid_centers, p, bin_width=None):
     """Compute CDF percentile(s) for each posterior draw.
 
     Each draw is treated as a discrete distribution on *grid_centers*, and
@@ -181,6 +193,8 @@ def cdf_percentile(pdf_samples, grid_centers, p):
     p : float or array-like
         Cumulative probability level(s) in [0, 1]. A scalar gives a 1-D
         result, an array a 2-D result.
+    bin_width : float or None, optional
+        Cell width ``h``; derived from uniform *grid_centers* if ``None``.
 
     Returns
     -------
@@ -198,17 +212,22 @@ def cdf_percentile(pdf_samples, grid_centers, p):
     >>> q25_q75 = cdf_percentile(pdf_samples, grid_centers, [0.25, 0.75])
     >>> iqr_samples = q25_q75[:, 1] - q25_q75[:, 0]
 
-    No within-cell (``h**2/12``) correction is applied; that correction is
-    specific to variances (see :func:`compute_percentile_summary`).
+    The cumulative mass up to cell ``m`` is the CDF at that cell's *right
+    edge*, so it is interpolated against the cell edges: the exact quantile of
+    the piecewise-constant density the likelihood fits. (Interpolating against
+    the centres, as this function once did, shifts every percentile low by
+    exactly half a cell.)
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
-    cdf = np.cumsum(pdf_samples, axis=1)  # (n_samples, n_bins)
+    h = np.sqrt(12.0 * within_cell_variance(grid_centers, bin_width))
+    edges = np.concatenate([[grid_centers[0] - h / 2], grid_centers + h / 2])
+    cdf = np.concatenate([np.zeros((len(pdf_samples), 1)), np.cumsum(pdf_samples, axis=1)], axis=1)
     scalar_p = np.ndim(p) == 0
     p_arr = np.atleast_1d(np.asarray(p, dtype=float))
     # np.interp is not vectorised over the xp axis, so loop over samples.
     result = np.array(
-        [np.interp(p_arr, cdf[s], grid_centers) for s in range(len(pdf_samples))]
+        [np.interp(p_arr, cdf[s], edges) for s in range(len(pdf_samples))]
     )  # (n_samples, len(p_arr))
     return result[:, 0] if scalar_p else result
 
@@ -639,7 +658,7 @@ def compute_summary(pdf_samples, grid_centers, n_sigma_truncate=None, bin_width=
     # CDF-based quantities  (loop over samples; fast for ~1 000 draws)
     # ------------------------------------------------------------------
     # Single call returns (n_samples, 3) for [Q25, Q50, Q75]
-    pctls = cdf_percentile(pdf_samples, grid_centers, np.array([0.25, 0.50, 0.75]))
+    pctls = cdf_percentile(pdf_samples, grid_centers, np.array([0.25, 0.50, 0.75]), bin_width=bin_width)
     q25, medians, q75 = pctls[:, 0], pctls[:, 1], pctls[:, 2]
 
     iqr = q75 - q25  # (n_samples,)
@@ -765,13 +784,10 @@ def compute_percentile_summary(pdf_samples, grid_centers):
     *variance*: it comes from
     ``Var(uniform in cell) = Var(point mass at centre) + h**2/12``, and there
     is no equivalent for a percentile. The CDF of the piecewise-constant
-    density the likelihood fits is piecewise *linear* between cell edges, so
-    an exact percentile would interpolate against the edges. This function,
-    via :func:`cdf_percentile`, interpolates the cumulative mass between
-    *centres* instead. That is a separate, smaller bias (at most one cell) and
-    is not addressed here; fixing it would mean changing ``cdf_percentile``,
-    not adding a term. (Adding ``h**2/12`` to a percentile would not even have
-    the right units.)
+    density the likelihood fits is piecewise *linear* between cell edges,
+    and :func:`cdf_percentile` interpolates against those edges, so the
+    percentiles are already exact for that density. (Adding ``h**2/12`` to a
+    percentile would not even have the right units.)
 
     Parameters
     ----------
@@ -873,14 +889,19 @@ def _gh_basis(y):
     return hermite3, hermite4
 
 
-def _gh_model(params, centers):
-    """Gauss-Hermite probability mass on *centers* for ``(v, log_sigma, h3, h4)``."""
+def _gh_model(params, centers, h):
+    """Gauss-Hermite probability mass per cell for ``(v, log_sigma, h3, h4)``.
+
+    Cell mass, not density at the centre (see the mass-vs-density invariant
+    in CLAUDE.md): integrated over each cell of width ``h`` with 2-point
+    Gauss-Legendre, as the Gaussian-core priors do.
+    """
     v, log_sigma, h3, h4 = params
     sigma = np.exp(log_sigma)
-    y = (centers - v) / sigma
+    y = (centers[None, :] + (0.5 * h / np.sqrt(3.0)) * np.array([[-1.0], [1.0]]) - v) / sigma
     hermite3, hermite4 = _gh_basis(y)
     dens = np.exp(-0.5 * y**2) * (1.0 + h3 * hermite3 + h4 * hermite4)
-    dens = np.clip(dens, 0.0, None)
+    dens = np.clip(dens, 0.0, None).sum(axis=0)
     total = dens.sum()
     return dens / total if total > 0 else dens
 
@@ -899,15 +920,12 @@ def gauss_hermite_fit(pdf_samples, grid_centers, n_draws=500, seed=0):
     LOSVDs is smoother than any one of them, which would bias ``h4`` low and
     understate the uncertainty on both coefficients.
 
-    No within-cell (``h**2/12``) correction is applied, on purpose. This
-    function never forms a variance from point masses; ``sigma_gh`` is a shape
-    parameter of a continuous curve, fitted by matching the model's normalised
-    density at the bin centres to the normalised masses. For a smooth density
-    on a reasonably fine grid, ``p_m ~= q(v_m) * h`` to ``O(h**3)`` (midpoint
-    rule), so both sides of the fit carry the same discretisation at leading
-    order and it cancels. Adding ``h**2/12`` afterwards would correct for an
-    error the fit does not make; the tests confirm that it recovers a planted
-    ``sigma`` to within a few percent without it.
+    No within-cell (``h**2/12``) correction is applied: ``sigma_gh`` is a
+    shape parameter of a continuous curve whose *cell masses* are fitted to
+    the cell masses of each draw, so the discretisation is already modelled.
+    (An earlier version matched the curve's density at the cell centres
+    instead, which differs from the cell mass at ``O(h**2)`` and put
+    ``sigma_gh`` 2.5% high at ``h/sigma = 0.78``.)
 
     Parameters
     ----------
@@ -944,6 +962,7 @@ def gauss_hermite_fit(pdf_samples, grid_centers, n_draws=500, seed=0):
     """
     pdf_samples = np.asarray(pdf_samples, dtype=float)
     grid_centers = np.asarray(grid_centers, dtype=float)
+    h = np.sqrt(12.0 * within_cell_variance(grid_centers))
 
     n_samples = pdf_samples.shape[0]
     if n_draws < n_samples:
@@ -965,7 +984,7 @@ def gauss_hermite_fit(pdf_samples, grid_centers, n_draws=500, seed=0):
 
         try:
             res = optimize.least_squares(
-                lambda p, t=target: _gh_model(p, grid_centers) - t,
+                lambda p, t=target: _gh_model(p, grid_centers, h) - t,
                 x0=x0,
                 method="lm",
                 max_nfev=2000,

@@ -1121,3 +1121,16 @@ def test_add_data_2d_validates_and_drops_off_grid_stars():
         solver.add_data(np.array([0.0, np.nan]), np.array([0.0, 0.0]), cov[:2])
     with pytest.raises(ValueError, match="positive definite"):
         solver.add_data(np.array([0.0]), np.array([0.0]), np.array([[[0.25, 0.9], [0.9, 0.25]]]))
+
+
+def test_rerun_invalidates_clipped_samples():
+    # 2D run() used to keep the previous run's clipped summary, so the writer
+    # (which only clips when it is None) wrote stale numbers after a re-fit.
+    solver = KinematicSolver2D()
+    solver.setup_grid(center=(0.0, 0.0), width=(10.0, 10.0), n_bins=5)
+    rng = np.random.default_rng(0)
+    solver.add_data(rng.normal(size=30), rng.normal(size=30), np.tile(np.eye(2) * 0.25, (30, 1, 1)))
+    solver.run(num_warmup=20, num_samples=20, seed=1)
+    solver.clip_uncertainties()
+    solver.run(num_warmup=20, num_samples=20, seed=2)
+    assert solver.clipped_samples is None

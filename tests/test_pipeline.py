@@ -548,6 +548,7 @@ def test_fit_all_bins_min_ivar_skips_uninformative_bins(monkeypatch):
 
         def add_data(self, vel, err):
             calls.append(len(vel))
+            self.n_stars = len(vel)
 
         def run(self, **kw):
             pass
@@ -584,6 +585,7 @@ def test_fit_all_bins_slims_returned_solvers(monkeypatch):
 
         def add_data(self, vel, err):
             self.matrix = np.ones((len(vel), 50))
+            self.n_stars = len(vel)
 
         def run(self, **kw):
             self.samples = {"intrinsic_pdf": np.ones((100, 50)), "x": np.ones((100, 50))}
@@ -613,3 +615,50 @@ def test_fit_all_bins_min_ivar_requires_sigma_ref():
             min_ivar=1.0,
             show_progress=False,
         )
+
+
+def test_fit_all_bins_isolates_a_failing_bin(monkeypatch, tmp_path):
+    """One bin that raises must not lose the bins around it."""
+    import json
+
+    import veldist.veldist as vd
+
+    class FakeSolver:
+        def setup_grid(self, **kw):
+            pass
+
+        def add_data(self, vel, err):
+            if np.isnan(vel).any():
+                raise ValueError("bad input")
+            self.n_stars = len(vel)
+
+        def run(self, **kw):
+            self.samples = {"intrinsic_pdf": np.ones((10, 50))}
+
+        def clip_uncertainties(self):
+            pass
+
+    monkeypatch.setattr(vd, "KinematicSolver", FakeSolver)
+    good = {"vel": np.zeros(20), "err": np.ones(20)}
+    bad = {"vel": np.full(20, np.nan), "err": np.ones(20)}
+    log = tmp_path / "fail.jsonl"
+    with pytest.warns(UserWarning, match="Bin 1 .*failed"):
+        solvers = vd.fit_all_bins(
+            [good, bad, good],
+            grid_kwargs={"center": 0.0, "width": 200.0, "n_bins": 50},
+            show_progress=False,
+            failure_log_path=log,
+        )
+    assert solvers[0] is not None and solvers[1] is None and solvers[2] is not None
+    assert json.loads(log.read_text())["bin"] == 1
+
+
+def test_fit_all_bins_rechecks_min_stars_after_dropping_off_grid_stars():
+    vel = np.r_[np.zeros(3), np.full(9, 1e4)]  # 9 of 12 stars far off the grid
+    with pytest.warns(UserWarning, match="keeps only 3 star"):
+        solvers = veldist.fit_all_bins(
+            [{"vel": vel, "err": np.ones(12)}],
+            grid_kwargs={"center": 0.0, "width": 200.0, "n_bins": 20},
+            show_progress=False,
+        )
+    assert solvers == [None]

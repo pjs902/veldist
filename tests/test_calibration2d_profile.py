@@ -176,3 +176,20 @@ def test_from_data_measures_err_log_sigma():
     p = ObservingProfile2D.from_data(pm1, pm2, err1, err2, bin_ids, err_cut=6.4)
     assert p.err_log_sigma is not None
     assert p.err_log_sigma > 0
+
+
+def test_from_data_sigma_range_ignores_single_noisy_bins():
+    # sigma_min/max used to be the raw min/max over bins, so a few noisy small
+    # bins set the whole grid; they are now the 5th/95th percentiles, as in 1D.
+    from veldist.calibration2d import ObservingProfile2D
+
+    rng = np.random.default_rng(0)
+    n_bins, n = 200, 10
+    pm1 = rng.normal(0, 10, n_bins * n)
+    pm2 = rng.normal(0, 10, n_bins * n)
+    err = np.full(n_bins * n, 1.0)
+    ids = np.repeat(np.arange(n_bins), n)
+    p = ObservingProfile2D.from_data(pm1, pm2, err, err, ids, err_cut=5.0)
+    per_bin = [np.std(pm1[ids == b]) for b in range(n_bins)]
+    assert p.sigma_min > np.min(per_bin)
+    assert p.sigma_max < np.max(per_bin)

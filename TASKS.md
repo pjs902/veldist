@@ -32,6 +32,27 @@ h3/h4 limitation honestly rather than engineering around it.
 - [ ] Check the `bins.dat` pixel order against DYNAMITE's reader (listed as
   not checked in the audit).
 
+### 2026-10-30 second full audit (all 15 findings fixed, same branch)
+
+- [DONE] 1D `fit_all_bins` isolates failing bins (`failure_log_path`);
+  `min_stars` re-checked after off-grid stars are dropped (1D and 2D); 2D
+  `run()` invalidates `clipped_samples`; a dead `n_jobs` worker no longer
+  loses the run.
+- [DONE] `cdf_percentile` interpolates against cell edges: every percentile
+  (`v_median`, `iqr`, `v_asymmetry`, percentile summary) was h/2 low.
+- [DONE] `gauss_hermite_fit` and `measure_proxy_to_gh` use cell masses, not
+  centre densities (`sigma_gh` was +2.5% at h/sigma = 0.78).
+- [DONE] `recommend_grid_2d` returns `width=(w, w)` (crashed `setup_grid`)
+  and warns below err/h = 1/8, where the h^2/12 sigma correction over-states
+  sigma (measured +0.3% at err/h 0.25 to +2.6% at 0.05; HST sits at 0.23).
+- [DONE] 2D `from_data`: gaussian_mle per axis and 5th/95th-percentile
+  sigma range, as in 1D. Calibration guards: `calibrate` requires the
+  `gaussian` truth; `coverage_floor` rejects 0 and warns below 10; 1D
+  `n_bins`/`matched_grid` floor at 5.
+- [ ] `PROXY_TO_GH` and `HST_MEASURED`/`GAIA_OUTER_MEASURED` are stored
+  constants measured with the old percentile/GH code and old 2D `from_data`;
+  re-measure them before relying on new numbers.
+
 ### 2026-09-01 profile audit and verification campaign
 
 **Shape (h3/h4) policy is now settled per dataset** --

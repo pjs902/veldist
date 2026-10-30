@@ -770,3 +770,23 @@ def test_compute_moments_kurtosis_matches_compute_summary():
     k_summary = compute_summary(pmf, centers)["kurtosis"][0]
     assert k_moments == pytest.approx(k_summary, abs=1e-9)
     assert abs(k_moments) < 0.02
+
+
+def test_percentiles_are_not_shifted_half_a_cell():
+    # cdf_percentile used to interpolate against centres, putting every
+    # percentile exactly h/2 low (median -5 on a 10 km/s grid).
+    centers, width = make_grid(-50, 50, 10)
+    pmf = analytic_pmf(stats.norm(loc=0, scale=10), centers, width)
+    assert cdf_percentile(pmf, centers, 0.5)[0] == pytest.approx(0.0, abs=1e-6)
+    s = compute_summary(pmf, centers)
+    assert s["v_median"][0] == pytest.approx(0.0, abs=1e-6)
+    assert s["v_asymmetry"][0] == pytest.approx(0.0, abs=1e-6)
+
+
+def test_gauss_hermite_sigma_unbiased_on_coarse_grid():
+    # The GH model used to be evaluated at cell centres, not integrated over
+    # cells: sigma_gh came out 2.5% high at h/sigma = 0.78.
+    centers, width = make_grid(-78, 78, 20)  # h = 7.8, sigma = 10
+    pmf = analytic_pmf(stats.norm(loc=0, scale=10), centers, width)
+    gh = gauss_hermite_fit(np.tile(pmf, (3, 1)), centers)
+    assert gh["sigma_gh"][0] == pytest.approx(10.0, rel=2e-3)
