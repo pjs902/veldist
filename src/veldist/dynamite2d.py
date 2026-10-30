@@ -10,9 +10,8 @@ in 1D).
 
 It lives in its own module rather than in ``veldist2d.py`` (see
 ``docs/superpowers/specs/2026-08-05-dynamite-2d-writer-design.md`` §1). It
-is pure I/O that shares no state with the sampler, needs only numpy (no
-astropy), and targets an upstream format that may still change, so it
-should be easy to replace or remove without touching the modelling code.
+is pure I/O that shares no state with the sampler and targets an upstream
+format that may still change, so it should be easy to replace or remove without touching the modelling code.
 
 **Target format**: Dynamite PR #442, commit ``9ccc416``, merged to ``main``
 on 2026-06-03 and **not yet in a tagged release** (``v5.0.0`` is older).
@@ -25,63 +24,9 @@ from pathlib import Path
 
 import numpy as np
 
+from .veldist import _write_aperture_and_bins_files
+
 __all__ = ["write_dynamite_kinematics_2d"]
-
-
-def _write_aperture_and_bins_files(
-    solvers, output_dir, voronoi_bin_metadata, aperture_filename, bins_filename
-):
-    """Write aperture.dat and bins.dat in the same format as the 1D writer.
-
-    The code is duplicated from ``veldist.write_dynamite_kinematics`` because
-    importing that function would pull in astropy.
-
-    ``ap['angle_deg']`` is written as given, with no frame handling or
-    checks. Dynamite expects ``angle_deg = -theta_maj``, where ``theta_maj``
-    is the receding major axis measured counter-clockwise from +x **in the
-    caller's own frame**. This is not a sky position angle: the two agree
-    only modulo 180, and using one in place of the other silently flips every
-    fitted rotation.
-
-    The frame of the ``pm1``/``pm2`` histograms is also the caller's
-    responsibility. Dynamite's projection is right-handed with the line of
-    sight along ``x' x y'``, so ``(x, y, v_los)`` must be right-handed.
-    ``pm2`` (the minor-axis component) changes sign under an East/West
-    mirror; ``pm1`` does not. See
-    ``omegaCen/dynamite_dataprep/dynamite_frame.py``.
-    """
-    ap = voronoi_bin_metadata["aperture"]
-    ap_path = output_dir / aperture_filename
-    with open(ap_path, "w") as f:
-        f.write("#counter_rotation_boxed_aperturefile_version_2 \n")
-        f.write(f"\t{ap['x_start']:f}\t{ap['y_start']:f} \n")
-        f.write(f"\t{ap['x_size']:f}\t{ap['y_size']:f} \n")
-        f.write(f"\t{ap['angle_deg']:f} \n")
-        f.write(f"\t{ap['nx']}\t{ap['ny']} \n")
-    print(f"Written aperture: {ap_path}")
-
-    solved_indices = [i for i, s in enumerate(solvers) if s is not None]
-    n_total = len(solvers)
-    orig_to_new = np.zeros(n_total + 1, dtype=int)  # index 0 unused
-    for new_id, orig_i in enumerate(solved_indices, start=1):
-        orig_to_new[orig_i + 1] = new_id  # orig_i is 0-based; +1 for 1-based
-
-    pixel_ids = np.asarray(voronoi_bin_metadata["pixel_bin_ids"]).flatten().astype(int)
-    remapped = np.where(
-        (pixel_ids > 0) & (pixel_ids <= n_total),
-        orig_to_new[pixel_ids],
-        0,
-    )
-    total_pixels = len(remapped)
-
-    bins_path = output_dir / bins_filename
-    with open(bins_path, "w") as f:
-        f.write("#Counterrotation_binning_version_1\n")
-        f.write(f"{total_pixels}\n")
-        for start in range(0, total_pixels, 10):
-            chunk = remapped[start : start + 10]
-            f.write("\t" + "\t".join(str(v) for v in chunk) + "\n")
-    print(f"Written bins: {bins_path}")
 
 
 def write_dynamite_kinematics_2d(

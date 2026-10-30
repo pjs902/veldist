@@ -86,3 +86,18 @@ def test_run_without_data():
 
     with pytest.raises(ValueError, match="No data added"):
         solver.run(num_warmup=10, num_samples=10)
+
+
+def test_add_data_validates_and_drops_off_grid_stars():
+    # Audit V2: an off-grid star was silently counted in n_stars (= bin_flux).
+    from veldist import KinematicSolver
+
+    solver = KinematicSolver()
+    solver.setup_grid(center=0.0, width=10.0, n_bins=10)
+    with pytest.warns(UserWarning, match="Dropping 1 of 3"):
+        solver.add_data(np.array([0.0, 1.0, 100.0]), np.array([1.0, 1.0, 1.0]))
+    assert solver.n_stars == 2
+    with pytest.raises(ValueError, match="finite"):
+        solver.add_data(np.array([0.0, np.nan]), np.array([1.0, 1.0]))
+    with pytest.raises(ValueError, match="err must be > 0"):
+        solver.add_data(np.array([0.0]), np.array([0.0]))

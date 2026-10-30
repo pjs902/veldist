@@ -193,12 +193,24 @@ def test_design_matrix_2d_factorises():
     np.testing.assert_allclose(M2d, expected, atol=1e-6, rtol=1e-4)
 
 
+def test_design_matrix_2d_narrow_correlated_star_matches_diagonal():
+    # Audit V1: a star much narrower than a cell, with a tiny nonzero
+    # correlation, used to take a 2x2 quadrature path whose row summed to
+    # 0.0038. It must match the exact diagonal path to float32 precision.
+    grid = setup_grid_2d(center=(0.0, 0.0), width=(10.0, 10.0), n_bins=10)
+    for s in (0.3, 0.1, 0.01):
+        diag = np.array([[s * s, 0.0], [0.0, s * s]])
+        corr = diag + np.array([[0.0, 1e-6 * s * s], [1e-6 * s * s, 0.0]])
+        M = precompute_design_matrix_2d(
+            np.array([0.5, 0.5]), np.array([0.5, 0.5]), np.stack([diag, corr]), grid
+        )
+        np.testing.assert_allclose(M[1], M[0], atol=1e-6)
+        assert abs(M[1].sum() - 1.0) < 1e-5
+
+
 def test_design_matrix_2d_vs_quadrature():
-    # The 2x2 Gauss-Legendre sub-cell rule (used for correlated covariance)
-    # is an approximation whose accuracy depends on cell size relative to
-    # sigma -- PLAN.md §3.1 describes it as "kills most of the error", not
-    # exact. Use a grid fine enough (bin << sigma) that the approximation is
-    # tight, matching the regime the rule is actually meant for.
+    # Correlated-covariance rows are exact bivariate-CDF cell masses; check
+    # them against independent numerical integration of the pdf.
     grid = setup_grid_2d(center=(0.0, 0.0), width=(12.0, 12.0), n_bins=24)
 
     # One diagonal-covariance star, one correlated-covariance star.
@@ -1093,3 +1105,19 @@ def test_fit_all_bins_2d_thins_returned_samples():
         bin_data_list, grid_kwargs, run_kwargs=run_kwargs, show_progress=False, thin=1
     )
     assert solvers[0].samples["intrinsic_pdf"].shape == (20, 25)
+
+
+def test_add_data_2d_validates_and_drops_off_grid_stars():
+    # Audit V2: an off-grid star used to give an all-floor row that killed
+    # the bin; a NaN gave an all-NaN row.
+    solver = KinematicSolver2D()
+    solver.setup_grid(center=(0.0, 0.0), width=(10.0, 10.0), n_bins=10)
+    cov = np.tile(np.eye(2) * 0.25, (3, 1, 1))
+    with pytest.warns(UserWarning, match="Dropping 1 of 3"):
+        solver.add_data(np.array([0.0, 1.0, 50.0]), np.array([0.0, 1.0, 50.0]), cov)
+    assert solver.n_stars == 2
+    assert solver.matrix.shape[0] == 2
+    with pytest.raises(ValueError, match="finite"):
+        solver.add_data(np.array([0.0, np.nan]), np.array([0.0, 0.0]), cov[:2])
+    with pytest.raises(ValueError, match="positive definite"):
+        solver.add_data(np.array([0.0]), np.array([0.0]), np.array([[[0.25, 0.9], [0.9, 0.25]]]))

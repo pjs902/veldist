@@ -20,6 +20,18 @@ h3/h4 limitation honestly rather than engineering around it.
 
 ## Now
 
+### 2026-10-14 code audit (`AUDIT_2026-10-14.md`)
+
+- [DONE 2026-10-30, branch `audit-2026-10-14-fixes`] V1-V6, V8, V9 applied
+  with regression tests. V1 used exact bivariate-CDF cell masses instead of the
+  proposed sub-cell subdivision.
+- [ ] Re-run real HST 2D bins that failed with "Cannot find valid initial
+  parameters": V2 (off-grid stars) is the suspected cause. Correlated-error
+  (Gaia) 2D fits from before this branch used the wrong rows for precise
+  stars (V1) and should be re-fitted.
+- [ ] Check the `bins.dat` pixel order against DYNAMITE's reader (listed as
+  not checked in the audit).
+
 ### 2026-09-01 profile audit and verification campaign
 
 **Shape (h3/h4) policy is now settled per dataset** --

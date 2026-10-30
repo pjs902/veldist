@@ -76,7 +76,7 @@ The gates that matter most there are `test_sbc_calibration` (both priors) and `t
 **Important conventions:**
 - `intrinsic_pdf` samples are **probability mass** (dimensionless, each row sums to 1), not density. Convert to density by dividing by `grid["width"]` for plotting.
 
-  **This is a hard invariant, not a labelling choice, and it is easy to violate silently.** The design matrix M is built by *integrating* each star's error kernel over each cell (2x2 Gauss-Legendre in 2D). So the likelihood `M @ intrinsic_pdf` is dimensionally correct only if `intrinsic_pdf` is mass. Any code that produces a cell value by *evaluating a density at the cell centre* and then normalising has silently substituted density-at-a-point for mass, and the two differ at second order:
+  **This is a hard invariant, not a labelling choice, and it is easy to violate silently.** The design matrix M is built by *integrating* each star's error kernel over each cell (exact erf differences in 1D and diagonal 2D; exact bivariate-CDF differences for correlated 2D errors). So the likelihood `M @ intrinsic_pdf` is dimensionally correct only if `intrinsic_pdf` is mass. Any code that produces a cell value by *evaluating a density at the cell centre* and then normalising has silently substituted density-at-a-point for mass, and the two differ at second order:
 
   ```
   mass = int_cell f  ~=  h * f(centre) + (h^3/24) * f''(centre)

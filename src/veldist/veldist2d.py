@@ -38,8 +38,9 @@ import numpyro
 import numpyro.distributions as dist
 from jax.scipy.special import logsumexp
 from numpyro.infer import MCMC, NUTS
+from scipy.special import ndtr, owens_t
 
-from .veldist import precompute_design_matrix
+from .veldist import _drop_off_grid_stars, precompute_design_matrix
 
 __all__ = [
     "KinematicSolver2D",
@@ -185,8 +186,9 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
     1. Diagonal ``cov_i`` (``cov_i[0,1] == 0``): exact box integration. The
        integral factorises into the outer product of two 1D erf/CDF
        integrals, reusing ``veldist.precompute_design_matrix`` on each axis.
-    2. Correlated ``cov_i``: 2x2 Gauss-Legendre quadrature within each cell
-       (4 points per cell per star), which works for any Sigma.
+    2. Correlated ``cov_i``: exact cell masses from four-corner differences
+       of the bivariate normal CDF (Owen's T), valid for any Sigma and any
+       error-to-cell-size ratio.
 
     Stars are processed in chunks (default 5000) to limit peak memory: JAX
     allocates intermediates, so building the full ``(N, n_cells)`` array at
@@ -213,7 +215,6 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
     pm2 = np.asarray(pm2, dtype=np.float64)
     cov = np.asarray(cov, dtype=np.float64)
     n_stars = len(pm1)
-    kx, ky = grid["n_bins_x"], grid["n_bins_y"]
     n_cells = grid["n_cells"]
 
     ex = grid["edges_x"]
@@ -251,98 +252,50 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
             outer = Mx[:, :, None] * My[:, None, :]  # (n_diag, K, K)
             chunk_M[idx, :] = outer.reshape(len(idx), n_cells)
 
-        # --- Path 2: correlated covariance -> 2x2 Gauss-Legendre sub-cell ---
+        # --- Path 2: correlated covariance -> exact bivariate-CDF differences ---
         if np.any(~is_diag):
             idx = np.where(~is_diag)[0]
-            chunk_M[idx, :] = _design_matrix_gl_quadrature(
-                p1[idx], p2[idx], c[idx], ex, ey, kx, ky
-            )
+            chunk_M[idx, :] = _design_matrix_correlated(p1[idx], p2[idx], c[idx], ex, ey)
 
-        out_chunks.append(chunk_M.astype(np.float32))
+        # Same floor as the 1D path: CDF differences far from a star can land
+        # slightly negative, and an exact 0 makes log-likelihood -inf.
+        out_chunks.append(np.clip(chunk_M, 1e-30, None).astype(np.float32))
 
     return np.concatenate(out_chunks, axis=0)
 
 
-def _bivariate_gaussian_pdf(x, y, mu1, mu2, cov):
-    """Evaluate N((x, y); mu, cov) for per-star means and covariances.
+def _bvn_cdf_std(h, k, rho):
+    """Standard bivariate normal CDF ``P(X < h, Y < k)`` with correlation ``rho``.
 
-    Shapes: ``x``, ``y`` are (n_stars, n_pts); ``mu1``, ``mu2`` are
-    (n_stars,); ``cov`` is (n_stars, 2, 2). The result is (n_stars, n_pts).
+    Owen's T form, exact to float64 precision; broadcasts over all arguments.
     """
-    dx = x - mu1[:, None]
-    dy = y - mu2[:, None]
-
-    a = cov[:, 0, 0][:, None]
-    b = cov[:, 0, 1][:, None]
-    d = cov[:, 1, 1][:, None]
-    det = a * d - b * b
-    det = np.maximum(det, 1e-300)
-
-    inv_a = d / det
-    inv_b = -b / det
-    inv_d = a / det
-
-    quad = inv_a * dx * dx + 2 * inv_b * dx * dy + inv_d * dy * dy
-    norm = 1.0 / (2 * np.pi * np.sqrt(det))
-    return norm * np.exp(-0.5 * quad)
+    # The formula divides by h and k; nudging exact zeros changes the CDF by ~1e-12.
+    h = np.where(h == 0.0, 1e-12, h)
+    k = np.where(k == 0.0, 1e-12, k)
+    s = np.sqrt(1.0 - rho * rho)
+    beta = np.where(h * k > 0.0, 0.0, 0.5)
+    return (
+        0.5 * (ndtr(h) + ndtr(k))
+        - owens_t(h, (k - rho * h) / (h * s))
+        - owens_t(k, (h - rho * k) / (k * s))
+        - beta
+    )
 
 
-def _design_matrix_gl_quadrature(p1, p2, cov, edges_x, edges_y, kx, ky):
-    """2x2 Gauss-Legendre quadrature within each cell for a chunk of correlated
-    stars.
+def _design_matrix_correlated(p1, p2, cov, edges_x, edges_y):
+    """Exact cell masses of correlated bivariate Gaussians, shape (n, kx*ky).
 
-    Returns an (n, kx*ky) float64 array of cell probability masses.
+    Each cell's mass is the four-corner difference of the bivariate normal
+    CDF, so it stays exact however narrow the star is relative to a cell.
     """
-    n = len(p1)
-    n_cells = kx * ky
-
-    cx0 = edges_x[:-1]
-    cx1 = edges_x[1:]
-    cy0 = edges_y[:-1]
-    cy1 = edges_y[1:]
-    hx = 0.5 * (cx1 - cx0)  # half-width per x cell, (kx,)
-    hy = 0.5 * (cy1 - cy0)
-    mx = 0.5 * (cx1 + cx0)  # mid per x cell, (kx,)
-    my = 0.5 * (cy1 + cy0)
-
-    nodes, gweights = _gauss_legendre_2x2_nodes()  # 2 nodes each axis
-
-    # Evaluation points: for each cell, 2x2=4 points. Build full (kx, ky, 4)
-    # grid of (x, y) coordinates and weights, then evaluate per star.
-    # x_pts[ix, jnode] = mx[ix] + hx[ix]*node[jnode]
-    x_pts = mx[:, None] + hx[:, None] * nodes[None, :]  # (kx, 2)
-    y_pts = my[:, None] + hy[:, None] * nodes[None, :]  # (ky, 2)
-    wx_pts = hx[:, None] * gweights[None, :]  # (kx, 2); half-width already in Jacobian
-    wy_pts = hy[:, None] * gweights[None, :]  # (ky, 2)
-
-    # Combine into (kx, ky, 4) grid of points & weights (2 nodes per axis -> 4 combos)
-    # point index p in [0,4): (a,b) = divmod(p, 2)
-    xs = np.empty((kx, ky, 4))
-    ys = np.empty((kx, ky, 4))
-    ws = np.empty((kx, ky, 4))
-    for p in range(4):
-        a, b = divmod(p, 2)
-        xs[:, :, p] = x_pts[:, a][:, None]
-        ys[:, :, p] = y_pts[None, :, b]
-        ws[:, :, p] = wx_pts[:, a][:, None] * wy_pts[None, :, b]
-
-    xs_flat = xs.reshape(n_cells, 4)
-    ys_flat = ys.reshape(n_cells, 4)
-    ws_flat = ws.reshape(n_cells, 4)
-
-    result = np.zeros((n, n_cells), dtype=np.float64)
-    # Loop over the 4 quadrature points (cheap: only 4 iterations).
-    for p in range(4):
-        pdf_val = _bivariate_gaussian_pdf(
-            xs_flat[None, :, p].repeat(n, axis=0),
-            ys_flat[None, :, p].repeat(n, axis=0),
-            p1,
-            p2,
-            cov,
-        )  # (n, n_cells)
-        result += pdf_val * ws_flat[None, :, p]
-
-    return result
+    sx = np.sqrt(cov[:, 0, 0])[:, None, None]
+    sy = np.sqrt(cov[:, 1, 1])[:, None, None]
+    rho = (cov[:, 0, 1] / np.sqrt(cov[:, 0, 0] * cov[:, 1, 1]))[:, None, None]
+    h = (edges_x[None, :, None] - p1[:, None, None]) / sx  # (n, kx+1, 1)
+    k = (edges_y[None, None, :] - p2[:, None, None]) / sy  # (n, 1, ky+1)
+    cdf = _bvn_cdf_std(h, k, rho)  # (n, kx+1, ky+1)
+    mass = np.diff(np.diff(cdf, axis=1), axis=2)  # (n, kx, ky)
+    return mass.reshape(len(p1), -1)
 
 
 # ==============================================================================
@@ -632,12 +585,10 @@ def generate_gaussian_core_field_2d(shape, centers_2d, L):
     # is what softmax(-quad/2) would give. See the mass-vs-density invariant
     # in CLAUDE.md for why the two differ and why it is easy to get wrong.
     #
-    # Integrate with the same 2x2 Gauss-Legendre rule the design matrix uses
-    # for the error kernel (_design_matrix_gl_quadrature), so core and
-    # likelihood agree on what a cell value means by construction rather than
-    # by a correction a later edit could drop. A tilted bivariate Gaussian
-    # over an axis-aligned cell has no closed form, hence quadrature here
-    # where the 1D core gets an exact erf difference.
+    # Integrate with a 2x2 Gauss-Legendre rule, so the core is a cell mass
+    # like the design matrix's (which uses the exact bivariate CDF; Owen's T
+    # is not available in JAX, hence quadrature here). 2x2 GL is accurate
+    # while the core spans a few cells, as measured below.
     #
     # Measured against the exact bivariate cell mass at K=15 (sx=13.11,
     # sy=8.44, rho=0.4): centre sampling errs by -0.074 / -0.131 on
@@ -822,13 +773,21 @@ class KinematicSolver2D:
             msg = "Run setup_grid() first."
             raise ValueError(msg)
 
-        pm1 = np.asarray(pm1)
-        self.n_stars = len(pm1)
-        print(f"Computing 2D Design Matrix for {self.n_stars} stars...")
+        pm1 = np.asarray(pm1, dtype=float)
+        pm2 = np.asarray(pm2, dtype=float)
+        cov = np.asarray(cov, dtype=float)
+        if not all(np.all(np.isfinite(a)) for a in (pm1, pm2, cov)):
+            msg = "add_data: pm1, pm2 and cov must be finite."
+            raise ValueError(msg)
+        det = cov[:, 0, 0] * cov[:, 1, 1] - cov[:, 0, 1] * cov[:, 1, 0]
+        if not (np.all(cov[:, 0, 0] > 0) and np.all(det > 0)):
+            msg = "add_data: every cov must be positive definite (did you pass a correlation as the off-diagonal?)."
+            raise ValueError(msg)
+        print(f"Computing 2D Design Matrix for {len(pm1)} stars...")
 
-        self.matrix = precompute_design_matrix_2d(
-            pm1, pm2, cov, self.grid, chunk_size=chunk_size
-        )
+        matrix = precompute_design_matrix_2d(pm1, pm2, cov, self.grid, chunk_size=chunk_size)
+        self.matrix = _drop_off_grid_stars(matrix)
+        self.n_stars = self.matrix.shape[0]
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
     def run(self, num_warmup=500, num_samples=3000, gpu=None, seed=5567,
@@ -1041,15 +1000,15 @@ def _array_stats(x):
 def _log_bin_failure(failure_log_path, failure):
     """Append one failure record to the log as a JSON line.
 
-    Safe with several writers (``n_jobs`` > 1): each call opens the file,
-    writes once and closes it. On POSIX a single ``write()`` in append mode is
-    atomic below the pipe-buffer size (a few KB), and one record is well under
-    that.
+    Safe with several writers (``n_jobs`` > 1): the record goes out as one
+    unbuffered ``write()`` to a file opened with ``O_APPEND``, so records do
+    not interleave whatever their size (tracebacks can exceed 8 KB, where a
+    buffered text write would split into several syscalls).
     """
     if failure_log_path is None:
         return
-    with Path(failure_log_path).open("a") as f:
-        f.write(json.dumps(failure) + "\n")
+    with Path(failure_log_path).open("ab", buffering=0) as f:
+        f.write((json.dumps(failure) + "\n").encode())
 
 
 def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, failure_log_path=None, thin=10):

@@ -567,10 +567,42 @@ def test_fit_all_bins_min_ivar_skips_uninformative_bins(monkeypatch):
         min_ivar=1.0,
         sigma_ref=10.0,
         show_progress=False,
+        thin=0,
     )
 
     assert solvers[0] is not None
     assert solvers[1] is None
+
+
+def test_fit_all_bins_slims_returned_solvers(monkeypatch):
+    """Audit V5: returned solvers keep thinned float32 intrinsic_pdf only, no M."""
+    import veldist.veldist as vd
+
+    class FakeSolver:
+        def setup_grid(self, **kw):
+            pass
+
+        def add_data(self, vel, err):
+            self.matrix = np.ones((len(vel), 50))
+
+        def run(self, **kw):
+            self.samples = {"intrinsic_pdf": np.ones((100, 50)), "x": np.ones((100, 50))}
+
+        def clip_uncertainties(self):
+            self.clipped = self.samples["intrinsic_pdf"].shape[0]
+
+    monkeypatch.setattr(vd, "KinematicSolver", FakeSolver)
+    rng = np.random.default_rng(0)
+    (s,) = vd.fit_all_bins(
+        [{"vel": rng.normal(0, 10, 50), "err": np.full(50, 1.0)}],
+        grid_kwargs={"center": 0.0, "width": 200.0, "n_bins": 50},
+        show_progress=False,
+    )
+    assert s.clipped == 100  # clipping saw every draw
+    assert set(s.samples) == {"intrinsic_pdf"}
+    assert s.samples["intrinsic_pdf"].shape == (10, 50)
+    assert s.samples["intrinsic_pdf"].dtype == np.float32
+    assert s.matrix is None
 
 
 def test_fit_all_bins_min_ivar_requires_sigma_ref():

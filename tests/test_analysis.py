@@ -758,3 +758,15 @@ def test_gauss_hermite_fit_thins_deterministically():
 
     assert a["h3"][0] == b["h3"][0]
     assert c["h3"][0] == pytest.approx(a["h3"][0], abs=0.02)
+
+
+def test_compute_moments_kurtosis_matches_compute_summary():
+    # Audit V4: compute_moments corrected the variance but not the 4th
+    # moment, giving -0.272 excess kurtosis for a Gaussian at h/sigma = 0.78.
+    true_sigma = 10.0
+    centers, width = make_grid(-78, 78, 20)  # h = 7.8, h/sigma = 0.78
+    pmf = analytic_pmf(stats.norm(loc=0, scale=true_sigma), centers, width)
+    k_moments = compute_moments(pmf, centers)["kurtosis"][0]
+    k_summary = compute_summary(pmf, centers)["kurtosis"][0]
+    assert k_moments == pytest.approx(k_summary, abs=1e-9)
+    assert abs(k_moments) < 0.02

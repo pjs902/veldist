@@ -148,8 +148,10 @@ def compute_moments(pdf_samples, grid_centers, bin_width=None):
     safe_stds = np.where(stds > 0, stds, 1.0)
     skews = np.einsum("ij,ij->i", pdf_samples, delta**3) / safe_stds**3
     skews = np.where(stds > 0, skews, 0.0)
-    kurts = (np.einsum("ij,ij->i", pdf_samples, delta**4) / safe_stds**4) - 3.0
-    kurts = np.where(stds > 0, kurts, 0.0)
+    # Correct the 4th cumulant, as compute_summary does (see the derivation there).
+    var_pm = variance - cell_var
+    k4 = np.einsum("ij,ij->i", pdf_samples, delta**4) - 3.0 * var_pm**2 - (12.0 * cell_var) ** 2 / 120.0
+    kurts = np.where(stds > 0, k4 / safe_stds**4, 0.0)
 
     return {
         "mean": (float(np.mean(means)), float(np.std(means))),

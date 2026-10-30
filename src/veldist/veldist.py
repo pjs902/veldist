@@ -6,6 +6,11 @@ Infers the intrinsic line-of-sight velocity distribution (LOSVD) from
 discrete stellar velocities with individual measurement errors. The data
 enter through a design matrix computed once up front; the LOSVD is a
 histogram with a smoothness prior whose strength is inferred.
+
+Precision: this module runs in JAX's default float32, but importing
+:mod:`veldist.veldist2d` (or kinutils) turns on ``jax_enable_x64`` for the
+whole process, after which 1D fits run in float64 (about 2x memory, slower).
+Only precision and cost change, and which one you get depends on import order.
 """
 
 import contextlib
@@ -182,6 +187,26 @@ def precompute_design_matrix(obs_val, obs_err, bin_centers, bin_width=None):
     # The floor is tiny relative to any physically meaningful probability, so
     # it does not distort the likelihood; it only keeps it finite.
     return jnp.clip(prob_matrix, 1e-30, None)
+
+
+def _drop_off_grid_stars(matrix, min_mass=1e-3):
+    """Drop design-matrix rows with less than ``min_mass`` on the grid, with a warning.
+
+    Such a star constrains nothing, but it still counts towards ``n_stars``
+    (and so ``bin_flux``), and in 2D a row of floors can make the likelihood
+    non-finite and kill the whole bin.
+    """
+    keep = matrix.sum(axis=1) >= min_mass
+    if not np.all(keep):
+        warnings.warn(
+            f"Dropping {np.sum(~keep)} of {len(keep)} star(s) with < {min_mass:g} "
+            "of their error kernel on the grid; widen the grid to keep them.",
+            stacklevel=3,
+        )
+    if not np.any(keep):
+        msg = "No star has its error kernel on the grid."
+        raise ValueError(msg)
+    return matrix[keep]
 
 
 # ==============================================================================
@@ -656,11 +681,17 @@ class KinematicSolver:
             msg = "Run setup_grid() first."
             raise ValueError(msg)
 
-        self.n_stars = len(vel)
-        print(f"Computing Design Matrix for {self.n_stars} stars...")
+        vel = np.asarray(vel, dtype=float)
+        err = np.asarray(err, dtype=float)
+        if not (np.all(np.isfinite(vel)) and np.all(np.isfinite(err)) and np.all(err > 0)):
+            msg = "add_data: vel and err must be finite, and err must be > 0."
+            raise ValueError(msg)
+        print(f"Computing Design Matrix for {len(vel)} stars...")
 
         # This one-time computation replaces the convolution loop
-        self.matrix = precompute_design_matrix(vel, err, self.grid["centers"], bin_width=self.grid["width"])
+        matrix = precompute_design_matrix(vel, err, self.grid["centers"], bin_width=self.grid["width"])
+        self.matrix = _drop_off_grid_stars(np.asarray(matrix))
+        self.n_stars = self.matrix.shape[0]
         print(f"Matrix ready. Shape: {self.matrix.shape}")
 
     def run(
@@ -1127,6 +1158,7 @@ def fit_all_bins(
     sigma_ref=None,
     match_grid=None,
     show_progress=True,
+    thin=10,
 ):
     """Run the full inference pipeline on a list of Voronoi bins.
 
@@ -1184,6 +1216,12 @@ def fit_all_bins(
         which would print ``num_chains`` bars for every bin. Default ``True``.
         When on, NumPyro's ``progress_bar`` is set to ``False`` unless
         ``run_kwargs`` sets it.
+    thin : int
+        On each returned solver, keep only ``intrinsic_pdf``, every
+        ``thin``-th draw, as float32, and drop the design matrix; this runs
+        after ``clip_uncertainties()``, so the DYNAMITE output is unchanged.
+        Default 10, as in :func:`~veldist.veldist2d.fit_all_bins_2d`.
+        ``thin=1`` keeps every draw; ``thin=0`` leaves ``samples`` untouched.
 
     Returns
     -------
@@ -1284,6 +1322,12 @@ def fit_all_bins(
             solver.setup_grid(**grid_kwargs)
 
         solver.clip_uncertainties()
+        # Without this the returned list holds every draw and M per bin (GBs at ~2000 bins).
+        if thin:
+            solver.samples = {
+                "intrinsic_pdf": np.asarray(solver.samples["intrinsic_pdf"][::thin], dtype=np.float32)
+            }
+        solver.matrix = None
 
         solvers.append(solver)
 
@@ -1297,6 +1341,64 @@ def fit_all_bins(
 # ==============================================================================
 # Dynamite Output Writer
 # ==============================================================================
+
+
+def _write_aperture_and_bins_files(
+    solvers, output_dir, voronoi_bin_metadata, aperture_filename, bins_filename
+):
+    """Write aperture.dat and bins.dat; shared by the 1D and 2D writers.
+
+    Pixels whose bin ID is 0, out of range, or a skipped (``None``) solver
+    are written as 0 (masked).
+
+    ``ap['angle_deg']`` is written as given, with no frame handling or
+    checks. Dynamite expects ``angle_deg = -theta_maj``, where ``theta_maj``
+    is the receding major axis measured counter-clockwise from +x **in the
+    caller's own frame**. This is not a sky position angle: the two agree
+    only modulo 180, and using one in place of the other silently flips every
+    fitted rotation.
+
+    The frame of the ``pm1``/``pm2`` histograms is also the caller's
+    responsibility. Dynamite's projection is right-handed with the line of
+    sight along ``x' x y'``, so ``(x, y, v_los)`` must be right-handed.
+    ``pm2`` (the minor-axis component) changes sign under an East/West
+    mirror; ``pm1`` does not. See
+    ``omegaCen/dynamite_dataprep/dynamite_frame.py``.
+    """
+    ap = voronoi_bin_metadata["aperture"]
+    ap_path = output_dir / aperture_filename
+    with open(ap_path, "w") as f:
+        f.write("#counter_rotation_boxed_aperturefile_version_2 \n")
+        f.write(f"\t{ap['x_start']:f}\t{ap['y_start']:f} \n")
+        f.write(f"\t{ap['x_size']:f}\t{ap['y_size']:f} \n")
+        f.write(f"\t{ap['angle_deg']:f} \n")
+        f.write(f"\t{ap['nx']}\t{ap['ny']} \n")
+    print(f"Written aperture: {ap_path}")
+
+    solved_indices = [i for i, s in enumerate(solvers) if s is not None]
+    n_total = len(solvers)
+    orig_to_new = np.zeros(n_total + 1, dtype=int)  # index 0 unused
+    for new_id, orig_i in enumerate(solved_indices, start=1):
+        orig_to_new[orig_i + 1] = new_id  # orig_i is 0-based; +1 for 1-based
+
+    pixel_ids = np.asarray(voronoi_bin_metadata["pixel_bin_ids"]).flatten().astype(int)
+    # Clip before indexing: np.where evaluates both branches, so an
+    # out-of-range ID would raise IndexError before the mask applies.
+    remapped = np.where(
+        (pixel_ids > 0) & (pixel_ids <= n_total),
+        orig_to_new[np.clip(pixel_ids, 0, n_total)],
+        0,
+    )
+    total_pixels = len(remapped)
+
+    bins_path = output_dir / bins_filename
+    with open(bins_path, "w") as f:
+        f.write("#Counterrotation_binning_version_1\n")
+        f.write(f"{total_pixels}\n")
+        for start in range(0, total_pixels, 10):
+            chunk = remapped[start : start + 10]
+            f.write("\t" + "\t".join(str(v) for v in chunk) + "\n")
+    print(f"Written bins: {bins_path}")
 
 
 def write_dynamite_kinematics(
@@ -1532,43 +1634,6 @@ def write_dynamite_kinematics(
     table.write(str(kin_path), format="ascii.ecsv", overwrite=True)
     print(f"Written kinematics ({n_solved} bins): {kin_path}")
 
-    # ------------------------------------------------------------------
-    # Write aperture.dat
-    # ------------------------------------------------------------------
-    ap = voronoi_bin_metadata["aperture"]
-    ap_path = output_dir / aperture_filename
-    with open(ap_path, "w") as f:
-        f.write("#counter_rotation_boxed_aperturefile_version_2 \n")
-        f.write(f"\t{ap['x_start']:f}\t{ap['y_start']:f} \n")
-        f.write(f"\t{ap['x_size']:f}\t{ap['y_size']:f} \n")
-        f.write(f"\t{ap['angle_deg']:f} \n")
-        f.write(f"\t{ap['nx']}\t{ap['ny']} \n")
-    print(f"Written aperture: {ap_path}")
-
-    # ------------------------------------------------------------------
-    # Write bins.dat
-    # Re-map original 1-indexed bin IDs to sequential solved-only IDs.
-    # Pixels for skipped bins become 0 (masked).
-    # ------------------------------------------------------------------
-    # Build mapping: original 1-indexed ID -> new 1-indexed ID (0 if skipped).
-    n_total = len(solvers)
-    orig_to_new = np.zeros(n_total + 1, dtype=int)  # index 0 unused
-    for new_id, orig_i in enumerate(solved_indices, start=1):
-        orig_to_new[orig_i + 1] = new_id  # orig_i is 0-based; +1 for 1-based
-
-    pixel_ids = np.asarray(voronoi_bin_metadata["pixel_bin_ids"]).flatten().astype(int)
-    remapped = np.where(
-        (pixel_ids > 0) & (pixel_ids <= n_total),
-        orig_to_new[pixel_ids],
-        0,
+    _write_aperture_and_bins_files(
+        solvers, output_dir, voronoi_bin_metadata, aperture_filename, bins_filename
     )
-    total_pixels = len(remapped)
-
-    bins_path = output_dir / bins_filename
-    with open(bins_path, "w") as f:
-        f.write("#Counterrotation_binning_version_1\n")
-        f.write(f"{total_pixels}\n")
-        for start in range(0, total_pixels, 10):
-            chunk = remapped[start : start + 10]
-            f.write("\t" + "\t".join(str(v) for v in chunk) + "\n")
-    print(f"Written bins: {bins_path}")

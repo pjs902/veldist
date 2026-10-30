@@ -216,3 +216,13 @@ class TestRoundTrip:
         # pixel_bin_ids cycles 1,2,3,4 over 4 pixels; orig bin id 2 (0-indexed
         # bin 1, skipped) -> 0; others get their new sequential id.
         assert remapped == [1, 0, 2, 3]
+
+
+def test_bins_dat_masks_pixel_ids_above_number_of_solvers(tmp_path):
+    # Audit V3: writing a subset of bins (IDs above len(solvers)) raised
+    # IndexError instead of masking those pixels as documented.
+    meta = _voronoi_metadata_2d(n_bins_total=1, nx=1, ny=2)
+    meta["pixel_bin_ids"] = np.array([1, 2])
+    write_dynamite_kinematics_2d([fake_solver_2d()], tmp_path, meta)
+    data_lines = (tmp_path / "bins.dat").read_text().strip().split("\n")[2:]
+    assert [int(v) for line in data_lines for v in line.split()] == [1, 0]
