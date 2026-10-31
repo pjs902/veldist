@@ -823,7 +823,7 @@ def test_clip_uncertainties_2d_zero_spread_cell_hits_relative_floor():
     s.grid = setup_grid_2d(center=(0.0, 0.0), width=(20.0, 20.0), n_bins=k)
     s.samples = {"intrinsic_pdf": pdf}
 
-    s.clip_uncertainties(floor_fraction=0.01)
+    s.clip_uncertainties(floor_fraction=0.01, cell_correction=False)  # tests the floor
 
     raw_half_width = np.zeros(n_cells)
     for i in range(n_cells):
@@ -1134,3 +1134,16 @@ def test_rerun_invalidates_clipped_samples():
     solver.clip_uncertainties()
     solver.run(num_warmup=20, num_samples=20, seed=2)
     assert solver.clipped_samples is None
+
+
+def test_clip_uncertainties_2d_applies_correction_per_axis():
+    from veldist.veldist import _cell_mass_correction
+
+    solver = KinematicSolver2D()
+    solver.setup_grid(center=(0.0, 0.0), width=(10.0, 14.0), n_bins=(5, 7))
+    rng = np.random.default_rng(0)
+    draws = rng.dirichlet(np.full(35, 5.0), size=100)
+    solver.samples = {"intrinsic_pdf": draws}
+    solver.clip_uncertainties()
+    expected = np.percentile(_cell_mass_correction(draws, (5, 7)), 50, axis=0)
+    np.testing.assert_allclose(solver.clipped_samples["pdf_median"], expected)

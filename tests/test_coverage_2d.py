@@ -19,10 +19,11 @@ truths. It is excluded only via the existing broad ``xfail`` markers on
 markers that exclude the other four metrics in those cases, not a
 rho-specific carve-out.
 
-``KinematicSolver2D`` has no ``clip_uncertainties()`` (unlike 1D's
-``KinematicSolver``), so the summary here is computed directly from
-``mcmc.get_samples()`` via the same ``_moments_from_pdf_samples_2d`` used by
-the SBC test, applied to real (not prior-drawn) posterior samples.
+Moment coverage is computed directly from ``mcmc.get_samples()`` via the
+same ``_moments_from_pdf_samples_2d`` used by the SBC test, applied to real
+(not prior-drawn) posterior samples. Per-cell coverage scores
+``clip_uncertainties()`` output, i.e. exactly what is written to DYNAMITE
+(including the cell-mass correction, docs/cell-mass-correction.md).
 
 Grids, error distributions, and star counts are drawn from
 ``veldist.calibration2d.PROFILES_2D`` -- calibrated proper-motion observing
@@ -193,9 +194,10 @@ def test_per_cell_losvd_coverage_2d(truth_name, profile_name, prior, request):
     per-cell miscalibration (over-wide here, over-tight there) can cancel and
     still pass moment coverage. Only this test sees it.
 
-    Uses raw posterior median +/- half-68CI per cell directly from
-    ``mcmc.get_samples()['intrinsic_pdf']`` (no ``clip_uncertainties``
-    equivalent exists for 2D -- see module docstring).
+    Scores ``clip_uncertainties()`` output (median +/- floored half-68CI per
+    cell, after the cell-mass correction) -- what DYNAMITE receives. Scoring
+    raw draws instead under-covered the wing cells by construction (see
+    docs/cell-mass-correction.md).
     """
     for mark in _maybe_xfail(prior, profile_name):
         request.node.add_marker(mark)
@@ -222,15 +224,13 @@ def test_per_cell_losvd_coverage_2d(truth_name, profile_name, prior, request):
         solver = KinematicSolver2D()
         solver.setup_grid(center=grid_center, width=grid_width, n_bins=n_bins)
         solver.add_data(obs_x, obs_y, cov)
-        samples = solver.run(
+        solver.run(
             num_warmup=300, num_samples=600, seed=20260806 + i, prior=prior
         )
 
-        pdf_samples = np.asarray(samples["intrinsic_pdf"])
-        median = np.median(pdf_samples, axis=0)
-        half68 = 0.5 * (
-            np.percentile(pdf_samples, 84, axis=0) - np.percentile(pdf_samples, 16, axis=0)
-        )
+        solver.clip_uncertainties()
+        median = solver.clipped_samples["pdf_median"]
+        half68 = solver.clipped_samples["pdf_uncertainty"]
         hits += (np.abs(median - truth_mass) <= half68).astype(float)
 
     coverage = hits / N_REAL

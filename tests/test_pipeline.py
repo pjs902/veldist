@@ -87,7 +87,7 @@ class TestClipUncertainties:
         samples[:, 1:] = rest
         s.samples["intrinsic_pdf"] = samples
 
-        s.clip_uncertainties()
+        s.clip_uncertainties(cell_correction=False)  # tests the floors, not the correction
         unc = s.clipped_samples["losvd_uncertainty"]
 
         raw_half_width = (
@@ -662,3 +662,31 @@ def test_fit_all_bins_rechecks_min_stars_after_dropping_off_grid_stars():
             show_progress=False,
         )
     assert solvers == [None]
+
+
+def test_cell_mass_correction_adds_h2_over_6_and_keeps_mass_and_mean():
+    from veldist.veldist import _cell_mass_correction
+
+    c = np.arange(41, dtype=float)  # h = 1
+    p = np.exp(-0.5 * ((c - 21.3) / 4.0) ** 2)
+    p = (p / p.sum())[None]
+    q = _cell_mass_correction(p, (41,))
+    var = lambda w: w @ (c - w @ c) ** 2  # noqa: E731
+    assert q.sum() == pytest.approx(1.0)
+    # tiny tolerances: the kernel leaks ~1e-6 of mass off the grid edges
+    assert q[0] @ c == pytest.approx(p[0] @ c, abs=1e-4)
+    assert var(q[0]) - var(p[0]) == pytest.approx(1.0 / 6.0, rel=1e-3)
+
+
+def test_clip_uncertainties_cell_correction_flag():
+    import veldist.veldist as vd
+
+    s = vd.KinematicSolver()
+    s.setup_grid(center=0.0, width=40.0, n_bins=20)
+    rng = np.random.default_rng(0)
+    s.samples = {"intrinsic_pdf": rng.dirichlet(np.full(20, 5.0), size=200)}
+    s.clip_uncertainties(cell_correction=False)
+    raw = np.percentile(s.samples["intrinsic_pdf"], 50, axis=0)
+    np.testing.assert_allclose(s.clipped_samples["losvd_median"], raw)
+    s.clip_uncertainties()
+    assert not np.allclose(s.clipped_samples["losvd_median"], raw)

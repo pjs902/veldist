@@ -39,7 +39,7 @@ from jax.scipy.special import logsumexp
 from numpyro.infer import MCMC, NUTS
 from scipy.special import ndtr, owens_t
 
-from .veldist import _drop_off_grid_stars, _log_bin_failure, precompute_design_matrix
+from .veldist import _cell_mass_correction, _drop_off_grid_stars, _log_bin_failure, precompute_design_matrix
 
 __all__ = [
     "KinematicSolver2D",
@@ -892,7 +892,7 @@ class KinematicSolver2D:
         print("Inference Complete.")
         return self.samples
 
-    def clip_uncertainties(self, floor_fraction=0.01, abs_floor=1e-10):
+    def clip_uncertainties(self, floor_fraction=0.01, abs_floor=1e-10, cell_correction=True):
         """Summarise the posterior per cell and apply uncertainty floors.
 
         The 2D version of :meth:`veldist.KinematicSolver.clip_uncertainties`;
@@ -923,6 +923,11 @@ class KinematicSolver2D:
             Default 0.01.
         abs_floor : float
             Absolute floor, applied after the relative one. Default 1e-10.
+        cell_correction : bool
+            Default ``True``: apply :func:`veldist.veldist._cell_mass_correction`
+            along both axes of every draw first, so the summary describes the
+            truth's cell masses (what DYNAMITE compares against). ``False``
+            summarises the raw fitted histogram.
 
         Returns
         -------
@@ -953,6 +958,9 @@ class KinematicSolver2D:
                 "mass functions (each row should sum to 1)."
             )
             raise ValueError(msg)
+
+        if cell_correction:
+            pdf_mass = _cell_mass_correction(pdf_mass, self.grid["shape"])
 
         # Per-cell marginal statistics.
         median_mass = np.percentile(pdf_mass, 50, axis=0)

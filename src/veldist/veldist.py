@@ -594,6 +594,34 @@ def model_gaussian_core(matrix, n_bins, centers, bin_width=1.0, rw_order=3):
     numpyro.factor("obs_log_lik", jnp.sum(jnp.log(per_star_prob)))
 
 
+def _cell_mass_correction(pdf_samples, shape):
+    """Spread each posterior draw by ``[1/12, 5/6, 1/12]`` along every grid axis.
+
+    The likelihood treats the density as flat inside each cell, so where the
+    measurement errors blur the data the fitted histogram's spread converges
+    on the true variance ``V`` *including* the flat steps' own ``h**2/12``:
+    its cell masses, read as points, have ``V - h**2/12``. The truth's exact
+    cell masses -- what DYNAMITE's model histograms are -- have
+    ``V + h**2/12``. This kernel adds the missing ``h**2/6`` per axis while
+    keeping the total mass and the mean. Applied per draw, so the median and
+    the 68% interval stay consistent.
+
+    Measured on mocks matched to every production dataset (2026-10-31,
+    ``docs/cell-mass-correction.md``): the sigma DYNAMITE reads off the
+    per-cell medians goes from -0.5..-11% to -5..+1.6%, and cells below 0.30
+    coverage from 23 to 7 across 19 dataset/truth cases. It over-widens
+    slightly when errors are far below a cell (+1.6% at err/h ~ 0.17).
+    """
+    from scipy.ndimage import convolve1d
+
+    kernel = np.array([1.0 / 12.0, 5.0 / 6.0, 1.0 / 12.0])
+    a = np.asarray(pdf_samples, dtype=float).reshape((len(pdf_samples), *shape))
+    for axis in range(1, a.ndim):
+        a = convolve1d(a, kernel, axis=axis, mode="constant")
+    a = a.reshape(len(pdf_samples), -1)
+    return a / a.sum(axis=1, keepdims=True)
+
+
 # ==============================================================================
 # Solver Class
 # ==============================================================================
@@ -916,7 +944,7 @@ class KinematicSolver:
         ax.legend()
         return ax
 
-    def clip_uncertainties(self, floor_fraction=0.01, abs_floor=1e-10):
+    def clip_uncertainties(self, floor_fraction=0.01, abs_floor=1e-10, cell_correction=True):
         """Summarise the posterior per bin and apply uncertainty floors.
 
         A post-processing step: ``self.samples`` is not changed. The posterior is
@@ -951,6 +979,11 @@ class KinematicSolver:
             Default 0.01.
         abs_floor : float
             Absolute floor, applied after the relative one. Default 1e-10.
+        cell_correction : bool
+            Default ``True``: turn each draw into the truth's *cell masses*
+            (what DYNAMITE compares against) before summarising; see
+            :func:`_cell_mass_correction`. ``False`` summarises the raw
+            fitted histogram, which reads 1-5% narrow on typical grids.
 
         Returns
         -------
@@ -981,6 +1014,9 @@ class KinematicSolver:
                 "mass functions (each row should sum to 1)."
             )
             raise ValueError(msg)
+
+        if cell_correction:
+            pdf_mass = _cell_mass_correction(pdf_mass, (pdf_mass.shape[1],))
 
         # Per-bin marginal statistics.
         median_mass = np.percentile(pdf_mass, 50, axis=0)
