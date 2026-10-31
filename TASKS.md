@@ -49,6 +49,12 @@ h3/h4 limitation honestly rather than engineering around it.
   sigma range, as in 1D. Calibration guards: `calibrate` requires the
   `gaussian` truth; `coverage_floor` rejects 0 and warns below 10; 1D
   `n_bins`/`matched_grid` floor at 5.
+- [ ] Slow gate red on `main` too (pre-existing, reproduced 2026-10-31 on
+  d2092e9): `test_per_cell_losvd_coverage_2d[anisotropic-hst_faint-gaussian_core]`,
+  one informative cell at coverage 0.28 against the 0.30 floor.
+- [ ] Laptop RAM: `test_coverage_over_mock_realisations[gaussian_core]` alone
+  peaks at ~10 GB, and the full `-m slow` suite in one process grew to 32 GB.
+  Run slow tests one file (or one test) per process on the laptop.
 - [ ] `PROXY_TO_GH` and `HST_MEASURED`/`GAIA_OUTER_MEASURED` are stored
   constants measured with the old percentile/GH code and old 2D `from_data`;
   re-measure them before relying on new numbers.
