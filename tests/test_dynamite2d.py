@@ -226,3 +226,13 @@ def test_bins_dat_masks_pixel_ids_above_number_of_solvers(tmp_path):
     write_dynamite_kinematics_2d([fake_solver_2d()], tmp_path, meta)
     data_lines = (tmp_path / "bins.dat").read_text().strip().split("\n")[2:]
     assert [int(v) for line in data_lines for v in line.split()] == [1, 0]
+
+
+def test_bins_dat_rejects_transposed_pixel_map(tmp_path):
+    # DYNAMITE indexes pixels x-fastest, so a 2D map must be (ny, nx).
+    meta = _voronoi_metadata_2d(n_bins_total=1, nx=3, ny=2)
+    meta["pixel_bin_ids"] = np.ones((3, 2), dtype=int)  # (nx, ny): wrong
+    with pytest.raises(ValueError, match="ny, nx"):
+        write_dynamite_kinematics_2d([fake_solver_2d()], tmp_path, meta)
+    meta["pixel_bin_ids"] = np.ones((2, 3), dtype=int)  # (ny, nx): right
+    write_dynamite_kinematics_2d([fake_solver_2d()], tmp_path, meta)

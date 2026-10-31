@@ -54,7 +54,9 @@ SKEW_PER_H3 = 4.0 * np.sqrt(3.0)
 EXKURT_PER_H4 = 8.0 * np.sqrt(6.0)
 
 #: Measured mapping from the robust proxies in ``compute_percentile_summary``
-#: to Gauss-Hermite coefficients, over ``make_truths()`` at OMEGACAT's grid,
+#: to Gauss-Hermite coefficients, over ``make_truths()`` at OMEGACAT's grid
+#: (``sigma=OMEGACAT.sigma_max``; re-measured 2026-10-31 after the cell-edge
+#: percentile and cell-mass GH fixes moved both ratios by ~1%),
 #: restricted to the amplitude envelope ``measure_proxy_to_gh``'s defaults
 #: describe (|h3| <= 0.15, |h4| <= 0.10). Each entry is the dict
 #: ``measure_proxy_to_gh`` returns: ``slope``, ``median_ratio``,
@@ -73,16 +75,16 @@ EXKURT_PER_H4 = 8.0 * np.sqrt(6.0)
 #: ones.
 PROXY_TO_GH = {
     "skew_pct_to_h3": {
-        "slope": 1.1913269380278009,
-        "median_ratio": 1.17612262772906,
-        "ratio_std": 0.20728990309116752,
+        "slope": 1.1994649694543449,
+        "median_ratio": 1.1844193063289883,
+        "ratio_std": 0.20805896354773987,
         "n_truths": 3,
         "outliers": ["cold_disk_component"],
     },
     "kurtosis_pct_to_h4": {
-        "slope": 0.625306989336929,
-        "median_ratio": 0.6330000772983341,
-        "ratio_std": 1.628837233074273,
+        "slope": 0.6357269840539072,
+        "median_ratio": 0.6398247057563957,
+        "ratio_std": 2.068316032004988,
         "n_truths": 5,
         "outliers": ["cold_disk_component"],
     },

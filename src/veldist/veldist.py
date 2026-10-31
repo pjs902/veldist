@@ -1433,7 +1433,19 @@ def _write_aperture_and_bins_files(
     for new_id, orig_i in enumerate(solved_indices, start=1):
         orig_to_new[orig_i + 1] = new_id  # orig_i is 0-based; +1 for 1-based
 
-    pixel_ids = np.asarray(voronoi_bin_metadata["pixel_bin_ids"]).flatten().astype(int)
+    # DYNAMITE's pixel index is ix + iy*nx (x fastest: orblib Fortran
+    # aperture_boxed_find, and kinematics.write_aperture_and_bin_files writes
+    # grid[ix, iy].T.flatten()), so a 2D map must be (ny, nx), and a flat one
+    # x-fastest. A transposed (nx, ny) map would scramble bins silently.
+    pixel_ids = np.asarray(voronoi_bin_metadata["pixel_bin_ids"])
+    nx, ny = int(ap["nx"]), int(ap["ny"])
+    if (pixel_ids.ndim == 2 and pixel_ids.shape != (ny, nx)) or pixel_ids.size != nx * ny:
+        msg = (
+            f"pixel_bin_ids has shape {pixel_ids.shape}, but the aperture is "
+            f"nx={nx} by ny={ny}: pass shape (ny, nx), or flat x-fastest with nx*ny entries."
+        )
+        raise ValueError(msg)
+    pixel_ids = pixel_ids.flatten().astype(int)
     # Clip before indexing: np.where evaluates both branches, so an
     # out-of-range ID would raise IndexError before the mask applies.
     remapped = np.where(
@@ -1522,7 +1534,7 @@ def write_dynamite_kinematics(
                 },
                 # 1-indexed bin IDs (bin 1 = solvers[0], bin 2 = solvers[1], ...)
                 # 0 = masked. Skipped bins are remapped to 0 automatically.
-                'pixel_bin_ids': array-like,   # shape (nx*ny,) or (ny, nx)
+                'pixel_bin_ids': array-like,   # shape (ny, nx), or (nx*ny,) x-fastest
                 'psf': {
                     'sigma':  [float, ...],   # Gaussian sigma(s) in arcsec
                     'weight': [float, ...],   # must sum to 1

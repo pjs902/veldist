@@ -55,9 +55,22 @@ h3/h4 limitation honestly rather than engineering around it.
 - [ ] Laptop RAM: `test_coverage_over_mock_realisations[gaussian_core]` alone
   peaks at ~10 GB, and the full `-m slow` suite in one process grew to 32 GB.
   Run slow tests one file (or one test) per process on the laptop.
-- [ ] `PROXY_TO_GH` and `HST_MEASURED`/`GAIA_OUTER_MEASURED` are stored
-  constants measured with the old percentile/GH code and old 2D `from_data`;
-  re-measure them before relying on new numbers.
+- [DONE 2026-10-31] `PROXY_TO_GH` re-measured (reproduced the stored values
+  exactly on pre-audit code at `sigma=OMEGACAT.sigma_max`; both ratios moved
+  ~1%). `HST_MEASURED`/`GAIA_OUTER_MEASURED` need nothing: they were measured
+  per axis by notebook replay, not with `from_data`.
+- [DONE 2026-10-31] `bins.dat` pixel order checked against DYNAMITE: the
+  Fortran pixel index is `ix + iy*nx` (x fastest), matching its Python
+  writer/reader. The writer now rejects a `pixel_bin_ids` map that is not
+  `(ny, nx)` / `nx*ny`.
+- [ ] 2D coverage case `anisotropic-hst_faint-gaussian_core` (0.28 < 0.30) is
+  NOT chance (p = 0.004 if calibrated): y-wing cells 2-4 sigma_y out run
+  1.3 half-widths low, the core over-covers (0.90). Cause: in the
+  deconvolution regime the fitted histogram's point variance tends to
+  V - h^2/12, while exact truth cell masses have V + h^2/12 (EM check:
+  9.74 vs 10.31 at h = 7.8). DYNAMITE compares cell masses directly, so the
+  cell values written to it are squeezed by ~h^2/6 in variance. Needs a
+  decision on the fix.
 
 ### 2026-09-01 profile audit and verification campaign
 
