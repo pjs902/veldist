@@ -63,14 +63,14 @@ h3/h4 limitation honestly rather than engineering around it.
   Fortran pixel index is `ix + iy*nx` (x fastest), matching its Python
   writer/reader. The writer now rejects a `pixel_bin_ids` map that is not
   `(ny, nx)` / `nx*ny`.
-- [ ] 2D coverage case `anisotropic-hst_faint-gaussian_core` (0.28 < 0.30) is
-  NOT chance (p = 0.004 if calibrated): y-wing cells 2-4 sigma_y out run
-  1.3 half-widths low, the core over-covers (0.90). Cause: in the
-  deconvolution regime the fitted histogram's point variance tends to
-  V - h^2/12, while exact truth cell masses have V + h^2/12 (EM check:
-  9.74 vs 10.31 at h = 7.8). DYNAMITE compares cell masses directly, so the
-  cell values written to it are squeezed by ~h^2/6 in variance. Needs a
-  decision on the fix.
+- [DONE 2026-10-31] 2D coverage case `anisotropic-hst_faint-gaussian_core`
+  (0.28 < 0.30) was a real bias, not chance: fitted cell masses were h^2/6
+  too concentrated vs the truth's cell masses. Fixed by the cell-mass
+  correction in `clip_uncertainties` (docs/cell-mass-correction.md); the case
+  and all other per-cell/per-bin coverage gates now pass.
+- [ ] Optional: make the cell correction's strength depend on err/h, to
+  remove the small overshoot when errors are far below a cell (Ziliotto
+  +1.6% on one axis).
 
 ### 2026-09-01 profile audit and verification campaign
 
