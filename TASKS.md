@@ -25,12 +25,19 @@ h3/h4 limitation honestly rather than engineering around it.
 - [DONE 2026-10-30, branch `audit-2026-10-14-fixes`] V1-V6, V8, V9 applied
   with regression tests. V1 used exact bivariate-CDF cell masses instead of the
   proposed sub-cell subdivision.
-- [ ] Re-run real HST 2D bins that failed with "Cannot find valid initial
-  parameters": V2 (off-grid stars) is the suspected cause. Correlated-error
-  (Gaia) 2D fits from before this branch used the wrong rows for precise
-  stars (V1) and should be re-fitted.
-- [ ] Check the `bins.dat` pixel order against DYNAMITE's reader (listed as
-  not checked in the audit).
+- [DONE 2026-11-01] Re-fitted every omegaCen dataset on `329c142` with the
+  production grids pinned (HST K=23, Gaia K=17, Ziliotto K=19, Bellini and
+  Scalco K=13; post-audit profiles would pick smaller grids). HST now solves
+  1415/1415 bins (was 1407): V2 confirmed, the old code crashes on a bin with
+  one off-grid star; 24 stars dropped in 23 bins. Sigma vs the old maps:
+  +1.3 to +5.3% median (cell-mass correction, as predicted), geometry files
+  identical except Gaia v1, which was re-binned by uncommitted notebook changes
+  (AvdM10 centre, non-empty-cell binning). `NGC5139_production_input_xeast`
+  re-assembled and passes both frame checks. Not refreshed: the relative-PM
+  pack (`hst_relative` not re-fitted). HST needs `n_jobs=4` on the laptop:
+  8 workers went to ~13 GB swap and filled the disk.
+- [DONE 2026-10-31] `bins.dat` pixel order matches DYNAMITE's reader
+  (x-fastest); the writer now rejects a mis-shaped pixel map.
 
 ### 2026-10-30 second full audit (all 15 findings fixed, same branch)
 
@@ -49,9 +56,11 @@ h3/h4 limitation honestly rather than engineering around it.
   sigma range, as in 1D. Calibration guards: `calibrate` requires the
   `gaussian` truth; `coverage_floor` rejects 0 and warns below 10; 1D
   `n_bins`/`matched_grid` floor at 5.
-- [ ] Slow gate red on `main` too (pre-existing, reproduced 2026-10-31 on
-  d2092e9): `test_per_cell_losvd_coverage_2d[anisotropic-hst_faint-gaussian_core]`,
-  one informative cell at coverage 0.28 against the 0.30 floor.
+- [DONE 2026-10-31] Slow gate red on `main`
+  (`test_per_cell_losvd_coverage_2d[anisotropic-hst_faint-gaussian_core]`,
+  one cell at 0.28): fixed by the cell-mass correction. Full slow suite on
+  `329c142`, per file: no failures; 11 2D xpasses (stale xfail markers, not
+  yet removed).
 - [ ] Laptop RAM: `test_coverage_over_mock_realisations[gaussian_core]` alone
   peaks at ~10 GB, and the full `-m slow` suite in one process grew to 32 GB.
   Run slow tests one file (or one test) per process on the laptop.
