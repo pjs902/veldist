@@ -21,7 +21,10 @@ intentional; see the Gotchas in ``PLAN.md`` §3.1/§3.2.
 """
 
 import contextlib
+import hashlib
 import io
+import os
+import pickle
 import traceback
 import warnings
 from functools import cache
@@ -690,6 +693,8 @@ class KinematicSolver2D:
         factor of the latter. Built once by ``setup_grid`` and passed to the
         model.
     n_stars : int or None
+        Number of stars kept by ``add_data`` (off-grid stars are dropped, so
+        this can be below the number passed in). Written as ``nstarbin``.
     samples : dict or None
     clipped_samples : dict or None
         Per-cell median mass and floored uncertainties, set by
@@ -889,6 +894,9 @@ class KinematicSolver2D:
         self.samples = mcmc.get_samples()
         # Invalidate any previously computed clipped summary when re-running.
         self.clipped_samples = None
+        # Each run compiles afresh and JAX never frees it: ~30-40 MB per fit, which
+        # took long batch runs (1400 bins) into swap. Nothing reuses it.
+        jax.clear_caches()
         print("Inference Complete.")
         return self.samples
 
@@ -1020,9 +1028,10 @@ def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, 
 
     Returns
     -------
-    (int, KinematicSolver2D or None)
-        The bin index and the fitted solver, or ``None`` if the bin was
-        skipped (fewer than ``min_stars`` stars, or the fit raised).
+    (int, KinematicSolver2D or None, bool)
+        The bin index; the fitted solver, or ``None`` if the bin was skipped
+        (fewer than ``min_stars`` stars, before or after off-grid stars are
+        dropped) or the fit raised; and ``True`` for the ``min_stars`` skips.
     """
     if len(pm1) < min_stars:
         warnings.warn(
@@ -1031,7 +1040,7 @@ def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, 
             "should be masked in the Dynamite input files.",
             stacklevel=2,
         )
-        return i, None
+        return i, None, True
 
     solver = KinematicSolver2D()
     try:
@@ -1045,7 +1054,7 @@ def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, 
                 f"(minimum is {min_stars}). Skipping.",
                 stacklevel=2,
             )
-            return i, None
+            return i, None, True
         with contextlib.redirect_stdout(io.StringIO()):
             solver.run(seed=seed, **run_kwargs)
         solver.clip_uncertainties()
@@ -1072,7 +1081,7 @@ def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, 
             + (f"logged to {failure_log_path}." if failure_log_path else "were NOT logged to disk (failure_log_path=None)."),
             stacklevel=2,
         )
-        return i, None
+        return i, None, False
 
     # ponytail: shrink the solver before it crosses the process boundary and
     # lands in fit_all_bins_2d's list. clip_uncertainties() above already ran
@@ -1103,7 +1112,7 @@ def _fit_one_bin_2d(i, pm1, pm2, cov, grid_kwargs, run_kwargs, seed, min_stars, 
     solver.Q_reg = None
     solver.L = None
 
-    return i, solver
+    return i, solver, False
 
 
 def fit_all_bins_2d(
@@ -1115,6 +1124,7 @@ def fit_all_bins_2d(
     n_jobs=1,
     failure_log_path="fit_all_bins_2d_failures.jsonl",
     thin=10,
+    checkpoint_dir=None,
 ):
     """Run the full inference pipeline on a list of spatial (Voronoi) bins.
 
@@ -1187,6 +1197,14 @@ def fit_all_bins_2d(
         Dynamite output is unaffected; this only limits the memory used by the
         returned list (see :func:`_fit_one_bin_2d`). ``thin=1`` keeps every
         draw, and ``thin=0`` leaves ``samples`` untouched.
+    checkpoint_dir : str or path-like or None
+        If set, each finished bin is saved there as ``bin_{i}.pkl`` as soon as
+        it completes, and a re-run with the same directory loads those bins
+        instead of fitting them again, so a run killed after hours (memory,
+        sleep, a crash) resumes where it stopped. Failed bins are not saved,
+        so they are retried. Each file records the bin's data and the
+        settings; a mismatch raises, so use a fresh directory for a new
+        configuration. Default ``None`` (no checkpoints).
 
     Returns
     -------
@@ -1211,27 +1229,68 @@ def fit_all_bins_2d(
 
     n_total = len(bin_data_list)
     solvers = [None] * n_total
+    below_min = [False] * n_total
+
+    ckpt = None if checkpoint_dir is None else Path(checkpoint_dir)
+    if ckpt is not None:
+        ckpt.mkdir(parents=True, exist_ok=True)
+
+    def _key(i, bin_data):
+        h = hashlib.sha256()
+        for name in ("pm1", "pm2", "cov"):
+            h.update(np.ascontiguousarray(bin_data[name], dtype=float).tobytes())
+        return repr((grid_kwargs, sorted(run_kwargs.items()), base_seed + i, min_stars, thin, h.hexdigest()))
+
+    def _store(i, solver, skipped):
+        solvers[i], below_min[i] = solver, skipped
+        if ckpt is not None and (solver is not None or skipped):  # failures are retried on resume
+            tmp = ckpt / f"bin_{i}.pkl.tmp"
+            with tmp.open("wb") as f:
+                pickle.dump({"key": keys[i], "solver": solver, "skipped": skipped}, f)
+            os.replace(tmp, ckpt / f"bin_{i}.pkl")  # atomic: a kill mid-write leaves no half file
+
+    keys = [_key(i, b) for i, b in enumerate(bin_data_list)] if ckpt is not None else None
+    todo = []
+    for i in range(n_total):
+        path = None if ckpt is None else ckpt / f"bin_{i}.pkl"
+        if path is not None and path.exists():
+            with path.open("rb") as f:
+                rec = pickle.load(f)
+            if rec["key"] != keys[i]:
+                msg = (f"{path} was written for different data or settings; "
+                       "use a fresh checkpoint_dir for a new configuration.")
+                raise ValueError(msg)
+            solvers[i], below_min[i] = rec["solver"], rec["skipped"]
+        else:
+            todo.append(i)
+    if ckpt is not None and len(todo) < n_total:
+        print(f"Resuming: {n_total - len(todo)}/{n_total} bins loaded from {ckpt}.")
 
     if n_jobs == 1:
-        bin_iter = enumerate(bin_data_list)
+        bin_iter = todo
         if show_progress:
             from tqdm.auto import tqdm
 
-            bin_iter = tqdm(bin_iter, total=n_total, desc="Fitting bins", unit="bin")
+            bin_iter = tqdm(bin_iter, total=len(todo), desc="Fitting bins", unit="bin")
 
-        for i, bin_data in bin_iter:
+        for i in bin_iter:
             if not show_progress:
                 print(f"Fitting bin {i + 1}/{n_total}...")
-
-            pm1 = np.asarray(bin_data["pm1"])
-            pm2 = np.asarray(bin_data["pm2"])
-            cov = np.asarray(bin_data["cov"])
-
-            _, solver = _fit_one_bin_2d(
-                i, pm1, pm2, cov, grid_kwargs, run_kwargs, base_seed + i, min_stars, failure_log_path, thin
+            bin_data = bin_data_list[i]
+            _, solver, skipped = _fit_one_bin_2d(
+                i,
+                np.asarray(bin_data["pm1"]),
+                np.asarray(bin_data["pm2"]),
+                np.asarray(bin_data["cov"]),
+                grid_kwargs,
+                run_kwargs,
+                base_seed + i,
+                min_stars,
+                failure_log_path,
+                thin,
             )
-            solvers[i] = solver
-    else:
+            _store(i, solver, skipped)
+    elif todo:
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor, as_completed
 
@@ -1241,9 +1300,9 @@ def fit_all_bins_2d(
                 executor.submit(
                     _fit_one_bin_2d,
                     i,
-                    np.asarray(bin_data["pm1"]),
-                    np.asarray(bin_data["pm2"]),
-                    np.asarray(bin_data["cov"]),
+                    np.asarray(bin_data_list[i]["pm1"]),
+                    np.asarray(bin_data_list[i]["pm2"]),
+                    np.asarray(bin_data_list[i]["cov"]),
                     grid_kwargs,
                     run_kwargs,
                     base_seed + i,
@@ -1251,17 +1310,17 @@ def fit_all_bins_2d(
                     failure_log_path,
                     thin,
                 ): i
-                for i, bin_data in enumerate(bin_data_list)
+                for i in todo
             }
             completed = as_completed(futures)
             if show_progress:
                 from tqdm.auto import tqdm
 
-                completed = tqdm(completed, total=n_total, desc="Fitting bins", unit="bin")
+                completed = tqdm(completed, total=len(todo), desc="Fitting bins", unit="bin")
             for future in completed:
                 i = futures[future]
                 try:
-                    _, solvers[i] = future.result()
+                    _store(i, *future.result()[1:])
                 except Exception as exc:  # noqa: BLE001 -- e.g. a worker killed for memory (BrokenProcessPool)
                     _log_bin_failure(
                         failure_log_path,
@@ -1270,7 +1329,7 @@ def fit_all_bins_2d(
                     warnings.warn(f"Bin {i} lost: worker failed with {type(exc).__name__}: {exc}.", stacklevel=2)
 
     n_solved = sum(s is not None for s in solvers)
-    n_below_min_stars = sum(1 for bin_data in bin_data_list if len(bin_data["pm1"]) < min_stars)
+    n_below_min_stars = sum(below_min)
     n_failed = n_total - n_solved - n_below_min_stars
     summary = f"Done. {n_solved}/{n_total} bins solved"
     if n_below_min_stars:

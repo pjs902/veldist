@@ -39,6 +39,25 @@ h3/h4 limitation honestly rather than engineering around it.
 - [DONE 2026-10-31] `bins.dat` pixel order matches DYNAMITE's reader
   (x-fastest); the writer now rejects a mis-shaped pixel map.
 
+### 2026-11-01 third audit (all 6 findings fixed, branch `audit-3-fixes`)
+
+- [DONE] Both `run()`s call `jax.clear_caches()`: every fit compiled afresh
+  and JAX kept it, +30-40 MB per bin (measured on the HST grid: 452 -> 686 MB
+  over 8 bins; flat at 210-260 MB with the fix). This is what took HST with
+  8 workers into ~13 GB swap.
+- [DONE] `fit_all_bins_2d(checkpoint_dir=...)`: each finished bin is saved
+  atomically and a re-run resumes; failed bins are retried; checkpoints for
+  other data/settings raise. (1D `fit_all_bins` has none; MUSE takes 10 min.)
+- [DONE] `match_grid`: the cell-mass correction now runs on the fitted grid
+  before summing (it added h_out^2/6 after summing). `compute_summary` on
+  those output-grid cell masses still reads sigma^2 high by h_out^2/12
+  (documented in `docs/examples.md`; `match_grid` is off in production).
+- [DONE] `fit_all_bins_2d` counts bins skipped for too few on-grid stars as
+  below `min_stars`, not "failed".
+- [DONE] `write_dynamite_kinematics_2d` floor arguments removed (always
+  ignored: `fit_all_bins_2d` clips first). `n_stars` documented as the kept
+  count in both solvers.
+
 ### 2026-10-30 second full audit (all 15 findings fixed, same branch)
 
 - [DONE] 1D `fit_all_bins` isolates failing bins (`failure_log_path`);

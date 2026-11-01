@@ -903,6 +903,48 @@ def test_fit_all_bins_2d_skips_below_min_stars():
     assert solvers[2].clipped_samples is not None
 
 
+def test_fit_all_bins_2d_resumes_from_checkpoints(tmp_path, monkeypatch):
+    """A re-run loads saved bins instead of refitting, retries failed ones, and
+    refuses checkpoints written for other data."""
+    import types
+
+    import veldist.veldist2d as v2
+
+    calls = []
+
+    def fake_fit(i, *args):
+        calls.append(i)
+        if i == 2:
+            return i, None, False  # a failure: not checkpointed, so retried
+        return i, types.SimpleNamespace(tag=i), False
+
+    monkeypatch.setattr(v2, "_fit_one_bin_2d", fake_fit)
+    bins = [_make_pm_bin(15, seed=i) for i in range(3)]
+    grid_kwargs = {"center": (0.0, 0.0), "width": (30.0, 30.0), "n_bins": 5}
+    kw = {"show_progress": False, "failure_log_path": None, "checkpoint_dir": tmp_path}
+
+    first = v2.fit_all_bins_2d(bins, grid_kwargs, **kw)
+    assert calls == [0, 1, 2]
+    calls.clear()
+    second = v2.fit_all_bins_2d(bins, grid_kwargs, **kw)
+    assert calls == [2]
+    assert [s.tag for s in second[:2]] == [s.tag for s in first[:2]] == [0, 1]
+
+    bins[0] = _make_pm_bin(15, seed=99)
+    with pytest.raises(ValueError, match="different data or settings"):
+        v2.fit_all_bins_2d(bins, grid_kwargs, **kw)
+
+
+def test_fit_all_bins_2d_counts_off_grid_skips_as_below_min_stars(monkeypatch, capsys):
+    import veldist.veldist2d as v2
+
+    monkeypatch.setattr(v2, "_fit_one_bin_2d", lambda i, *a: (i, None, True))
+    grid_kwargs = {"center": (0.0, 0.0), "width": (30.0, 30.0), "n_bins": 5}
+    v2.fit_all_bins_2d([_make_pm_bin(15, seed=0)], grid_kwargs, show_progress=False, failure_log_path=None)
+    out = capsys.readouterr().out
+    assert "1 below min_stars" in out and "failed" not in out
+
+
 def test_fit_all_bins_2d_uses_distinct_seeds_per_bin():
     """Two bins with identical data but different indices get different
     seeds. Assert on the seeds actually used, not on posteriors differing

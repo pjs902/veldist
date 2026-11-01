@@ -296,6 +296,7 @@ class TestMatchedGridAggregation:
             grid_kwargs,
             run_kwargs=run_kwargs,
             match_grid=OMEGACAT,
+            thin=0,
         )
         solver = solvers[0]
 
@@ -306,6 +307,8 @@ class TestMatchedGridAggregation:
         assert agg.shape[1] == grid_kwargs["n_bins"]
         np.testing.assert_allclose(agg.sum(axis=1), 1.0, atol=1e-6)
         assert solver.clipped_samples["losvd_median"].shape == (grid_kwargs["n_bins"],)
+        # Corrected once, on the fitted grid: the summary is of the stored draws as they are.
+        np.testing.assert_allclose(solver.clipped_samples["losvd_median"], np.percentile(agg, 50, axis=0))
 
 
 # ==============================================================================
@@ -553,7 +556,7 @@ def test_fit_all_bins_min_ivar_skips_uninformative_bins(monkeypatch):
         def run(self, **kw):
             pass
 
-        def clip_uncertainties(self):
+        def clip_uncertainties(self, **kwargs):
             pass
 
     monkeypatch.setattr(vd, "KinematicSolver", FakeSolver)
@@ -590,7 +593,7 @@ def test_fit_all_bins_slims_returned_solvers(monkeypatch):
         def run(self, **kw):
             self.samples = {"intrinsic_pdf": np.ones((100, 50)), "x": np.ones((100, 50))}
 
-        def clip_uncertainties(self):
+        def clip_uncertainties(self, **kwargs):
             self.clipped = self.samples["intrinsic_pdf"].shape[0]
 
     monkeypatch.setattr(vd, "KinematicSolver", FakeSolver)
@@ -635,7 +638,7 @@ def test_fit_all_bins_isolates_a_failing_bin(monkeypatch, tmp_path):
         def run(self, **kw):
             self.samples = {"intrinsic_pdf": np.ones((10, 50))}
 
-        def clip_uncertainties(self):
+        def clip_uncertainties(self, **kwargs):
             pass
 
     monkeypatch.setattr(vd, "KinematicSolver", FakeSolver)

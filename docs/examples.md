@@ -162,7 +162,11 @@ exactly. This requires each fitted bin to lie entirely inside one output
 bin; if it does not, the function raises an error rather than approximating.
 The grid actually used for the fit is kept in `solver.fitted_grid`, while
 `solver.grid` describes the shared output grid, so downstream code and the
-Dynamite writer work unchanged.
+Dynamite writer work unchanged. The draws in `solver.samples` are then the
+output grid's *cell masses* (the cell-mass correction is applied on the fitted
+grid before summing), so their point variance already includes `h**2/12`,
+and `compute_summary`'s `sigma`, which adds `h**2/12` again, reads high by that
+much for these solvers (about 1% at `h/sigma = 0.5`).
 
 The default, `match_grid=None`, fits every bin on the shared grid.
 

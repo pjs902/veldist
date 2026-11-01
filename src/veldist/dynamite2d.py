@@ -36,8 +36,6 @@ def write_dynamite_kinematics_2d(
     npz_filename="pm_2dhist.npz",
     aperture_filename="aperture.dat",
     bins_filename="bins.dat",
-    uncertainty_floor_fraction=0.01,
-    uncertainty_abs_floor=1e-10,
 ):
     """
     Write Dynamite ProperMotions/Histogram2D input files for a set of
@@ -63,7 +61,7 @@ def write_dynamite_kinematics_2d(
 
     Any solver whose ``clipped_samples`` is not yet set has
     :meth:`~veldist.veldist2d.KinematicSolver2D.clip_uncertainties` called on
-    it with ``uncertainty_floor_fraction`` and ``uncertainty_abs_floor``.
+    it with its default floors (to change them, call it yourself first).
 
     **Normalisation.** ``PM_2dhist`` and ``PM_2dhist_sigma`` are written
     exactly as ``clip_uncertainties`` returns them. They are per-cell
@@ -98,10 +96,6 @@ def write_dynamite_kinematics_2d(
         File name for the aperture file. Default ``'aperture.dat'``.
     bins_filename : str
         File name for the bins file. Default ``'bins.dat'``.
-    uncertainty_floor_fraction, uncertainty_abs_floor : float
-        Forwarded to :meth:`~veldist.veldist2d.KinematicSolver2D.clip_uncertainties`
-        when it is called automatically. The defaults are the values
-        validated in 1D; they have not been re-measured for 2D.
 
     Raises
     ------
@@ -203,9 +197,7 @@ def write_dynamite_kinematics_2d(
     for out_i, orig_i in enumerate(solved_indices):
         solver = solvers[orig_i]
         if solver.clipped_samples is None:
-            solver.clip_uncertainties(
-                floor_fraction=uncertainty_floor_fraction, abs_floor=uncertainty_abs_floor
-            )
+            solver.clip_uncertainties()
 
         median_flat = np.asarray(solver.clipped_samples["pdf_median"])
         unc_flat = np.asarray(solver.clipped_samples["pdf_uncertainty"])

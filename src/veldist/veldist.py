@@ -644,7 +644,8 @@ class KinematicSolver:
     grid : dict
         Velocity grid: centres, edges and width.
     n_stars : int or None
-        Number of stars passed to ``add_data``. Written as ``bin_flux`` by
+        Number of stars kept by ``add_data`` (off-grid stars are dropped, so
+        this can be below the number passed in). Written as ``bin_flux`` by
         ``write_dynamite_kinematics``.
     samples : dict or None
         Posterior samples from ``run``.
@@ -867,6 +868,9 @@ class KinematicSolver:
         self.samples = mcmc.get_samples()
         # Invalidate any previously computed clipped summary when re-running.
         self.clipped_samples = None
+        # Each run compiles afresh and JAX never frees it: ~30-40 MB per fit, which
+        # took long batch runs (1400 bins) into swap. Nothing reuses it.
+        jax.clear_caches()
         print("Inference Complete.")
         return self.samples
 
@@ -1386,12 +1390,16 @@ def fit_all_bins(
             if match_grid is not None:
                 solver.fitted_grid = solver.grid
                 solver.samples = dict(solver.samples)
+                # Correct on the FITTED grid, where the fit lacks h_fit**2/6, then sum:
+                # correcting after summing would add h_out**2/6 and over-widen.
                 solver.samples["intrinsic_pdf"] = aggregate_to_output_grid(
-                    solver.samples["intrinsic_pdf"], solver.grid["edges"], output_edges
+                    _cell_mass_correction(solver.samples["intrinsic_pdf"], (solver.grid["n_bins"],)),
+                    solver.grid["edges"],
+                    output_edges,
                 )
                 solver.setup_grid(**grid_kwargs)
 
-            solver.clip_uncertainties()
+            solver.clip_uncertainties(cell_correction=match_grid is None)
         except Exception as exc:  # noqa: BLE001 -- one bad bin must not lose the whole run
             _log_bin_failure(
                 failure_log_path,
