@@ -44,7 +44,9 @@ h3/h4 limitation honestly rather than engineering around it.
 - [DONE] Both `run()`s call `jax.clear_caches()`: every fit compiled afresh
   and JAX kept it, +30-40 MB per bin (measured on the HST grid: 452 -> 686 MB
   over 8 bins; flat at 210-260 MB with the fix). This is what took HST with
-  8 workers into ~13 GB swap.
+  8 workers into ~13 GB swap. The heaviest slow test now peaks at 303 MB
+  (was 10 GB). Cost: some compiled helpers are rebuilt per fit, +5% wall
+  time on 2D HST-size fits, +18% on short 1D fits (measured, 6 bins each).
 - [DONE] `fit_all_bins_2d(checkpoint_dir=...)`: each finished bin is saved
   atomically and a re-run resumes; failed bins are retried; checkpoints for
   other data/settings raise. (1D `fit_all_bins` has none; MUSE takes 10 min.)
