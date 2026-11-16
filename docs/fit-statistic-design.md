@@ -105,8 +105,14 @@ Plan: `docs/superpowers/plans/2026-11-16-pm-fit-statistic.md`.
   term the admm QP already accepts. Its weak spot is the tails beyond the grid.
 - **D** (2–5 rounds) fixes C's tails at 2–5× the solve cost, for central
   apertures only if it can be restricted to them.
-- **Any per-star option needs open border cells** to match DYNAMITE's
-  histograms.
+- **Border cells stay closed (correction, 2026-11-16).** Open, semi-infinite
+  border cells were tried. Their likelihood weight implies border mass spread
+  uniformly to infinity, which biased σ by about +50% when the grid spans about
+  3σ of the observed spread (Gaia regime). The consistent choice is the veldist
+  fit's own: the intrinsic distribution is confined to the grid, and stars
+  with < 1e-3 of their kernel on it are dropped. DYNAMITE's model border cells
+  also hold the overflow, so the rescoring must report the model's border
+  mass and flag apertures where it exceeds 1%.
 
 ## Implementation sketch for C
 

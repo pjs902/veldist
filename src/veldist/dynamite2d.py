@@ -105,9 +105,13 @@ def write_dynamite_kinematics_2d(
         the ``.npz``, for the non-``None`` solvers in output order:
 
         - ``PM_star_indptr`` (int64), ``PM_star_cell`` (int32),
-          ``PM_star_mass`` (float32): each star's open-border cell masses
-          (:func:`precompute_design_matrix_2d` with ``open_edges=True``) as
-          CSR rows, dropping entries below 1e-6 of the row maximum;
+          ``PM_star_mass`` (float32): each star's cell masses on the closed
+          grid (the veldist fit's own design matrix) as CSR rows, dropping
+          entries below 1e-6 of the row maximum. Stars with < 1e-3 of their
+          kernel on the grid are dropped, as the fit drops them. (Open border
+          cells were tried and rejected: a semi-infinite cell's weight implies
+          mass spread uniformly to infinity and biased sigma up by ~50% when
+          the grid spans ~3 sigma of the observed spread.)
         - ``PM_star_aperture`` (int32): each star's 0-based output aperture;
         - ``PM_lap_h0`` (float64, ``(n_apertures, K, K)``): the expansion
           point, ``0.99 * mean + 0.01 * uniform`` of the cell-mass-corrected
@@ -286,8 +290,9 @@ def _laplace_export(solvers, solved_indices, star_data, k):
     indptr, cells, masses, apert, h0 = [0], [], [], [], []
     for out_i, orig_i in enumerate(solved_indices):
         solver, st = solvers[orig_i], star_data[orig_i]
-        M = np.asarray(precompute_design_matrix_2d(st["pm1"], st["pm2"], st["cov"], solver.grid,
-                                                   open_edges=True), dtype=np.float64)
+        M = np.asarray(precompute_design_matrix_2d(st["pm1"], st["pm2"], st["cov"], solver.grid),
+                       dtype=np.float64)
+        M = M[M.sum(axis=1) >= 1e-3]
         for row in M:
             nz = np.nonzero(row >= 1e-6 * row.max())[0]
             cells.append(nz.astype(np.int32))
