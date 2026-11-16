@@ -62,22 +62,19 @@ s_min = sgrid[np.argmin(curves["lap0"])]
 lap1, _ = lap(0.999 * family(s_min) + 0.001 / K ** 2)
 curves["lap1"] = np.array([lap1(family(s)) for s in sgrid])
 
-plt.style.use("default")
-plt.rcParams.update({"font.size": 8, "axes.labelsize": 8, "xtick.labelsize": 7, "ytick.labelsize": 7,
-                     "legend.fontsize": 7, "axes.linewidth": 0.6, "font.family": "serif",
-                     "mathtext.fontset": "dejavuserif", "text.usetex": False})
-fig, ax = plt.subplots(1, 3, figsize=(7.1, 2.3), constrained_layout=True)
+fig, ax = plt.subplots(1, 3, figsize=(3.3 * plt.rcParams["figure.figsize"][0], plt.rcParams["figure.figsize"][1]), constrained_layout=True)
 ext = [e[0], e[-1], e[0], e[-1]]
 # relative information per cell = effective number of stars the statistic credits to it:
 # diagonal chi2 (d_k / sigma_k)^2 against the per-star likelihood's h0_k^2 F_kk
 wa = ((d / sd) ** 2).reshape(K, K)
 wb = (h0 ** 2 * np.diag(F0)).reshape(K, K)
 lo, hi = 0.1, max(wa.max(), wb.max())
-for a, z, lab in ((ax[0], wa, r"$(d_k/\sigma_k)^2$, diagonal $\chi^2$"),
-                  (ax[1], wb, r"$(h^0_k)^2 F_{kk}$, per-star likelihood")):
+for a, z, lab, ttl in ((ax[0], wa, r"$(d_k/\sigma_k)^2$", r"diagonal $\chi^2$"),
+                       (ax[1], wb, r"$(h^0_k)^2 F_{kk}$", "per-star likelihood")):
+    a.set_title(ttl)
     im = a.imshow(np.clip(z, lo, None).T, origin="lower", extent=ext, cmap="Blues",
                   norm=mcolors.LogNorm(vmin=lo, vmax=hi))
-    fig.colorbar(im, ax=a, shrink=0.85, label=lab)
+    fig.colorbar(im, ax=a, shrink=0.85, label=lab, pad=0.02)
 print("effective stars: diag sum %.0f, per-star sum %.0f, N %d" % (wa.sum(), wb.sum(), n))
 for a in ax[:2]:
     a.set_xlim(-60, 60)
