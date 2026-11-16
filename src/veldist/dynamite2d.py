@@ -24,7 +24,8 @@ from pathlib import Path
 
 import numpy as np
 
-from .veldist import _write_aperture_and_bins_files
+from .veldist import _cell_mass_correction, _write_aperture_and_bins_files
+from .veldist2d import precompute_design_matrix_2d
 
 __all__ = ["write_dynamite_kinematics_2d"]
 
@@ -36,6 +37,7 @@ def write_dynamite_kinematics_2d(
     npz_filename="pm_2dhist.npz",
     aperture_filename="aperture.dat",
     bins_filename="bins.dat",
+    star_data=None,
 ):
     """
     Write Dynamite ProperMotions/Histogram2D input files for a set of
@@ -96,6 +98,22 @@ def write_dynamite_kinematics_2d(
         File name for the aperture file. Default ``'aperture.dat'``.
     bins_filename : str
         File name for the bins file. Default ``'bins.dat'``.
+    star_data : list of dict or None
+        Optional, for the DYNAMITE Laplace statistic
+        (``docs/fit-statistic-design.md``): the same per-bin
+        ``{"pm1", "pm2", "cov"}`` dicts given to ``fit_all_bins_2d``. Adds to
+        the ``.npz``, for the non-``None`` solvers in output order:
+
+        - ``PM_star_indptr`` (int64), ``PM_star_cell`` (int32),
+          ``PM_star_mass`` (float32): each star's open-border cell masses
+          (:func:`precompute_design_matrix_2d` with ``open_edges=True``) as
+          CSR rows, dropping entries below 1e-6 of the row maximum;
+        - ``PM_star_aperture`` (int32): each star's 0-based output aperture;
+        - ``PM_lap_h0`` (float64, ``(n_apertures, K, K)``): the expansion
+          point, ``0.99 * mean + 0.01 * uniform`` of the cell-mass-corrected
+          posterior draws, each aperture summing to 1.
+
+        ``None`` (default) writes exactly today's keys.
 
     Raises
     ------
@@ -240,8 +258,10 @@ def write_dynamite_kinematics_2d(
     # Write the .npz archive
     # ------------------------------------------------------------------
     npz_path = output_dir / npz_filename
+    extra = {} if star_data is None else _laplace_export(solvers, solved_indices, star_data, k)
     np.savez(
         npz_path,
+        **extra,
         PM_2dhist=PM_2dhist,
         PM_2dhist_sigma=PM_2dhist_sigma,
         binID_dynamite=binID_dynamite,
@@ -259,3 +279,30 @@ def write_dynamite_kinematics_2d(
     _write_aperture_and_bins_files(
         solvers, output_dir, voronoi_bin_metadata, aperture_filename, bins_filename
     )
+
+
+def _laplace_export(solvers, solved_indices, star_data, k):
+    """npz arrays for the Laplace statistic (see ``star_data`` above)."""
+    indptr, cells, masses, apert, h0 = [0], [], [], [], []
+    for out_i, orig_i in enumerate(solved_indices):
+        solver, st = solvers[orig_i], star_data[orig_i]
+        M = np.asarray(precompute_design_matrix_2d(st["pm1"], st["pm2"], st["cov"], solver.grid,
+                                                   open_edges=True), dtype=np.float64)
+        for row in M:
+            nz = np.nonzero(row >= 1e-6 * row.max())[0]
+            cells.append(nz.astype(np.int32))
+            masses.append(row[nz].astype(np.float32))
+            indptr.append(indptr[-1] + len(nz))
+        apert.append(np.full(len(M), out_i, dtype=np.int32))
+        draws = _cell_mass_correction(np.asarray(solver.samples["intrinsic_pdf"], dtype=np.float64),
+                                      solver.grid["shape"])
+        mean = draws.mean(axis=0)
+        mix = 0.99 * mean / mean.sum() + 0.01 / (k * k)
+        h0.append((mix / mix.sum()).reshape(k, k, order="C"))
+    return {
+        "PM_star_indptr": np.asarray(indptr, dtype=np.int64),
+        "PM_star_cell": np.concatenate(cells),
+        "PM_star_mass": np.concatenate(masses),
+        "PM_star_aperture": np.concatenate(apert),
+        "PM_lap_h0": np.asarray(h0, dtype=np.float64),
+    }
