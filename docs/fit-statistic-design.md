@@ -66,8 +66,19 @@ in relative mode the projection is applied in the F- (or C-) whitened space.
 
 Penalty per aperture for 1% of mass in a 60 km/s ring that the data don't
 have: A 700–1300, B 77–174, E 2–3.5, C 5.5–7.3. The posterior covariance is
-mostly prior: in occupied cells the likelihood gives about 2% of the
-posterior precision, and the posterior σ is about 0.3× Poisson.
+mostly prior: the posterior σ in occupied cells is about 0.3× Poisson.
+
+**Calibration under production's unit (correction).** The table above uses
+Δ = 1. DYNAMITE grids use a Δχ² unit of √(2N_obs) ≈ 1257:
+- per aperture, √(2·529) ≈ 33 turns A's claimed 0.066 into about 0.38
+  against a scatter of 0.33, i.e. slightly conservative;
+- for a parameter shared by all 1406 apertures, A claims about 0.062
+  against a true scatter of about 0.009, i.e. about 7× too conservative.
+
+The problem with A is that its Δχ² scale differs by parameter type (about
+25× for σ, about 400× for tails), so no single unit fixes it. χ²/N carries
+no information about this: for the true model, A gives χ²/N ≈ 0.07–0.09 on
+synthetic data, so production's 0.65 is mostly model misfit.
 
 Tail **recovery** (1 seed): with 1% truth at 90 km/s, beyond the grid, only
 the exact per-star statistic with open border cells recovers f (0.009 ±
@@ -75,6 +86,14 @@ the exact per-star statistic with open border cells recovers f (0.009 ±
 p₀ ≈ 0, and one quadratic step can at most double p. A defensive expansion
 point (0.99·mean + 0.01·uniform) gives 0.005. For an in-grid tail at 60 km/s,
 C matches E.
+
+## Scope decision (user, 2026-11-16)
+
+Incremental. The immediate paper uses the best full-covariance option, which
+is C (the likelihood/Laplace covariance, not B's posterior covariance), in
+both addback and relative modes. The exact per-star statistic is kept only
+as an offline yardstick; star-by-star *fitting* (D/E) is a follow-up paper.
+Plan: `docs/superpowers/plans/2026-11-16-pm-fit-statistic.md`.
 
 ## Current lean
 
