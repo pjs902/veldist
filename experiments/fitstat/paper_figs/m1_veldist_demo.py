@@ -33,9 +33,7 @@ n = los.groupby("voronoi_bin_ids_los").size()
 b = (n - 152).abs().idxmin()
 s = los[los.voronoi_bin_ids_los == b]
 v, e = s.vlos.to_numpy() - 232.7, s.vlos_err.to_numpy()
-width = 2 * np.median(e)
-half = 4 * np.std(v)
-K = int(np.ceil(2 * half / width)) | 1
+width, K = 8.018, 21  # the production MUSE grid (2 x the dataset's median error; 3.5 sigma_max + rotation span)
 sol = KinematicSolver()
 sol.setup_grid(center=0.0, width=K * width, n_bins=K)
 sol.add_data(v, e)
