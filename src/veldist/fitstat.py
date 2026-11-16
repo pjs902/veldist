@@ -24,6 +24,7 @@ __all__ = [
     "laplace_terms",
     "laplace_rows",
     "stat_laplace",
+    "sharpen_matrix",
     "stat_exact",
     "stat_diag",
     "shift_matrix",
@@ -67,10 +68,38 @@ def laplace_rows(F, g, h0, delta=None, n_stars=None, mass=1.0):
     return Lt, target
 
 
-def stat_laplace(h, Lt, target):
-    """``||Lt h - target||^2``: the Laplace statistic up to a constant."""
+def stat_laplace(h, Lt, target, h0=None):
+    """``||Lt h - target||^2``: the Laplace statistic up to a constant.
+
+    With ``h0`` (the expansion point), returns it minus its value at ``h0``,
+    computed without forming the constant: ``q.q - 2 r.q`` with
+    ``q = Lt (h - h0)`` and ``r = target - Lt h0``. The constant ``||r||^2``
+    (the squared Newton step to the cell-space MLE) is ~1e8 per aperture;
+    left in, it costs float64 digits and stalls optimisers whose stopping
+    rule is relative (L-BFGS-B). Report and minimise this form.
+    """
+    if h0 is not None:
+        q = Lt @ (np.asarray(h) - h0)
+        r = target - Lt @ h0
+        return float(q @ q - 2.0 * (r @ q))
     r = Lt @ h - target
     return float(r @ r)
+
+
+def sharpen_matrix(K):
+    """``S`` (K^2 x K^2): ``[-1/12, 7/6, -1/12]`` along both axes of a K x K grid.
+
+    The design matrix ``M`` reads a cell mass as flat density inside the cell,
+    which adds ``h^2/12`` per axis to a model whose cell masses already carry
+    ``+h^2/12`` (Sheppard), so a fitted model comes out ``h^2/6`` too narrow
+    in variance (about -0.24 km/s in sigma for 7.2 km/s cells at sigma 18).
+    Using ``M @ S`` in place of ``M`` removes it to second order; ``S`` keeps
+    the mass of interior cells and has negative side lobes. Symmetric in the
+    two axes, so row- or column-major flattening gives the same matrix.
+    """
+    T = (np.diag(np.full(K, 7.0 / 6.0)) + np.diag(np.full(K - 1, -1.0 / 12.0), 1)
+         + np.diag(np.full(K - 1, -1.0 / 12.0), -1))
+    return np.kron(T, T)
 
 
 def stat_exact(h, M, n_stars, mass):

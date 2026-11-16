@@ -3,6 +3,7 @@
 import numpy as np
 
 from veldist.dynamite2d import write_dynamite_kinematics_2d
+from veldist.fitstat import sharpen_matrix
 from veldist.veldist2d import precompute_design_matrix_2d
 
 from tests.test_dynamite2d import _voronoi_metadata_2d, fake_solver_2d
@@ -54,3 +55,19 @@ def test_export_absent_by_default(tmp_path):
     write_dynamite_kinematics_2d([_solver_with_samples(0, 30)], tmp_path, _voronoi_metadata_2d(1))
     z = np.load(tmp_path / "pm_2dhist.npz")
     assert not any(k.startswith(("PM_star_", "PM_lap_")) for k in z.files)
+
+
+def test_export_sharpen(tmp_path):
+    solvers, stars = [_solver_with_samples(0, 30)], [_stars(0, 30)]
+    write_dynamite_kinematics_2d(solvers, tmp_path, _voronoi_metadata_2d(1), star_data=stars, sharpen=True)
+    z = np.load(tmp_path / "pm_2dhist.npz")
+    ptr, cell, mass = z["PM_star_indptr"], z["PM_star_cell"], z["PM_star_mass"]
+    dense = np.zeros((len(ptr) - 1, K * K))
+    for r in range(len(ptr) - 1):
+        dense[r, cell[ptr[r]:ptr[r + 1]]] = mass[ptr[r]:ptr[r + 1]]
+    st = stars[0]
+    ref = precompute_design_matrix_2d(st["pm1"], st["pm2"], st["cov"], solvers[0].grid).astype(float)
+    ref = ref[ref.sum(axis=1) >= 1e-3] @ sharpen_matrix(K)
+    assert (ref < 0).any()  # the negative side lobes must survive the sparse cut
+    np.testing.assert_allclose(dense, ref, atol=1e-6 * np.abs(ref).max())
+    assert bool(z["PM_star_sharpened"])

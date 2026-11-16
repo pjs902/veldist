@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 
+from .fitstat import sharpen_matrix
 from .veldist import _cell_mass_correction, _write_aperture_and_bins_files
 from .veldist2d import precompute_design_matrix_2d
 
@@ -38,6 +39,7 @@ def write_dynamite_kinematics_2d(
     aperture_filename="aperture.dat",
     bins_filename="bins.dat",
     star_data=None,
+    sharpen=False,
 ):
     """
     Write Dynamite ProperMotions/Histogram2D input files for a set of
@@ -115,9 +117,17 @@ def write_dynamite_kinematics_2d(
         - ``PM_star_aperture`` (int32): each star's 0-based output aperture;
         - ``PM_lap_h0`` (float64, ``(n_apertures, K, K)``): the expansion
           point, ``0.99 * mean + 0.01 * uniform`` of the cell-mass-corrected
-          posterior draws, each aperture summing to 1.
+          posterior draws, each aperture summing to 1;
+        - ``PM_star_sharpened`` (bool): whether the rows are ``M @ S``.
 
         ``None`` (default) writes exactly today's keys.
+    sharpen : bool
+        With ``star_data``: store each star's row as ``M @ S``
+        (:func:`veldist.fitstat.sharpen_matrix`), removing the ``h^2/6``
+        variance that reading cell masses as flat-in-cell density adds
+        (sigma ~ -0.24 km/s at 7.2 km/s cells, sigma 18). Rows then carry
+        small negative side lobes (kept: the sparse cut is on ``|row|``).
+        Default False.
 
     Raises
     ------
@@ -262,7 +272,7 @@ def write_dynamite_kinematics_2d(
     # Write the .npz archive
     # ------------------------------------------------------------------
     npz_path = output_dir / npz_filename
-    extra = {} if star_data is None else _laplace_export(solvers, solved_indices, star_data, k)
+    extra = {} if star_data is None else _laplace_export(solvers, solved_indices, star_data, k, sharpen)
     np.savez(
         npz_path,
         **extra,
@@ -285,16 +295,20 @@ def write_dynamite_kinematics_2d(
     )
 
 
-def _laplace_export(solvers, solved_indices, star_data, k):
+def _laplace_export(solvers, solved_indices, star_data, k, sharpen=False):
     """npz arrays for the Laplace statistic (see ``star_data`` above)."""
+    S = sharpen_matrix(k) if sharpen else None
     indptr, cells, masses, apert, h0 = [0], [], [], [], []
     for out_i, orig_i in enumerate(solved_indices):
         solver, st = solvers[orig_i], star_data[orig_i]
         M = np.asarray(precompute_design_matrix_2d(st["pm1"], st["pm2"], st["cov"], solver.grid),
                        dtype=np.float64)
         M = M[M.sum(axis=1) >= 1e-3]
+        if S is not None:
+            M = M @ S
         for row in M:
-            nz = np.nonzero(row >= 1e-6 * row.max())[0]
+            a = np.abs(row)
+            nz = np.nonzero(a >= 1e-6 * a.max())[0]
             cells.append(nz.astype(np.int32))
             masses.append(row[nz].astype(np.float32))
             indptr.append(indptr[-1] + len(nz))
@@ -310,4 +324,5 @@ def _laplace_export(solvers, solved_indices, star_data, k):
         "PM_star_mass": np.concatenate(masses),
         "PM_star_aperture": np.concatenate(apert),
         "PM_lap_h0": np.asarray(h0, dtype=np.float64),
+        "PM_star_sharpened": np.asarray(bool(sharpen)),
     }

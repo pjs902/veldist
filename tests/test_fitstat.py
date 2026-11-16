@@ -8,6 +8,7 @@ from veldist.fitstat import (
     laplace_terms,
     profile_shift,
     shift_hist,
+    sharpen_matrix,
     shift_matrix,
     stat_exact,
     stat_laplace,
@@ -120,3 +121,42 @@ def test_finite_with_empty_cells():
     F, gr = laplace_terms(M, h0, n_stars=176, mass=1.0)
     Lt, target = laplace_rows(F, gr, h0, n_stars=176)
     assert np.all(np.isfinite(Lt)) and np.all(np.isfinite(target))
+
+
+def test_stat_laplace_offset_free_equals_difference():
+    g, M = _aperture(430, 1.5, HST, seed=3)
+    h0 = 0.99 * _gauss_mass(g["edges_x"], 17.0) + 0.01 / HST["K"] ** 2
+    F, gr = laplace_terms(M, h0, len(M), 1.0)
+    Lt, tg = laplace_rows(F, gr, h0, n_stars=len(M))
+    h = _gauss_mass(g["edges_x"], 18.0, (0.5, 0.0))
+    full = stat_laplace(h, Lt, tg) - stat_laplace(h0, Lt, tg)
+    free = stat_laplace(h, Lt, tg, h0=h0)
+    assert stat_laplace(h0, Lt, tg) > 1e5 * abs(free)  # the constant dwarfs the signal
+    np.testing.assert_allclose(free, full, rtol=1e-6)
+    assert stat_laplace(h0, Lt, tg, h0=h0) == 0.0
+
+
+def test_sharpen_matrix_removes_flat_cell_variance():
+    K, w = 21, 2.0
+    S = sharpen_matrix(K)
+    assert S.shape == (K * K, K * K)
+    c = (np.arange(K) - K // 2) * w
+    h = np.zeros((K, K))
+    h[K // 2 - 3:K // 2 + 4, K // 2] = [1, 3, 6, 8, 6, 3, 1]  # interior, along axis 0
+    hs = (S @ h.ravel()).reshape(K, K)
+    np.testing.assert_allclose(hs.sum(), h.sum(), rtol=1e-12)
+    var = lambda a: (a.sum(1) @ c**2) / a.sum() - ((a.sum(1) @ c) / a.sum()) ** 2
+    np.testing.assert_allclose(var(hs), var(h) - w**2 / 6, rtol=1e-12)
+    assert (hs.sum(0) @ c) == pytest.approx(0.0, abs=1e-12)  # no cross-axis spread of the mean
+
+
+def test_sharpened_exact_recovers_sigma():
+    # flat-in-cell M makes model cell masses look h^2/6 wider: exact fits sigma low.
+    from scipy.optimize import minimize_scalar
+    g, M = _aperture(20000, 1.5, HST, seed=5)
+    e = np.asarray(g["edges_x"], float)
+    MS = M @ sharpen_matrix(HST["K"])
+    fit = lambda MM: minimize_scalar(lambda s: stat_exact(_gauss_mass(e, s), MM, len(MM), 1.0),
+                                     bounds=(14, 20), method="bounded").x
+    assert fit(M) < 17.0 - 0.15
+    assert fit(MS) == pytest.approx(17.0, abs=0.08)
