@@ -177,7 +177,7 @@ def _gauss_legendre_2x2_nodes():
     return nodes, weights
 
 
-def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
+def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000, open_edges=False):
     """Compute the 2D design matrix M, shape (N, n_cells).
 
     ``M[i, m]`` is the integral over cell ``m`` of
@@ -207,6 +207,12 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
         Output of :func:`setup_grid_2d`.
     chunk_size : int
         Stars per chunk. Default 5000.
+    open_edges : bool
+        Default ``False``. ``True`` makes the border cells semi-infinite: each
+        integrates its star's kernel out to +-infinity, so every row sums to 1.
+        This matches DYNAMITE's orbit histograms, which pile out-of-range
+        velocities into the border cells. Export only (the DYNAMITE Laplace
+        statistic); the veldist fit keeps the closed grid.
 
     Returns
     -------
@@ -223,6 +229,7 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
     ey = grid["edges_y"]
     wx = grid["width_x"]
     wy = grid["width_y"]
+    big = 1e6 * max(wx, wy)  # stands in for +-infinity in the bivariate CDF
 
     out_chunks = []
 
@@ -250,6 +257,9 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
             My = np.asarray(
                 precompute_design_matrix(p2[idx], sy[idx], grid["centers_y"], bin_width=wy)
             )  # (n_diag, K)
+            if open_edges:
+                Mx = _add_border_tails(Mx, p1[idx], sx[idx], ex)
+                My = _add_border_tails(My, p2[idx], sy[idx], ey)
             # Outer product per star, row-major flatten to match centers_2d.
             outer = Mx[:, :, None] * My[:, None, :]  # (n_diag, K, K)
             chunk_M[idx, :] = outer.reshape(len(idx), n_cells)
@@ -257,13 +267,29 @@ def precompute_design_matrix_2d(pm1, pm2, cov, grid, chunk_size=5000):
         # --- Path 2: correlated covariance -> exact bivariate-CDF differences ---
         if np.any(~is_diag):
             idx = np.where(~is_diag)[0]
-            chunk_M[idx, :] = _design_matrix_correlated(p1[idx], p2[idx], c[idx], ex, ey)
+            exc, eyc = (_open(ex, big), _open(ey, big)) if open_edges else (ex, ey)
+            chunk_M[idx, :] = _design_matrix_correlated(p1[idx], p2[idx], c[idx], exc, eyc)
 
         # Same floor as the 1D path: CDF differences far from a star can land
         # slightly negative, and an exact 0 makes log-likelihood -inf.
         out_chunks.append(np.clip(chunk_M, 1e-30, None).astype(np.float32))
 
     return np.concatenate(out_chunks, axis=0)
+
+
+def _open(edges, big):
+    """Edges with the outer two moved to -+``big`` (semi-infinite border cells)."""
+    e = np.array(edges, dtype=np.float64)
+    e[0], e[-1] = -big, big
+    return e
+
+
+def _add_border_tails(M1, x, s, edges):
+    """1D cell masses with the kernel mass beyond the grid added to the border cells."""
+    M1 = np.array(M1, dtype=np.float64)
+    M1[:, 0] += ndtr((edges[0] - x) / s)
+    M1[:, -1] += ndtr((x - edges[-1]) / s)
+    return M1
 
 
 def _bvn_cdf_std(h, k, rho):
