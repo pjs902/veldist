@@ -160,3 +160,35 @@ def test_sharpened_exact_recovers_sigma():
                                      bounds=(14, 20), method="bounded").x
     assert fit(M) < 17.0 - 0.15
     assert fit(MS) == pytest.approx(17.0, abs=0.08)
+
+
+def test_sharpen_matrix_1d_removes_flat_cell_variance():
+    K, w = 21, 2.0
+    S = sharpen_matrix(K, ndim=1)
+    assert S.shape == (K, K)
+    c = (np.arange(K) - K // 2) * w
+    h = np.zeros(K)
+    h[K // 2 - 3:K // 2 + 4] = [1, 3, 6, 8, 6, 3, 1]
+    hs = S @ h
+    np.testing.assert_allclose(hs.sum(), h.sum(), rtol=1e-12)
+    var = lambda a: (a @ c**2) / a.sum() - ((a @ c) / a.sum()) ** 2
+    np.testing.assert_allclose(var(hs), var(h) - w**2 / 6, rtol=1e-12)
+    np.testing.assert_array_equal(sharpen_matrix(K), sharpen_matrix(K, ndim=2))
+
+
+def test_sharpened_exact_recovers_sigma_1d():
+    from scipy.optimize import minimize_scalar
+    from veldist.veldist import precompute_design_matrix
+    K, half, s0, err = 22, 88.0, 15.0, 4.0
+    e = np.linspace(-half, half, K + 1)
+    cen, w = 0.5 * (e[:-1] + e[1:]), e[1] - e[0]
+    rng = np.random.default_rng(5)
+    v = rng.normal(0, s0, 200000) + rng.normal(0, err, 200000)
+    M = np.asarray(precompute_design_matrix(v, np.full(len(v), err), cen, bin_width=w), float)
+    M = M[M.sum(axis=1) >= 1e-3]
+    MS = M @ sharpen_matrix(K, ndim=1)
+    mass = lambda s: (lambda h: h / h.sum())(np.diff(ndtr(e / s)))
+    fit = lambda MM: minimize_scalar(lambda s: stat_exact(mass(s), MM, len(MM), 1.0),
+                                     bounds=(11, 19), method="bounded").x
+    assert fit(M) < s0 - 0.15
+    assert fit(MS) == pytest.approx(s0, abs=0.08)

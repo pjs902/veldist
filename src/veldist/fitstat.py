@@ -86,8 +86,9 @@ def stat_laplace(h, Lt, target, h0=None):
     return float(r @ r)
 
 
-def sharpen_matrix(K):
-    """``S`` (K^2 x K^2): ``[-1/12, 7/6, -1/12]`` along both axes of a K x K grid.
+def sharpen_matrix(K, ndim=2):
+    """``S``: ``[-1/12, 7/6, -1/12]`` along each axis of a K (``ndim=1``, K x K) or
+    K x K (``ndim=2``, K^2 x K^2) grid.
 
     The design matrix ``M`` reads a cell mass as flat density inside the cell,
     which adds ``h^2/12`` per axis to a model whose cell masses already carry
@@ -99,7 +100,7 @@ def sharpen_matrix(K):
     """
     T = (np.diag(np.full(K, 7.0 / 6.0)) + np.diag(np.full(K - 1, -1.0 / 12.0), 1)
          + np.diag(np.full(K - 1, -1.0 / 12.0), -1))
-    return np.kron(T, T)
+    return T if ndim == 1 else np.kron(T, T)
 
 
 def stat_exact(h, M, n_stars, mass):
