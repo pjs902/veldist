@@ -1517,6 +1517,8 @@ def write_dynamite_kinematics(
     aperture_filename="aperture.dat",
     bins_filename="bins.dat",
     bin_flux_mode="nstars",
+    star_data=None,
+    sharpen=False,
 ):
     """Write Dynamite BayesLOSVD input files for a set of fitted bins.
 
@@ -1610,6 +1612,23 @@ def write_dynamite_kinematics(
             Read from ``voronoi_bin_metadata['bins'][i]['bin_flux']``, for an
             external flux estimate such as summed photometric counts per
             Voronoi cell.
+
+    star_data : list of dict, optional
+        Per-bin ``{"vel", "err"}`` (aligned with ``solvers``; entries for
+        ``None`` solvers are ignored). When given, a sidecar
+        ``<kin_filename stem>_stars.npz`` is written next to the ECSV with the
+        per-star rows of the Laplace fit statistic (``veldist.fitstat``):
+        ``LOS_star_indptr`` (int64), ``LOS_star_cell`` (int32),
+        ``LOS_star_mass`` (float32; cell MASS of the star's error kernel),
+        ``LOS_star_aperture`` (int32, 0-based output aperture),
+        ``LOS_lap_h0`` (float64, ``(n_apertures, nvbins)``, rows sum to 1) and
+        ``LOS_star_sharpened`` (bool). Cells are in ECSV ``losvd_j`` order.
+        Stars with < 1e-3 of their kernel on the grid are dropped, as in the
+        fit. Without ``star_data`` the output is unchanged. All cells are
+        exported, including the first and last (DYNAMITE zeroes those itself).
+    sharpen : bool
+        With ``star_data``, write rows ``M @ sharpen_matrix(K, ndim=1)``
+        (removes the flat-in-cell ``h^2/6`` variance; has negative lobes).
 
     Raises
     ------
@@ -1736,6 +1755,48 @@ def write_dynamite_kinematics(
     table.write(str(kin_path), format="ascii.ecsv", overwrite=True)
     print(f"Written kinematics ({n_solved} bins): {kin_path}")
 
+    if star_data is not None:
+        stars_path = kin_path.with_name(kin_path.stem + "_stars.npz")
+        np.savez(stars_path, **_laplace_export_1d(solvers, solved_indices, star_data, sharpen))
+        print(f"Written per-star Laplace rows: {stars_path}")
+
     _write_aperture_and_bins_files(
         solvers, output_dir, voronoi_bin_metadata, aperture_filename, bins_filename
     )
+
+
+def _laplace_export_1d(solvers, solved_indices, star_data, sharpen=False):
+    """Per-star CSR rows and Laplace expansion point (see ``star_data`` above)."""
+    from .fitstat import sharpen_matrix
+
+    k = int(solvers[solved_indices[0]].grid["n_bins"])
+    S = sharpen_matrix(k, ndim=1) if sharpen else None
+    indptr, cells, masses, apert, h0 = [0], [], [], [], []
+    for out_i, orig_i in enumerate(solved_indices):
+        solver, st = solvers[orig_i], star_data[orig_i]
+        M = np.asarray(
+            precompute_design_matrix(st["vel"], st["err"], solver.grid["centers"], bin_width=solver.grid["width"]),
+            dtype=np.float64,
+        )
+        M = M[M.sum(axis=1) >= 1e-3]
+        if S is not None:
+            M = M @ S
+        for row in M:
+            a = np.abs(row)
+            nz = np.nonzero(a >= 1e-6 * a.max())[0]
+            cells.append(nz.astype(np.int32))
+            masses.append(row[nz].astype(np.float32))
+            indptr.append(indptr[-1] + len(nz))
+        apert.append(np.full(len(M), out_i, dtype=np.int32))
+        draws = _cell_mass_correction(np.asarray(solver.samples["intrinsic_pdf"], dtype=np.float64), (k,))
+        mean = draws.mean(axis=0)
+        mix = 0.99 * mean / mean.sum() + 0.01 / k
+        h0.append(mix / mix.sum())
+    return {
+        "LOS_star_indptr": np.asarray(indptr, dtype=np.int64),
+        "LOS_star_cell": np.concatenate(cells),
+        "LOS_star_mass": np.concatenate(masses),
+        "LOS_star_aperture": np.concatenate(apert),
+        "LOS_lap_h0": np.asarray(h0, dtype=np.float64),
+        "LOS_star_sharpened": np.asarray(bool(sharpen)),
+    }
