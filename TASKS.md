@@ -20,6 +20,18 @@ h3/h4 limitation honestly rather than engineering around it.
 
 ## Now
 
+### Fit statistic for DYNAMITE (branch `feature/fit-statistic`, started 2026-11-16)
+
+Design and results: `docs/fit-statistic-design.md`. Scripts: `experiments/fitstat/`.
+Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
+`feature/pm-fit-statistic` (from `origin/master` c1b0acb).
+
+- [RUNNING] Phase 1 synthetic tests on astro-node-12 (`veldist-fitstat/`, 2 cores).
+- [ ] Real-aperture bootstrap + fast-star injection (about 20 HST apertures).
+- [ ] Phase 2 gate: rescore finished v4 models, baseline vs Laplace, along the IMBH profile.
+- [ ] Time one production solve (Gram build vs admm iterations).
+- [ ] Open border cells in the 2D design matrix (needed by every per-star option).
+
 ### 2026-10-14 code audit (`AUDIT_2026-10-14.md`)
 
 - [DONE 2026-10-30, branch `audit-2026-10-14-fixes`] V1-V6, V8, V9 applied
