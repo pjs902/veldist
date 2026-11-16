@@ -9,7 +9,12 @@ from pathlib import Path
 import numpy as np
 
 for f in sorted(Path(sys.argv[1]).glob("*.jsonl")):
-    rs = [json.loads(x) for x in f.read_text().splitlines() if x.strip()]
+    rs = []
+    for x in f.read_text().splitlines():
+        try:
+            rs.append(json.loads(x))
+        except json.JSONDecodeError:  # a line still being written
+            pass
     rs = [r for r in rs if "fits" in r]
     if not rs:
         continue
