@@ -92,7 +92,8 @@ C matches E.
 Incremental. The immediate paper uses the best full-covariance option, which
 is C (the likelihood/Laplace covariance, not B's posterior covariance), in
 both addback and relative modes. The exact per-star statistic is kept only
-as an offline yardstick; star-by-star *fitting* (D/E) is a follow-up paper.
+as an offline yardstick. Star-by-star *fitting* (D) is a stretch goal: in this
+paper if it proves quick (IRLS reuses C's machinery), otherwise a follow-up.
 Plan: `docs/superpowers/plans/2026-11-16-pm-fit-statistic.md`.
 
 ## Current lean
