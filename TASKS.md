@@ -26,7 +26,9 @@ Design and results: `docs/fit-statistic-design.md`. Scripts: `experiments/fitsta
 Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 `feature/pm-fit-statistic` (from `origin/master` c1b0acb).
 
-- [RUNNING] Phase 1 synthetic tests on astro-node-12 (`veldist-fitstat/`, 2 cores).
+- [DONE] Part A (open_edges option, `veldist.fitstat`, star/h0 export; closed grid, ruling 2026-11-16).
+- [RUNNING] C1 synthetic six-version comparison and C3 v4 rescoring on astro-node-12 (`veldist-fitstat/`).
+  First C3 result: rankings flip between baseline and Laplace/exact (radial reweighting); see design doc.
 - [ ] Real-aperture bootstrap + fast-star injection (about 20 HST apertures).
 - [ ] Phase 2 gate: rescore finished v4 models, baseline vs Laplace, along the IMBH profile.
 - [ ] Time one production solve (Gram build vs admm iterations).
