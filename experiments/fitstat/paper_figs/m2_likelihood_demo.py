@@ -69,13 +69,17 @@ ext = [e[0], e[-1], e[0], e[-1]]
 wa = ((d / sd) ** 2).reshape(K, K)
 wb = (h0 ** 2 * np.diag(F0)).reshape(K, K)
 lo, hi = 0.1, max(wa.max(), wb.max())
-for a, z, lab, ttl in ((ax[0], wa, r"$(d_k/\sigma_k)^2$", r"diagonal $\chi^2$"),
-                       (ax[1], wb, r"$(h^0_k)^2 F_{kk}$", "per-star likelihood")):
+for a, z, lab, ttl in ((ax[0], wa, r"$(d_k/\sigma_k)^2$",
+                        r"diagonal $\chi^2$: %d stars credited" % round(wa.sum())),
+                       (ax[1], wb, r"$(h^0_k)^2 F_{kk}$",
+                        r"per-star likelihood: %d credited" % round(wb.sum()))):
     a.set_title(ttl)
+    a.scatter(v[:, 0], v[:, 1], s=3, c="#D55E00", lw=0, alpha=0.8, label=f"{N} measured stars")
     im = a.imshow(np.clip(z, lo, None).T, origin="lower", extent=ext, cmap="Blues",
                   norm=mcolors.LogNorm(vmin=lo, vmax=hi))
-    fig.colorbar(im, ax=a, shrink=0.85, label=lab, pad=0.02)
+    fig.colorbar(im, ax=a, shrink=0.85, label="stars credited per cell, " + lab, pad=0.02)
 print("effective stars: diag sum %.0f, per-star sum %.0f, N %d" % (wa.sum(), wb.sum(), n))
+ax[0].legend(frameon=False, loc="upper left", markerscale=3, handletextpad=0.1)
 for a in ax[:2]:
     a.set_xlim(-60, 60)
     a.set_ylim(-60, 60)
@@ -92,6 +96,7 @@ ax[2].axvline(S1, color="k", lw=0.6)
 ax[2].set_ylim(0, 12)
 ax[2].set_xlabel(r"model $\sigma_1$ [km s$^{-1}$]")
 ax[2].set_ylabel(r"$\Delta$ statistic")
+ax[2].set_title("fit statistic vs model dispersion")
 ax[2].legend(frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0))
 fig.savefig(sys.argv[1])
 fig.savefig(sys.argv[1].replace(".pdf", ".png"), dpi=200)
