@@ -146,3 +146,29 @@ DYNAMITE (`ProperMotions`, new `statistic: laplace`):
   IMBH mass profile.
 - Time one production solve (Gram build vs admm iterations).
 - Where to pin the expansion point h₀ (posterior mean vs pass-0 model).
+
+## Relative PM mode with the Laplace statistic (design, not yet wired)
+
+A free per-aperture shift c of the model histogram, h(c) ~ h + D c (D = dh/dc,
+cells x 2), profiled out of Q(h) = |Lt (h - h0)|^2 + 2 g'(h - h0):
+
+    min_c Q(h + D c) = |P Lt (h - h0)|^2 + 2 g~'(h - h0) + const,
+    P  = I - Lt D (D'F D)^-1 D' L          (F = L L'; Lt replaces diag(1/e))
+    g~ = g - F D (D'F D)^-1 D' g          (the linear term loses its shift part)
+
+So the existing projection maps over with Lt as the whitening, the shift basis
+built from h0 / the current model rather than the noisy data histogram, and one
+new ingredient: the projected linear term.
+
+DYNAMITE's relative modes differ in what moves. Pass 0 (moments only), frozen,
+rebuild and profile shift the DATA to the model frame (shift_data); with
+per-star rows that means shifting every star's design row, which DYNAMITE can
+only approximate (it stores cell masses, not stars: S_c applied to each row,
+a CDF regrid). vp mode shifts the MODEL and keeps the data fixed: there Laplace
+drops in exactly (rows Lt S_c H, data Lt h0, linear term g, shift derivative
+of the current model projected out), and vp already holds the orbit histograms
+in memory, so it is also where the exact per-star check fits. Recommended scope:
+wire vp only, once the paper fixes the HST treatment (relative vs addback vs
+point-symmetrised; sample701.tex sec:methods:hst is undecided). The model-level
+maths is validated: veldist C1/C1c relative mode (free m1, m2) gives lap_S_it1
+m1 bias = exact's at shifts 0-4 (-0.19 vs -0.18 at 4).
