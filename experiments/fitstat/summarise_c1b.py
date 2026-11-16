@@ -8,6 +8,8 @@ from pathlib import Path
 
 import numpy as np
 
+REF = sys.argv[2] if len(sys.argv) > 2 else "exact"  # paired reference variant
+
 for f in sorted(Path(sys.argv[1]).glob("*.jsonl")):
     rs = []
     for x in f.read_text().splitlines():
@@ -29,7 +31,7 @@ for f in sorted(Path(sys.argv[1]).glob("*.jsonl")):
                 b = np.array([r["fits"][f"{mode}_{v}"]["x"][i] - r["truth"][p] for r in rs])
                 cols.append(f"{b.mean():+7.3f}±{b.std(ddof=1) / np.sqrt(len(b)):.3f}")
             for i in (0, 1):
-                d = np.array([r["fits"][f"{mode}_{v}"]["x"][i] - r["fits"][f"{mode}_exact"]["x"][i] for r in rs])
+                d = np.array([r["fits"][f"{mode}_{v}"]["x"][i] - r["fits"][f"{mode}_{REF}"]["x"][i] for r in rs])
                 cols.append(f"{d.mean():+7.3f}±{d.std(ddof=1) / np.sqrt(len(d)):.3f}")
             extra = ""
             if mode == "relative":
