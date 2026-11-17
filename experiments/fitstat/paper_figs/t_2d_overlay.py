@@ -67,44 +67,62 @@ Dm = Hh(mirror(mod), 2 * f) - Hh(mirror(msh), 2 * f)
 D = Ho - Hs
 
 COL = {"stars": "k", "sh": "#D55E00"}
-w, h = plt.rcParams["figure.figsize"]
-fig = plt.figure(figsize=(1.7 * 2.9 * h, 0.85 * 2.9 * h), constrained_layout=True)
-gs = fig.add_gridspec(2, 6, height_ratios=[2.2, 1])
-a0, a1, a2 = fig.add_subplot(gs[0, 0:2]), fig.add_subplot(gs[0, 2:4]), fig.add_subplot(gs[0, 4:6])
-b = [fig.add_subplot(gs[1, k]) for k in range(2)]
-lev = Ho.max() * np.array([0.05, 0.15, 0.35, 0.6, 0.85])
-a0.contour(c, c, Hs.T, levels=lev, colors=COL["sh"], linewidths=2.0, linestyles="--")
-a0.contour(c, c, Ho.T, levels=lev, colors=COL["stars"], linewidths=1.4)
-a0.plot([], [], color=COL["stars"], lw=1.4, label=r"\textit{Gaia} stars")
-a0.plot([], [], color=COL["sh"], lw=2.0, ls="--", label=r"same stars, $v_T$ shuffled")
-leg = fig.add_subplot(gs[1, 2:6])
-leg.set_axis_off()
-leg.legend(*a0.get_legend_handles_labels(), frameon=False, fontsize="medium", loc="center left")
-a0.set_title("same $v_R$ and $v_T$ distributions,\ndifferent 2D distribution", fontsize="medium")
+W, Hf = 13.33, 7.5  # 16:9 slide
+fig = plt.figure(figsize=(W, Hf))
+sq = 0.25  # panel width as a fraction of the figure width; height follows for square panels
+hq = sq * W / Hf
+y0 = 0.14
+a0 = fig.add_axes([0.06, y0, sq, hq])
+top = fig.add_axes([0.06, y0 + hq + 0.01, sq, 0.11], sharex=a0)
+rgt = fig.add_axes([0.06 + sq + 0.005, y0, 0.11 * Hf / W, hq], sharey=a0)
+a1 = fig.add_axes([0.435, y0, sq, hq])
+a2 = fig.add_axes([0.700, y0, sq, hq], sharey=a1)
+cax = fig.add_axes([0.962, y0 + 0.1 * hq, 0.008, 0.8 * hq])
+lev = Ho.max() * np.array([0.1, 0.3, 0.6, 0.9])
+a0.contour(c, c, Hs.T, levels=lev, colors=COL["sh"], linewidths=2.2, linestyles="--")
+a0.contour(c, c, Ho.T, levels=lev, colors=COL["stars"], linewidths=1.5)
+edges = np.arange(-40, 40.1, 2.5)
+cen = 0.5 * (edges[1:] + edges[:-1])
+for j, ax_, orient in ((0, top, "x"), (1, rgt, "y")):
+    n_o = np.histogram(mirror(obs)[:, j], edges)[0] / 2
+    n_s = np.histogram(mirror(sh)[:, j], edges)[0] / (2 * NREP)
+    if orient == "x":
+        ax_.step(cen, n_o, where="mid", color=COL["stars"], lw=1.5)
+        ax_.plot(cen, n_s, color=COL["sh"], lw=2.2, ls="--")
+        ax_.set_ylim(0, 1.15 * n_o.max())
+    else:
+        ax_.step(n_o, cen, where="mid", color=COL["stars"], lw=1.5)
+        ax_.plot(n_s, cen, color=COL["sh"], lw=2.2, ls="--")
+        ax_.set_xlim(0, 1.15 * n_o.max())
+    ax_.set_axis_off()
+fig.text(0.06 + sq / 2, y0 + hq + 0.175, r"same $v_R$ and $v_T$ histograms", ha="center", fontsize="x-large")
+fig.text(0.06 + sq / 2, y0 + hq + 0.135, r"black: \textit{Gaia} stars; orange dashed: same stars, $v_T$ shuffled",
+         ha="center", fontsize="small")
 vm = max(np.abs(D).max(), np.abs(Dm).max())
-for a, M, t in ((a1, D, "stars $-$ shuffled"), (a2, Dm, "model $-$ shuffled")):
+for a, M, t in ((a1, D, r"\textit{Gaia} stars $-$ shuffled"), (a2, Dm, r"dynamical model $-$ shuffled")):
     im = a.pcolormesh(e, e, M.T, cmap="RdBu_r", vmin=-vm, vmax=vm)
-    a.contour(c, c, Hs.T, levels=lev, colors="0.5", linewidths=0.6)
-    a.set_title(t + "\n(what separate $v_R$, $v_T$ fits cannot see)", fontsize="medium")
-fig.colorbar(im, ax=[a1, a2], shrink=0.7, label="excess stars per cell")
+    a.contour(c, c, Hs.T, levels=lev, colors="0.55", linewidths=0.6)
+    a.set_title(t, fontsize="large")
+fig.colorbar(im, cax=cax, label="excess stars per cell")
+fig.text(0.6925, y0 + hq + 0.105, r"what fitting $v_R$ and $v_T$ separately cannot see", ha="center",
+         fontsize="x-large")
+box = dict(boxstyle="round,pad=0.25", fc="w", ec="none", alpha=0.85)
+a1.text(0, 33, r"near-circular orbits (small $|v_R|$):" + "\nmore rotation", ha="center", va="center", fontsize="small", bbox=box)
+a1.text(-24, -22, "radial orbits:\nless rotation", ha="center", va="center", fontsize="small", bbox=box)
+a1.text(24, -22, "radial orbits:\nless rotation", ha="center", va="center", fontsize="small", bbox=box)
 for a in (a0, a1, a2):
-    a.set_box_aspect(1)
     a.set_xlim(-40, 40)
     a.set_ylim(-40, 40)
     a.axhline(0, color="0.7", lw=0.5)
     a.axvline(0, color="0.7", lw=0.5)
     a.set_xlabel(r"$v_R$ [km s$^{-1}$]")
+    a.set_xticks([-20, 0, 20])
+    a.set_yticks([-20, 0, 20])
 a0.set_ylabel(r"$v_T$ [km s$^{-1}$] (+ along rotation)")
-for a, j, labx in ((b[0], 0, r"$v_R$"), (b[1], 1, r"$v_T$")):
-    edges = np.arange(-50, 50.1, 2.5)
-    cen = 0.5 * (edges[1:] + edges[:-1])
-    a.step(cen, np.histogram(obs[:, j], edges)[0], where="mid", color=COL["stars"], lw=1.4)
-    a.plot(cen, np.histogram(sh[:, j], edges)[0] / NREP, color=COL["sh"], lw=2.0, ls="--")
-    a.set_xlabel(labx + r" [km s$^{-1}$]")
-    a.set_yticks([])
-b[0].set_ylabel("stars")
-fig.suptitle(rf"\textit{{Gaia}}, ${g['RMIN']:.0f}''$--${g['RMAX']:.0f}''$, {len(obs)} stars with errors "
-             rf"$<{cut:.1f}$ km s$^{{-1}}$; maps folded in $v_R$", fontsize="small")
+plt.setp(a2.get_yticklabels(), visible=False)
+fig.text(0.5, 0.015, rf"\textit{{Gaia}}, ${g['RMIN']:.0f}''$--${g['RMAX']:.0f}''$, {len(obs)} stars with errors "
+         rf"$<{cut:.1f}$ km s$^{{-1}}$; maps folded in $v_R$; model: each star replaced by model draws plus its errors",
+         ha="center", fontsize="small", color="0.3")
 fig.savefig(out)
 fig.savefig(out.replace(".pdf", ".png"), dpi=200)
 print(f"{len(obs)} stars; corr(stars map, model map) {np.corrcoef(D.ravel(), Dm.ravel())[0, 1]:.2f}")
