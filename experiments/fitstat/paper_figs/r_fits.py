@@ -103,7 +103,7 @@ LAB = {"hst_pm": "HST", "gaia_pm": "Gaia"}
 
 
 def p_muse(a, i, role, note, legend):
-    a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=5, color=COL["LOS"], label="data", zorder=3)  # data above the model line
+    a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=6.5, mfc="w", mew=1.3, mec=COL["LOS"], color=COL["LOS"], label="data", zorder=3)  # data above the model line
     a.plot(vc, mM[i], color=COL["LOS"], label="model")
     a.set_title(rf"MUSE, {role}: $R={RM[i]:.0f}''$" + "\n" + note + r" km s$^{-1}$", fontsize="small")
     a.set_ylim(top=(1.35 if legend else 1.1) * max((dM[i] + eM[i]).max(), mM[i].max()))  # headroom for the legend
@@ -141,14 +141,14 @@ def p_marg(a, s, i, legend):
     G1, G2 = (np.add.outer(g.ravel(), h * o.ravel()) for g, o in
               zip(np.meshgrid(cc, cc, indexing="ij"), np.meshgrid(sub, sub, indexing="ij")))
     edges = np.linspace(-half, half, K + 1)
-    for u, mk, mfc, ls, lab in ((rh, "o", COL["R"], "-", "R"), (th, "s", "w", "--", "T")):
+    for u, mk, ls, lab in ((rh, "o", "-", "R"), (th, "s", "--", "T")):
         pu = G1 * (u @ MAJ) + G2 * (u @ MNR)  # sub-points (cell, 25) projected on R or T
         F = np.zeros((K * K, K))  # fraction of each cell falling in each projected bin
         b = np.clip(np.digitize(pu, edges) - 1, 0, K - 1)
         np.add.at(F, (np.repeat(np.arange(K * K), 25), b.ravel()), 1 / 25)
         D, M = S["d"][i] @ F, S["m"][i] @ F
         E = np.sqrt(S["e"][i] ** 2 @ F ** 2)  # a cell's sub-points are fully correlated
-        a.errorbar(cc, D, E, ls="none", marker=mk, ms=5, mfc=mfc, color=COL[lab], label=f"data, {lab}", zorder=3)
+        a.errorbar(cc, D, E, ls="none", marker=mk, ms=6.5, mfc="w", mew=1.3, mec=COL[lab], color=COL[lab], label=f"data, {lab}", zorder=3)
         a.plot(cc, M, color=COL[lab], ls=ls, label=f"model, {lab}")
     a.set_ylim(top=(1.45 if legend else 1.1) * a.get_ylim()[1])  # headroom for the legend
     if SLIDES:
