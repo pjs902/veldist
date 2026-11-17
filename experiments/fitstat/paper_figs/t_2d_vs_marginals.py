@@ -1,14 +1,13 @@
-"""Talk figure: why fit the 2D proper-motion distribution rather than its R and T marginals.
+"""Talk figure: fitting v_R and v_T separately loses how rotation and anisotropy are shared between orbits.
 
 usage: python t_2d_vs_marginals.py STARS_PACK_DIR MODEL_HISTS.npz TAG OUT.pdf [RMIN RMAX]
-Gaia bins with RMIN <= R < RMAX (default 462-942") are stacked in each bin's (v_R, v_T) frame (v_T positive along the
-rotation). Observed: each star's velocity is the centroid of its error-kernel row (pack PM_star_*), its per-axis error
-from the row variance (+ h^2/12 for the sharpened cell-integrated kernel). Model: every star is replaced by draws from
-its bin's model histogram (uniform within the cell) plus Gaussian noise with that star's errors, i.e. the model in
-observed space. Separable: the same draws with v_T shuffled within the bin, which keeps both marginals and removes
-any R-T coupling. Stars are made separable the same way (v_T shuffled among the bin's stars, 20 shuffles), so each 2D map is a
-distribution minus its own product of marginals: the part that a fit to the R and T marginals cannot see.
-A: stars, B: model (both as significance for the star count), C: <v_T> minus its mean in bins of |v_R|.
+Gaia bins with RMIN <= R < RMAX (default 462-942") stacked in each bin's (v_R, v_T) frame (v_T positive along the
+rotation, v_R centred per bin). Stars: centroid of each star's error-kernel row (pack PM_star_*), per-axis error from
+the row variance (+ h^2/12 for the sharpened cell-integrated kernel). Model: each star replaced by NDRAW draws from its
+bin's model histogram (uniform within the cell) plus that star's errors, i.e. the model in observed space.
+Uncoupled: the model draws with v_T shuffled within the bin: identical v_R and v_T distributions, no coupling.
+Left: the v_R and v_T distributions (what separate R and T fits see). Right: rotation <v_T> minus each sample's own mean (the model's overall offset is not the point) and tangential
+dispersion sigma_T for stars grouped by radial speed |v_R| (slow < 0.5 sigma_R <= medium < 1.2 sigma_R <= fast).
 """
 import sys
 from pathlib import Path
@@ -48,21 +47,12 @@ def rt(i, a, b):
     return (rh @ MAJ) * a + (rh @ MNR) * b, (th @ MAJ) * a + (th @ MNR) * b
 
 
-obs, obs_sep, mod, sep = [], [], [], []
-
-
-def shuffle_t(vr, vt, n_rep):
-    """(v_R, v_T) pairs with v_T permuted among the bin's entries: same marginals, no R-T coupling."""
-    return np.c_[np.tile(vr, n_rep), np.concatenate([rng.permutation(vt) for _ in range(n_rep)])]
-
-
+obs, mod, sep = [], [], []
 for i in np.flatnonzero((R >= RMIN) & (R < RMAX)):
     s = ap == i
     n = s.sum()
     vr, vt = rt(i, v1[s], v2[s])
-    vr = vr - vr.mean()
-    obs.append(np.c_[vr, vt])
-    obs_sep.append(shuffle_t(vr, vt, NDRAW))
+    obs.append(np.c_[vr - vr.mean(), vt])
     k = rng.choice(K * K, size=(NDRAW, n), p=H[i])
     a = G1[k] + h * (rng.random(k.shape) - 0.5)
     b = G2[k] + h * (rng.random(k.shape) - 0.5)
@@ -70,44 +60,51 @@ for i in np.flatnonzero((R >= RMIN) & (R < RMAX)):
     nr, nt = rt(i, rng.standard_normal(k.shape) * e1[s], rng.standard_normal(k.shape) * e2[s])  # star's own errors
     mr, mt_ = (vr_i + nr).ravel() - vr_i.mean(), (vt_i + nt).ravel()
     mod.append(np.c_[mr, mt_])
-    sep.append(shuffle_t(mr, mt_, 1))
-obs, obs_sep, mod, sep = (np.concatenate(v) for v in (obs, obs_sep, mod, sep))
+    sep.append(np.c_[mr, rng.permutation(mt_)])
+obs, mod, sep = (np.concatenate(v) for v in (obs, mod, sep))
 
-ex, ey = np.arange(0, 42.1, 6.0), np.arange(-42, 42.1, 6.0)  # folded in v_R: the coupling is symmetric
-H2 = lambda v: np.histogram2d(np.abs(v[:, 0]), v[:, 1], [ex, ey])[0]
-sig_d = (H2(obs) - H2(obs_sep) / NDRAW) / np.sqrt(np.maximum(H2(obs_sep) / NDRAW, 1))
-f = len(obs) / len(mod)  # model expectation scaled to the star count
-sig_m = f * (H2(mod) - H2(sep)) / np.sqrt(np.maximum(f * H2(sep), 1))
-w, hh = plt.rcParams["figure.figsize"]
-fig, ax = plt.subplots(1, 3, figsize=(1.3 * 2.9 * hh, 0.45 * 2.9 * hh), constrained_layout=True,
-                       subplot_kw=dict(box_aspect=1.2))
-for a, S_, t in ((ax[0], sig_d, "stars"), (ax[1], sig_m, "model")):
-    im = a.pcolormesh(ex, ey, S_.T, cmap="RdBu_r", vmin=-4, vmax=4)
-    a.axhline(0, color="0.5", lw=0.5)
-    a.set_xlabel(r"$|v_R|$ [km s$^{-1}$]")
-    a.set_title(t + r": 2D $-$ (R marginal $\times$ T marginal)", fontsize="small")
-ax[0].set_ylabel(r"$v_T$ [km s$^{-1}$] (+ = along rotation)")
-fig.colorbar(im, ax=ax[:2], shrink=0.6, location="bottom", label=r"excess over uncoupled [$\sigma$]")
-ed = np.arange(0, 41, 5.0)
-mid = 0.5 * (ed[1:] + ed[:-1])
-COL = {"stars": "0.15", "model": "#0072B2", "sep": "#D55E00"}
+COL = {"stars": "0.1", "model": "#0072B2", "sep": "#D55E00"}
+LAB = {"stars": r"\textit{Gaia} stars", "model": "dynamical model", "sep": "same model, R and T uncoupled"}
+fig, ax = plt.subplots(2, 2, figsize=(1.35 * 2.9 * plt.rcParams["figure.figsize"][1], 2.9 * plt.rcParams["figure.figsize"][1]),
+                       constrained_layout=True)
+edges = np.linspace(-50, 50, 41)
+cen = 0.5 * (edges[1:] + edges[:-1])
+for a, j, lab in ((ax[0, 0], 0, r"$v_R$"), (ax[1, 0], 1, r"$v_T$")):
+    n_o = np.histogram(obs[:, j], edges)[0]
+    a.errorbar(cen, n_o / n_o.sum(), np.sqrt(n_o) / n_o.sum(), ls="none", marker="o", ms=3, color=COL["stars"],
+               label=LAB["stars"])
+    for v, k, ls in ((mod, "model", "-"), (sep, "sep", "--")):
+        n_m = np.histogram(v[:, j], edges)[0]
+        a.plot(cen, n_m / n_m.sum(), color=COL[k], ls=ls, lw=2, label=LAB[k])
+    a.set_xlabel(lab + r" [km s$^{-1}$]")
+    a.set_ylabel("fraction of stars")
+    a.set_ylim(0, 1.45 * n_o.max() / n_o.sum())
+ax[0, 0].set_title(r"\textbf{Fit $v_R$ and $v_T$ separately}" + "\nthe two models are indistinguishable", fontsize="medium")
+ax[0, 0].legend(frameon=False, fontsize="small", loc="upper left")
+sR = obs[:, 0].std()
+grp = [(0, 0.5), (0.5, 1.2), (1.2, np.inf)]
+xg = np.arange(3)
+names = [rf"slow\\$|v_R|<{0.5 * sR:.0f}$", rf"medium", rf"fast\\$|v_R|>{1.2 * sR:.0f}$"]
 for v, k in ((obs, "stars"), (mod, "model"), (sep, "sep")):
-    b = np.digitize(np.abs(v[:, 0]), ed) - 1
-    mt = np.array([v[b == q, 1].mean() for q in range(len(mid))]) - v[(b >= 0) & (b < len(mid)), 1].mean()
+    a_ = np.abs(v[:, 0])
+    ms = [v[(a_ >= lo * sR) & (a_ < hi * sR), 1] for lo, hi in grp]
+    mu = np.array([t.mean() for t in ms]); sg = np.array([t.std() for t in ms])
     if k == "stars":
-        et = np.array([v[b == q, 1].std() / np.sqrt(np.sum(b == q)) for q in range(len(mid))])
-        ax[2].errorbar(mid, mt, et, ls="none", marker="o", ms=4, color=COL[k], label="stars")
+        n = np.array([len(t) for t in ms])
+        ax[0, 1].errorbar(xg, mu - v[:, 1].mean(), sg / np.sqrt(n), ls="none", marker="o", ms=7, color=COL[k], zorder=5)
+        ax[1, 1].errorbar(xg, sg, sg / np.sqrt(2 * n), ls="none", marker="o", ms=7, color=COL[k], zorder=5)
     else:
-        ax[2].plot(mid, mt, color=COL[k], ls="-" if k == "model" else "--", lw=1.5,
-                   label="model" if k == "model" else "same marginals, uncoupled")
-ax[2].axhline(0, color="0.5", lw=0.5)
-ax[2].set_xlabel(r"$|v_R|$ [km s$^{-1}$]")
-ax[2].set_ylabel(r"$\langle v_T\rangle - \overline{v_T}$ [km s$^{-1}$]")
-ax[2].set_title("stars on radial orbits rotate less", fontsize="small")
-ax[2].legend(frameon=False, fontsize="x-small", loc="upper right")
-fig.suptitle(rf"\textit{{Gaia}}, {RMIN:.0f}--{RMAX:.0f}$''$, {len(obs)} stars: the R$-$T coupling is invisible in the "
-             r"R and T marginals", fontsize="small")
+        for a, y in ((ax[0, 1], mu - v[:, 1].mean()), (ax[1, 1], sg)):
+            a.plot(xg, y, color=COL[k], ls="-" if k == "model" else "--", lw=2, marker="s" if k == "model" else None)
+ax[0, 1].set_ylabel(r"rotation relative to average [km s$^{-1}$]")
+ax[0, 1].axhline(0, color="0.6", lw=0.6)
+ax[1, 1].set_ylabel(r"tangential dispersion $\sigma_T$ [km s$^{-1}$]")
+ax[0, 1].set_title(r"\textbf{Fit in 2D}" + "\nradially moving stars rotate less and are hotter", fontsize="medium")
+for a in ax[:, 1]:
+    a.set_xticks(xg, ["slow", "medium", "fast"])
+    a.set_xlim(-0.4, 2.4)
+ax[1, 1].set_xlabel(rf"radial speed $|v_R|$ (slow $<{0.5 * sR:.0f}$, fast $>{1.2 * sR:.0f}$ km s$^{{-1}}$)")
+fig.suptitle(rf"\textit{{Gaia}}, ${RMIN:.0f}''$--${RMAX:.0f}''$, {len(obs)} stars", fontsize="small")
 fig.savefig(OUT)
 fig.savefig(OUT.replace(".pdf", ".png"), dpi=200)
-print(f"{len(obs)} stars; max |sig| data {np.abs(sig_d).max():.1f}, model {np.abs(sig_m).max():.1f}; "
-      f"corr(data map, model map) {np.corrcoef(sig_d.ravel(), sig_m.ravel())[0, 1]:.2f}")
+print(f"{len(obs)} stars, sigma_R {sR:.1f} km/s")
