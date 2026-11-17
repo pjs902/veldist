@@ -4,8 +4,8 @@ usage: python r_fits.py PACK_DIR MODEL_HISTS.npz TAG OUT.pdf [--slides]
 MODEL_HISTS.npz from experiments/fitstat/model_hists.py ('{set}|data', '{set}|err', '{set}|model|{TAG}', each
 n_ap x cells, scaled by the aperture's projected mass; each is renormalised here to its own unit sum).
 Columns: four apertures per set, the innermost and then radius quantiles 35, 65 and 95 per cent.
-Paper rows (contours at 1e-3, 1e-2, 0.1, 0.5 of the model peak; slides at 0.05-0.8): MUSE LOSVD (data +- error, model line); HST data (grey) with log-spaced model contours; HST marginals along
-v_maj and v_min on a log axis (errors summed in quadrature over cells, ignoring cell correlations: display only);
+Paper rows (contours at 1e-3, 1e-2, 0.1, 0.5 of the model peak; slides at 0.05-0.8): MUSE LOSVD (data +- error, model line); HST data (grey, log scale down to 1e-3 of the peak) with log-spaced model contours; HST marginals along
+v_maj (circles) and v_min (squares, x 1e-2) on a log axis, cells with data < error omitted (errors summed in quadrature over cells, ignoring cell correlations: display only);
 the same two rows for Gaia. --slides: landscape, data and model only (MUSE, HST 2D, Gaia 2D).
 PM axes are the pack's (pm1 along the kinematic major axis PA 104.3, pm2 along the minor), km/s.
 """
@@ -15,11 +15,13 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.table import Table
+from matplotlib.colors import ListedColormap, LogNorm
 
 P, Z, TAG, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), sys.argv[3], sys.argv[4]
 SLIDES = "--slides" in sys.argv
 QS = (0.35, 0.65, 0.95)
 CM = "#D55E00"
+GREY = ListedColormap(plt.cm.Greys(np.linspace(0, 0.7, 256)))  # darkest = mid grey, so contours stay visible
 
 
 def pick(R):
@@ -64,9 +66,10 @@ for r, kind in enumerate(rows):
             a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=3, color="0.2", label="data")
             a.plot(vc, mM[i], color=CM, label="model")
             a.set_title(rf"MUSE: $R={RM[i]:.0f}''$", fontsize="small")
+            a.set_ylim(top=1.35 * max((dM[i] + eM[i]).max(), mM[i].max()))  # headroom for the legend
             a.set_xlabel(r"$v_{\rm LOS}$ [km s$^{-1}$]")
         ax[r, 0].set_ylabel("fraction per bin")
-        ax[r, -1].legend(frameon=False, fontsize="x-small", loc="upper left")
+        ax[r, 2].legend(frameon=False, fontsize="x-small", loc="upper left")
         continue
     s = kind.replace("_marg", "_pm")
     S = PM[s]
@@ -79,16 +82,15 @@ for r, kind in enumerate(rows):
                 D, M = img(S["d"]).sum(ax_sum), img(S["m"]).sum(ax_sum)
                 E = np.sqrt((img(S["e"]) ** 2).sum(ax_sum))
                 off = 10.0 ** (-2 * v)  # v_min shifted down two decades for legibility
-                a.errorbar(cc, D * off, E * off, ls="none", marker=mk, ms=2.5, color="0.2",
-                           label=None if j else lab + (r" ($\times 10^{-2}$)" if v else ""))
+                ok = D > E  # cells consistent with zero are not drawn
+                a.errorbar(cc[ok], D[ok] * off, E[ok] * off, ls="none", marker=mk, ms=2.5, color="0.2")
                 a.plot(cc, M * off, color=CM)
             a.set_yscale("log")
-            a.set_ylim(1e-7, 1)
+            a.set_ylim(1e-6, 1)
             a.set_xlabel(r"$v$ [km s$^{-1}$]")
-            if j == 0:
-                a.legend(frameon=False, fontsize="x-small", loc="lower center")
         else:
-            a.imshow(img(S["d"]), origin="lower", extent=[-half, half, -half, half], cmap="Greys")
+            a.imshow(img(S["d"]), origin="lower", extent=[-half, half, -half, half], cmap=GREY,
+                     norm=None if SLIDES else LogNorm(img(S["d"]).max() * 1e-3, img(S["d"]).max()))
             a.contour(cc, cc, img(S["m"]), levels=img(S["m"]).max() * np.array([0.05, 0.2, 0.5, 0.8] if SLIDES else [1e-3, 1e-2, 0.1, 0.5]),
                       colors=CM, linewidths=0.8)
             a.set_title(rf"{LAB[s]}: $R={S['R'][i]:.0f}''$, $N={S['N'][i]}$", fontsize="small")
