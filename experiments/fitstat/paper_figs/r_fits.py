@@ -1,6 +1,6 @@
 """Paper figure r_fits: model against data velocity distributions for a selection of apertures of every veldist set.
 
-usage: python r_fits.py PACK_DIR MODEL_HISTS.npz TAG OUT.pdf [--slides]
+usage: python r_fits.py PACK_DIR MODEL_HISTS.npz TAG OUT.pdf [--slides | --slides-pm]
 MODEL_HISTS.npz from experiments/fitstat/model_hists.py ('{set}|data', '{set}|err', '{set}|model|{TAG}', each
 n_ap x cells, scaled by the aperture's projected mass; each is renormalised here to its own unit sum).
 Columns: four demonstration bins per set, ordered by radius (demo_pm, demo_muse): centre, strongest rotation,\nstrongest radial anisotropy, outermost (MUSE: centre, most receding, most approaching, outermost). 2D panels carry\nthe bin's radial (R, dashed) and rotation (T, dotted) directions.
@@ -21,7 +21,8 @@ from matplotlib.colors import ListedColormap, LogNorm
 from d2_maps import PA_KIN, pm_moments
 
 P, Z, TAG, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), sys.argv[3], sys.argv[4]
-SLIDES = "--slides" in sys.argv
+PMSLIDE = "--slides-pm" in sys.argv  # slide: the 4 slide PM bins, 2D on top and their R, T marginals below
+SLIDES = "--slides" in sys.argv or PMSLIDE
 COL = {"LOS": "#009E73", "R": "#0072B2", "T": "#D55E00"}  # Okabe-Ito; 2D model contours in black
 GREY = ListedColormap(plt.cm.Greys(np.linspace(0, 0.7, 256)))  # darkest = mid grey, so contours stay visible
 
@@ -96,7 +97,7 @@ for s, f in (("hst_pm", "hst_veldist_pm_2dhist.npz"), ("gaia_pm", "gaia_veldist_
                  N=z["nstarbin"], x=np.asarray(z["xbin"], float), y=np.asarray(z["ybin"], float))
     COLS[s] = demo_pm(pm_moments(P / f), CHI(d, e, m), SLIDES)
 
-rows = ["veldist", "pm_mix"] if SLIDES else ["veldist", "hst_pm", "hst_marg", "gaia_pm", "gaia_marg"]
+rows = ["pm_mix", "pm_mix_marg"] if PMSLIDE else ["veldist", "pm_mix"] if SLIDES else ["veldist", "hst_pm", "hst_marg", "gaia_pm", "gaia_marg"]
 ROLE = lambda s, r: next(c for c in COLS[s] if c[1] == r)
 MIX = [("hst_pm", *ROLE("hst_pm", "radial anisotropy")), ("hst_pm", *ROLE("hst_pm", "rotation")),
        ("gaia_pm", *ROLE("gaia_pm", "rotation")), ("gaia_pm", *ROLE("gaia_pm", "outer"))] if SLIDES else None
@@ -116,7 +117,7 @@ for r, kind in enumerate(rows):
         ax[r, 0].set_ylabel(r"\textbf{MUSE 1D}" + "\nfraction per bin")
         ax[r, 0].legend(frameon=False, fontsize="x-small", loc="upper left")
         continue
-    panels = MIX if kind == "pm_mix" else [(kind.replace("_marg", "_pm"), *c) for c in COLS[kind.replace("_marg", "_pm")]]
+    panels = MIX if kind.startswith("pm_mix") else [(kind.replace("_marg", "_pm"), *c) for c in COLS[kind.replace("_marg", "_pm")]]
     for j, (s, i, role, note) in enumerate(panels):
         S = PM[s]
         K, cc, half = S["K"], S["cc"], S["half"]
@@ -138,7 +139,9 @@ for r, kind in enumerate(rows):
                 E = np.sqrt(S["e"][i] ** 2 @ F ** 2)  # a cell's sub-points are fully correlated
                 a.errorbar(cc, D, E, ls="none", marker=mk, ms=3, mfc=mfc, color=COL[lab], label=f"data, {lab}")
                 a.plot(cc, M, color=COL[lab], ls=ls, label=f"model, {lab}")
-            a.set_ylim(top=1.45 * a.get_ylim()[1])  # headroom for the legend
+            a.set_ylim(top=(1.45 if j == 0 else 1.1) * a.get_ylim()[1])  # headroom for the legend
+            if SLIDES:
+                a.set_xlim(-0.68 * half, 0.68 * half)
             if j == 0:
                 a.legend(frameon=False, fontsize="xx-small", loc="upper left", ncol=2)
             a.set_xlabel(r"$v_R$, $v_T$ [km s$^{-1}$]")
@@ -157,7 +160,7 @@ for r, kind in enumerate(rows):
             a.set_xlabel(r"$v_{\rm maj}$ [km s$^{-1}$]")
             if SLIDES:  # zoom to the populated range
                 a.set_xlim(-0.68 * half, 0.68 * half), a.set_ylim(-0.68 * half, 0.68 * half)
-    head = "HST, Gaia" if kind == "pm_mix" else LAB[s]
+    head = "HST, Gaia" if kind.startswith("pm_mix") else LAB[s]
     ax[r, 0].set_ylabel(rf"\textbf{{{head} 2D $\rightarrow$ R, T}}" + "\nfraction per bin" if kind.endswith("_marg")
                         else rf"\textbf{{{head} 2D}}" + "\n" + r"$v_{\rm min}$ [km s$^{-1}$]")
 fig.savefig(OUT)
