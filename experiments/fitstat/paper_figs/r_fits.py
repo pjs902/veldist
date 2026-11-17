@@ -22,7 +22,7 @@ from d2_maps import PA_KIN, pm_moments
 
 P, Z, TAG, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), sys.argv[3], sys.argv[4]
 SLIDES = "--slides" in sys.argv
-CM = "#D55E00"
+COL = {"LOS": "#009E73", "R": "#0072B2", "T": "#D55E00"}  # Okabe-Ito; 2D model contours in black
 GREY = ListedColormap(plt.cm.Greys(np.linspace(0, 0.7, 256)))  # darkest = mid grey, so contours stay visible
 
 
@@ -92,12 +92,12 @@ for r, kind in enumerate(rows):
     if kind == "veldist":
         for j, (i, role, note) in enumerate(COLS["veldist"]):
             a = ax[r, j]
-            a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=3, color="0.2", label="data")
-            a.plot(vc, mM[i], color=CM, label="model")
+            a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=3, color=COL["LOS"], label="data")
+            a.plot(vc, mM[i], color=COL["LOS"], label="model")
             a.set_title(rf"MUSE, {role}: $R={RM[i]:.0f}''$" + "\n" + note + r" km s$^{-1}$", fontsize="small")
             a.set_ylim(top=1.35 * max((dM[i] + eM[i]).max(), mM[i].max()))  # headroom for the legend
             a.set_xlabel(r"$v_{\rm LOS}$ [km s$^{-1}$]")
-        ax[r, 0].set_ylabel("fraction per bin")
+        ax[r, 0].set_ylabel(r"\textbf{MUSE 1D}" + "\nfraction per bin")
         ax[r, 0].legend(frameon=False, fontsize="x-small", loc="upper left")
         continue
     s = kind.replace("_marg", "_pm")
@@ -113,15 +113,15 @@ for r, kind in enumerate(rows):
             G1, G2 = (np.add.outer(g.ravel(), h * o.ravel()) for g, o in
                       zip(np.meshgrid(cc, cc, indexing="ij"), np.meshgrid(sub, sub, indexing="ij")))
             edges = np.linspace(-half, half, K + 1)
-            for u, mk, mfc, ls, lab in ((rh, "o", "0.2", "-", "R"), (th, "s", "w", "--", "T")):
+            for u, mk, mfc, ls, lab in ((rh, "o", COL["R"], "-", "R"), (th, "s", "w", "--", "T")):
                 pu = G1 * (u @ MAJ) + G2 * (u @ MNR)  # sub-points (cell, 25) projected on R or T
                 F = np.zeros((K * K, K))  # fraction of each cell falling in each projected bin
                 b = np.clip(np.digitize(pu, edges) - 1, 0, K - 1)
                 np.add.at(F, (np.repeat(np.arange(K * K), 25), b.ravel()), 1 / 25)
                 D, M = S["d"][i] @ F, S["m"][i] @ F
                 E = np.sqrt(S["e"][i] ** 2 @ F ** 2)  # a cell's sub-points are fully correlated
-                a.errorbar(cc, D, E, ls="none", marker=mk, ms=3, mfc=mfc, color="0.2", label=f"data, {lab}")
-                a.plot(cc, M, color=CM, ls=ls, label=f"model, {lab}")
+                a.errorbar(cc, D, E, ls="none", marker=mk, ms=3, mfc=mfc, color=COL[lab], label=f"data, {lab}")
+                a.plot(cc, M, color=COL[lab], ls=ls, label=f"model, {lab}")
             a.set_ylim(top=1.45 * a.get_ylim()[1])  # headroom for the legend
             if j == 0:
                 a.legend(frameon=False, fontsize="xx-small", loc="upper left", ncol=2)
@@ -130,16 +130,17 @@ for r, kind in enumerate(rows):
             a.imshow(img(S["d"]), origin="lower", extent=[-half, half, -half, half], cmap=GREY,
                      norm=None if SLIDES else LogNorm(img(S["d"]).max() * 1e-3, img(S["d"]).max()))
             a.contour(cc, cc, img(S["m"]), levels=img(S["m"]).max() * np.array([0.05, 0.2, 0.5, 0.8] if SLIDES else [1e-3, 1e-2, 0.1, 0.5]),
-                      colors=CM, linewidths=0.8)
+                      colors="k", linewidths=0.7)
             rh, th = dirs(S, i)
             L = 0.85 * half
             for u, lab, ls in ((rh, "R", "--"), (th, "T", ":")):
                 pu = np.array([u @ MAJ, u @ MNR])  # direction in (v_maj, v_min)
-                a.plot([-L * pu[0], L * pu[0]], [-L * pu[1], L * pu[1]], color="0.35", ls=ls, lw=0.7)
-                a.text(*(1.08 * L * pu), lab, color="0.35", fontsize="x-small", ha="center", va="center")
+                a.plot([-L * pu[0], L * pu[0]], [-L * pu[1], L * pu[1]], color=COL[lab], ls=ls, lw=1.0)
+                a.text(*(1.08 * L * pu), lab, color=COL[lab], fontsize="x-small", ha="center", va="center")
             a.set_title(rf"{LAB[s]}, {role}: $R={S['R'][i]:.0f}''$" + "\n" + note, fontsize="small")
             a.set_xlabel(r"$v_{\rm maj}$ [km s$^{-1}$]")
-    ax[r, 0].set_ylabel("fraction per bin" if kind.endswith("_marg") else r"$v_{\rm min}$ [km s$^{-1}$]")
+    ax[r, 0].set_ylabel(rf"\textbf{{{LAB[s]} 2D $\rightarrow$ R, T}}" + "\nfraction per bin" if kind.endswith("_marg")
+                        else rf"\textbf{{{LAB[s]} 2D}}" + "\n" + r"$v_{\rm min}$ [km s$^{-1}$]")
 fig.savefig(OUT)
 fig.savefig(OUT.replace(".pdf", ".png"), dpi=200)
 print({s: [(role, int(i)) for i, role, _ in c] for s, c in COLS.items()})
