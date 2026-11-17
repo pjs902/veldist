@@ -62,7 +62,8 @@ s_min = sgrid[np.argmin(curves["lap0"])]
 lap1, _ = lap(0.999 * family(s_min) + 0.001 / K ** 2)
 curves["lap1"] = np.array([lap1(family(s)) for s in sgrid])
 
-fig, ax = plt.subplots(1, 3, figsize=(3.3 * plt.rcParams["figure.figsize"][0], plt.rcParams["figure.figsize"][1]), constrained_layout=True)
+fig, ax = plt.subplots(1, 3, figsize=(3.3 * plt.rcParams["figure.figsize"][0], plt.rcParams["figure.figsize"][1]), constrained_layout=True,
+                       width_ratios=[1, 1.18, 1.25])
 ext = [e[0], e[-1], e[0], e[-1]]
 # relative information per cell = effective number of stars the statistic credits to it:
 # diagonal chi2 (d_k / sigma_k)^2 against the per-star likelihood's h0_k^2 F_kk
@@ -70,16 +71,16 @@ wa = ((d / sd) ** 2).reshape(K, K)
 wb = (h0 ** 2 * np.diag(F0)).reshape(K, K)
 lo, hi = 0.1, max(wa.max(), wb.max())
 for a, z, lab, ttl in ((ax[0], wa, r"$(d_k/\sigma_k)^2$",
-                        r"diagonal $\chi^2$: %d stars credited" % round(wa.sum())),
+                        r"diagonal $\chi^2$: %d credited" % round(wa.sum())),
                        (ax[1], wb, r"$(h^0_k)^2 F_{kk}$",
-                        r"per-star likelihood: %d credited" % round(wb.sum()))):
+                        r"per-star: %d credited" % round(wb.sum()))):
     a.set_title(ttl)
     a.scatter(v[:, 0], v[:, 1], s=3, c="#D55E00", lw=0, alpha=0.8, label=f"{N} measured stars")
     im = a.imshow(np.clip(z, lo, None).T, origin="lower", extent=ext, cmap="Blues",
                   norm=mcolors.LogNorm(vmin=lo, vmax=hi))
     a.text(0.97, 0.03, lab, transform=a.transAxes, ha="right", va="bottom",
            bbox=dict(fc="w", ec="none", alpha=0.8, pad=1))
-fig.colorbar(im, ax=ax[:2], shrink=0.5, aspect=30, location="bottom", label="stars credited per cell", pad=0.02)
+fig.colorbar(im, ax=ax[1], shrink=0.85, label="stars credited per cell", pad=0.03)
 print("effective stars: diag sum %.0f, per-star sum %.0f, N %d" % (wa.sum(), wb.sum(), n))
 ax[0].legend(loc="upper left", markerscale=3, handletextpad=0.1, framealpha=0.8, edgecolor="none")
 for a in ax[:2]:
