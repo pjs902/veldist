@@ -13,7 +13,6 @@ PM axes are the pack's (pm1 along the kinematic major axis PA 104.3, pm2 along t
 import sys
 from pathlib import Path
 
-import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.table import Table
@@ -103,22 +102,31 @@ ROLE = lambda s, r: next(c for c in COLS[s] if c[1] == r)
 LAB = {"hst_pm": "HST", "gaia_pm": "Gaia"}
 
 
-def ring(eb):
-    """Black rims outside and inside the white-faced, colour-edged markers: visible on top of a line of the same colour."""
-    m = eb[0]
-    m.set_path_effects([pe.Stroke(linewidth=3.0, foreground="k"), pe.Normal()])  # outer rim
-    ms = m.get_markersize() - m.get_markeredgewidth() - 0.6  # inner rim (0.6 pt) touches the colour ring from inside
-    m.axes.plot(*m.get_data(), ls="none", marker=m.get_marker(), ms=ms, mfc="w", mec="k", mew=0.6, zorder=m.get_zorder() + 0.1)
+DATA = {}  # axes -> [(handle, label)] for the layered data markers
+
+
+def data(a, x, y, e, mk, col, label):
+    """Data with errors, drawn above the model: bars, then concentric filled markers (black, colour, black, white;
+    no edge strokes, so the rims stay centred) for a white point with a coloured ring and black rims either side."""
+    eb = a.errorbar(x, y, e, fmt="none", ecolor=col, zorder=3)
+    h = [a.plot(x, y, ls="none", marker=mk, ms=ms, mfc=c, mew=0, snap=False, zorder=3.1 + 0.01 * k)[0]
+         for k, (ms, c) in enumerate(((8.0, "k"), (7.0, col), (5.0, "k"), (4.0, "w")))]
+    DATA.setdefault(a, []).append(((eb, *h), label))
+
+
+def add_legend(a, **kw):
+    hl = a.get_legend_handles_labels()
+    a.legend(hl[0] + [h for h, _ in DATA[a]], hl[1] + [l for _, l in DATA[a]], frameon=False, loc="upper left", **kw)
 
 
 def p_muse(a, i, role, note, legend):
-    ring(a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=6.5, mfc="w", mew=1.3, mec=COL["LOS"], color=COL["LOS"], label="data", zorder=3))  # data above the model line
+    data(a, vc, dM[i], eM[i], "o", COL["LOS"], "data")
     a.plot(vc, mM[i], color=COL["LOS"], label="model")
     a.set_title(rf"MUSE, {role}: $R={RM[i]:.0f}''$" + "\n" + note + r" km s$^{-1}$", fontsize="small")
     a.set_ylim(top=(1.35 if legend else 1.1) * max((dM[i] + eM[i]).max(), mM[i].max()))  # headroom for the legend
     a.set_xlabel(r"$v_{\rm LOS}$ [km s$^{-1}$]")
     if legend:
-        a.legend(frameon=False, fontsize="x-small", loc="upper left")
+        add_legend(a, fontsize="x-small")
 
 
 def p_2d(a, s, i, role, note):
@@ -157,13 +165,13 @@ def p_marg(a, s, i, legend):
         np.add.at(F, (np.repeat(np.arange(K * K), 25), b.ravel()), 1 / 25)
         D, M = S["d"][i] @ F, S["m"][i] @ F
         E = np.sqrt(S["e"][i] ** 2 @ F ** 2)  # a cell's sub-points are fully correlated
-        ring(a.errorbar(cc, D, E, ls="none", marker=mk, ms=6.5, mfc="w", mew=1.3, mec=COL[lab], color=COL[lab], label=f"data, {lab}", zorder=3))
+        data(a, cc, D, E, mk, COL[lab], f"data, {lab}")
         a.plot(cc, M, color=COL[lab], ls=ls, label=f"model, {lab}")
     a.set_ylim(top=(1.45 if legend else 1.1) * a.get_ylim()[1])  # headroom for the legend
     if SLIDES:
         a.set_xlim(-0.68 * half, 0.68 * half)
     if legend:
-        a.legend(frameon=False, fontsize="xx-small", loc="upper left", ncol=2)
+        add_legend(a, fontsize="xx-small", ncol=2)
     a.set_xlabel(r"$v_R$, $v_T$ [km s$^{-1}$]")
 
 
