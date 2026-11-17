@@ -34,6 +34,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument("outdir")
 ap.add_argument("--only", choices=["gaia", "muse"])
 ap.add_argument("--muse-cache", default=None)
+ap.add_argument("--muse-refit", action="store_true",
+                help="no cache at --muse-cache: refit with the notebook's own fit_all_bins call and save it there")
 ap.add_argument("--base-stage", default="NGC5139_addback_input", help="x-West pack to copy")
 args = ap.parse_args()
 OUT = Path(args.outdir).resolve()
@@ -77,13 +79,17 @@ if args.only in (None, "gaia"):
         shutil.copyfile(tmp / f"gaia_v2_noscale_veldist_{n}", STAGE / f"gaia_veldist_{n}")
 
 if args.only in (None, "muse"):
-    if not args.muse_cache or not Path(args.muse_cache).exists():
-        print("MUSE SKIPPED: no solver cache (pass --muse-cache)")
+    refit = args.muse_refit and args.muse_cache and not Path(args.muse_cache).exists()
+    if not args.muse_cache or not (refit or Path(args.muse_cache).exists()):
+        print("MUSE SKIPPED: no solver cache (pass --muse-cache, or --muse-refit)")
     else:
         tmp = OUT / "tmp_muse"
+        fit = ([("print(f\"{sum(s is not None", f"__import__('pickle').dump({{'solvers': solvers}}, open({args.muse_cache!r}, 'wb'))\n"
+                 "print(f\"{sum(s is not None")] if refit else
+               [("solvers = fit_all_bins(",
+                 f"solvers = __import__('pickle').load(open({args.muse_cache!r}, 'rb'))['solvers']\n_unused = dict(")])
         ns = run_nb("muse_veldist_refit_20261031.ipynb", 31, {
-            15: [("solvers = fit_all_bins(",
-                  f"solvers = pickle.load(open({args.muse_cache!r}, 'rb'))['solvers']\n_unused = dict(")],
+            15: fit,
             31: [('output_dir="."', f"output_dir={str(tmp)!r}, star_data=bin_data_list, sharpen=True")],
         })
         # cache must belong to these bins: same count and per-bin star counts
