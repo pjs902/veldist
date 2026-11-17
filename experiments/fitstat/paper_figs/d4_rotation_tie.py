@@ -1,6 +1,6 @@
 """Paper figure d4: every relative proper-motion dataset tied to one absolute rotation curve by Gaia.
 
-usage: python d4_rotation_tie.py DATAPREP_DIR PACK_DIR OUT.pdf
+usage: python d4_rotation_tie.py DATAPREP_DIR PACK_DIR OUT.pdf [--slides]   (--slides: 16:9)
 DATAPREP_DIR = omegaCen/dynamite_dataprep: NGC5139_relative_input_xeast/hst_pm_rot_rows.ecsv (Gaia - HST rings,
 0-300"), relative_pm/outer_fields_gaia.ecsv (field radii) and relative_pm/outer_rows/*_pm_rot_rows.ecsv (one Gaia
 row per outer field). PACK_DIR: x-East pack with gaia_veldist_pm_2dhist.npz (Gaia bins: annulus means of mu_T, as
@@ -50,7 +50,7 @@ C = {"ziliotto": "#CC79A7", "scalco_f2f3": "#56B4E9", "bellini_f1": "0.15"}
 MK = {"ziliotto": "v", "scalco_f2f3": "^", "bellini_f1": "P"}
 LAB = {"ziliotto": "Ziliotto+26", "scalco_f2f3": "Scalco+21", "bellini_f1": "Bellini+18"}
 w, h = plt.rcParams["figure.figsize"]
-fig, ax = plt.subplots(figsize=(1.3 * w, h), constrained_layout=True)
+fig, ax = plt.subplots(figsize=(1.6 * h * 16 / 9, 1.6 * h) if "--slides" in sys.argv else (1.3 * w, h), constrained_layout=True)
 ax.errorbar(rc, -np.asarray(rows["mu"]), np.asarray(rows["dmu"]), color="#D55E00", marker="s", ms=4, ls="none",
             label=r"\textit{Gaia} $-$ \textit{HST}, rings")
 ax.errorbar(rg, mg, eg, color="#E69F00", marker="s", ms=4, mfc="w", ls="none", label=r"\textit{Gaia} bins")

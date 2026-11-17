@@ -1,6 +1,6 @@
 """Paper figure r6: profile of the fit statistic against IMBH mass, diagonal chi2 vs the per-star likelihood.
 
-usage: python r6_imbh_profile_env.py ALL_MODELS.ecsv RESCORE_DIR OLD_PROFILE.npz OUT.pdf
+usage: python r6_imbh_profile_env.py ALL_MODELS.ecsv RESCORE_DIR OLD_PROFILE.npz OUT.pdf [--slides]   (--slides: 16:9)
 Each statistic's profile is a smooth lower envelope of the computed models: at each mass a soft minimum of the
 models' statistics with Gaussian weights in log M_IMBH (0.08 dex), so it follows the best models near each mass.
 Grey points: all rescored models.
@@ -59,7 +59,7 @@ def main():
     lim_rv = 10 ** old["log_m"][ok].min()
 
     w, h = plt.rcParams["figure.figsize"]
-    fig, a0 = plt.subplots(figsize=(w, h), constrained_layout=True)
+    fig, a0 = plt.subplots(figsize=(1.6 * h * 16 / 9, 1.6 * h) if "--slides" in sys.argv else (w, h), constrained_layout=True)
     ax = [a0]
     lm = logm[have]
     for a, (y, lab, c) in zip(ax, stats):
