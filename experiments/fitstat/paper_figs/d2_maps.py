@@ -1,8 +1,8 @@
 """Paper figure d2: the binned kinematics that enter the fit, every dataset on one map per quantity.
 
 usage: python d2_maps.py PACK_DIR OUT.pdf   (x-East production pack: *_pm_2dhist.npz, veldist/lvm ecsv)
-Each dataset's own DYNAMITE bins (aperture.dat + bins.dat pixel maps, outlined) are drawn with radius
-stretched as sqrt(R) at the true position angle, so the HST/MUSE core and the Gaia/LVM outskirts share one panel. PM moments come from the cell masses (Sheppard-corrected dispersions) after rotating
+Each dataset's own DYNAMITE bins (aperture.dat + bins.dat pixel maps; single unused pixels enclosed by one bin
+filled for display) are drawn with radius stretched as 100" asinh(R/100") at the true position angle, so the HST/MUSE core and the Gaia/LVM outskirts share one panel. PM moments come from the cell masses (Sheppard-corrected dispersions) after rotating
 (pm1, pm2) from the aperture frame (receding major axis at PA_KIN) back to (East, North).
 """
 import sys
@@ -51,10 +51,23 @@ def load(P):
     return hst, gaia, muse, lvm
 
 
+import os
+
+STRETCH = os.environ.get("D2_STRETCH", "asinh100")  # pow<p> (R^p) or asinh<R0> (R0 asinh(R/R0))
+EDGES = os.environ.get("D2_EDGES", "none")  # none | bins
+
+
+def srad(R):
+    if STRETCH.startswith("pow"):
+        return np.asarray(R, float) ** float(STRETCH[3:])
+    r0 = float(STRETCH[5:])
+    return r0 * np.arcsinh(np.asarray(R, float) / r0)
+
+
 def stretch(x, y):
-    """sqrt(R) radial stretch at fixed position angle."""
+    """radial stretch srad(R) at fixed position angle."""
     R = np.hypot(x, y)
-    f = np.sqrt(R) / np.where(R > 0, R, 1)
+    f = srad(R) / np.where(R > 0, R, 1)
     return x * f, y * f
 
 
@@ -66,6 +79,14 @@ def binmap(P, stem):
     nx, ny = map(int, L[4].split())
     b = np.array((P / f"{stem}_bins.dat").read_text().split()[2:], int).reshape((nx, ny), order="F")
     return np.linspace(x0, x0 + wx, nx + 1), np.linspace(y0, y0 + wy, ny + 1), b
+
+
+def fill_holes(b):
+    """Display only: give an unused pixel (id 0) the bin id of its four neighbours when they all agree."""
+    p = np.pad(b, 1)
+    nb = np.stack([p[:-2, 1:-1], p[2:, 1:-1], p[1:-1, :-2], p[1:-1, 2:]])
+    hole = (b == 0) & (nb[0] > 0) & np.all(nb == nb[0], axis=0)
+    return np.where(hole, nb[0], b)
 
 
 def edges(xe, ye, b):
@@ -91,15 +112,17 @@ def panel(ax, layers, cmap, vmin, vmax, label):
     for xe, ye, b, val in layers:
         X, Y = np.meshgrid(xe, ye, indexing="ij")
         SX, SY = stretch(X, Y)
+        b = fill_holes(b)
         v = np.full(b.shape, np.nan)
         v[b > 0] = val[b[b > 0] - 1]
         im = ax.pcolormesh(SX, SY, np.ma.masked_invalid(v), cmap=cmap, vmin=vmin, vmax=vmax, shading="flat",
                            rasterized=True)
-        ax.add_collection(LineCollection(edges(xe, ye, b), colors="k", linewidths=0.15, alpha=0.5))
-    smax = np.sqrt(1550)
+        if EDGES == "bins":
+            ax.add_collection(LineCollection(edges(xe, ye, b), colors="k", linewidths=0.15, alpha=0.5))
+    smax = float(srad(1550))
     for r in (100, 300, 1000):
-        ax.add_patch(Circle((0, 0), np.sqrt(r), fill=False, color="0.4", lw=0.5, ls=":"))
-        ax.text(np.sqrt(r) * np.cos(2.4), np.sqrt(r) * np.sin(2.4), rf"{r}$^{{\prime\prime}}$", color="0.2",
+        ax.add_patch(Circle((0, 0), float(srad(r)), fill=False, color="0.4", lw=0.5, ls=":"))
+        ax.text(float(srad(r)) * np.cos(2.4), float(srad(r)) * np.sin(2.4), rf"{r}$^{{\prime\prime}}$", color="0.2",
                 fontsize="small", ha="center", va="center", bbox=dict(fc="w", ec="none", alpha=0.7, pad=0.5))
     ax.set_xlim(smax, -smax)  # East to the left
     ax.set_ylim(-smax, smax)
