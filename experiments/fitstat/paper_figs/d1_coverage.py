@@ -1,6 +1,7 @@
 """Paper figure d1: spatial coverage of the four kinematic datasets (bin centres) and their radial ranges.
 
-usage: python d1_coverage.py PACK_DIR OUT.pdf   (x-East production pack: *_pm_2dhist.npz, veldist/lvm ecsv)
+usage: python d1_coverage.py PACK_DIR OUT.pdf [OUTER_DIR]   (x-East packs: *_pm_2dhist.npz, veldist/lvm ecsv;
+OUTER_DIR holds the outer relative-PM sets ziliotto/scalco_f2f3/bellini_f1_veldist_pm_2dhist.npz)
 """
 import sys
 from pathlib import Path
@@ -18,6 +19,12 @@ sets = [(r"\textit{Gaia} PM", gaia["xbin"], gaia["ybin"], "#E69F00", "s"),
         ("LVM LOS", np.asarray(lx), np.asarray(ly), "#009E73", "D"),
         (r"\textit{HST} PM", hst["xbin"], hst["ybin"], "#D55E00", "."),
         ("MUSE LOS", np.asarray(muse["xbin"]), np.asarray(muse["ybin"]), "#0072B2", "o")]
+OUTER = [("ziliotto", "Ziliotto+26 PM", "#CC79A7", "v"), ("scalco_f2f3", "Scalco+21 PM", "#56B4E9", "^"),
+         ("bellini_f1", "Bellini+18 PM", "0.15", "P")]
+if len(sys.argv) > 3:
+    for stem, lab, c, m in OUTER:
+        z = np.load(Path(sys.argv[3]) / f"{stem}_veldist_pm_2dhist.npz")
+        sets.insert(2, (lab, z["xbin"], z["ybin"], c, m))
 fig, ax = plt.subplots(1, 2, figsize=(2 * plt.rcParams["figure.figsize"][0], plt.rcParams["figure.figsize"][1]),
                        constrained_layout=True, width_ratios=[1, 1])
 for lab, x, y, c, m in sets:

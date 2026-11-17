@@ -1,6 +1,8 @@
 """Paper figure d3: radial profiles of the binned kinematics -- dispersions, rotation, anisotropy.
 
-usage: python d3_profiles.py PACK_DIR OUT.pdf
+usage: python d3_profiles.py PACK_DIR OUT.pdf [OUTER_DIR]
+OUTER_DIR: x-East outer relative-PM sets (Ziliotto+26, Scalco+21 F2/F3, Bellini+18 F1); their dispersions and
+sigma_T/sigma_R are shift-invariant, so they enter the dispersion and anisotropy panels (not the rotation panel).
 Annuli are log-spaced per dataset (>= 6 bins each); a point is the mean over its bins with the error of
 the mean. Rotation: LOS amplitude A from v = A cos(theta - theta_rec) + c in each annulus, theta_rec the
 receding major axis (PA_KIN); proper motions: the annulus mean of mu_T (positive along the rotation).
@@ -11,9 +13,11 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 
-from d2_maps import PA_KIN, load
+from d2_maps import PA_KIN, load, pm_moments
 
-C = {"MUSE": "#0072B2", "LVM": "#009E73", "HST": "#D55E00", "Gaia": "#E69F00"}
+C = {"MUSE": "#0072B2", "LVM": "#009E73", "HST": "#D55E00", "Gaia": "#E69F00",
+     "Ziliotto+26": "#CC79A7", "Scalco+21": "#56B4E9", "Bellini+18": "0.15"}
+OUTER = (("Ziliotto+26", "ziliotto", 15, "v"), ("Scalco+21", "scalco_f2f3", 7, "^"), ("Bellini+18", "bellini_f1", 6, "P"))
 
 
 def annuli(R, nper=None, edges=None):
@@ -58,6 +62,16 @@ def main():
         name = {"s": r"$\sigma_{\rm LOS}$", "st": r"$\sigma_T$", "sr": r"$\sigma_R$"}[key]
         ax[0].errorbar(r, m, e, color=C[lab], marker=mk, ls="-" if key != "sr" else "--", ms=4,
                        mfc="w" if key == "sr" else C[lab], label=f"{name}, {lab}" if lab != "Gaia" or key != "s" else None)
+    outer = []
+    if len(sys.argv) > 3:
+        for lab, stem, nper, mk in OUTER:
+            d = pm_moments(Path(sys.argv[3]) / f"{stem}_veldist_pm_2dhist.npz")
+            g = annuli(d["R"], nper)
+            for key in ("st", "sr"):
+                r, m, e = mean_err(d["R"], d[key], g)
+                prof[(lab, key)] = (r, m, e)
+                ax[0].errorbar(r, m, e, color=C[lab], marker=mk, ls="none", ms=4, mfc="w" if key == "sr" else C[lab])
+            outer.append((lab, mk))
     ax[0].set_ylabel(r"dispersion [km s$^{-1}$]")
     ax[0].legend(frameon=False, loc="lower left", ncol=1)
     for lab, d, g in (("MUSE", muse, gm), ("LVM", lvm, gl)):
@@ -78,6 +92,12 @@ def main():
         q = st / sr
         ax[2].errorbar(r, q, q * np.hypot(et / st, er / sr), color=C[lab], marker="s", ms=4,
                        label=rf"$\sigma_T/\sigma_R$, {lab}")
+    for lab, mk in outer:
+        r, st, et = prof[(lab, "st")]
+        _, sr, er = prof[(lab, "sr")]
+        q = st / sr
+        ax[2].errorbar(r, q, q * np.hypot(et / st, er / sr), color=C[lab], marker=mk, ms=4, ls="none",
+                       label=rf"$\sigma_T/\sigma_R$, {lab}")
     r, sl, el = prof[("MUSE", "s")]
     rt, st, et = prof[("HST", "st")]
     sti = np.interp(np.log(r), np.log(rt), st)
@@ -87,8 +107,8 @@ def main():
     print("sLOS/sT", np.round(q, 3), "at", np.round(r))
     ax[2].axhline(1, color="0.6", lw=0.5)
     ax[2].set_ylabel("dispersion ratio")
-    ax[2].set_ylim(0.79, 1.08)
-    ax[2].legend(frameon=False, loc="lower left")
+    ax[2].set_ylim(0.70, 1.08)
+    ax[2].legend(frameon=False, loc="lower left", ncol=2, fontsize="x-small", columnspacing=0.8, handletextpad=0.3)
     for a in ax:
         a.set_xscale("log")
         a.set_xlabel("projected radius [arcsec]")
