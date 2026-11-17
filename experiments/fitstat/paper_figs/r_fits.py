@@ -13,6 +13,7 @@ PM axes are the pack's (pm1 along the kinematic major axis PA 104.3, pm2 along t
 import sys
 from pathlib import Path
 
+import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 import numpy as np
 from astropy.table import Table
@@ -102,8 +103,13 @@ ROLE = lambda s, r: next(c for c in COLS[s] if c[1] == r)
 LAB = {"hst_pm": "HST", "gaia_pm": "Gaia"}
 
 
+def ring(eb):
+    """Black outline around the white-faced, colour-edged markers: visible on top of a line of the same colour."""
+    eb[0].set_path_effects([pe.Stroke(linewidth=3.0, foreground="k"), pe.Normal()])
+
+
 def p_muse(a, i, role, note, legend):
-    a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=6.5, mfc="w", mew=1.3, mec=COL["LOS"], color=COL["LOS"], label="data", zorder=3)  # data above the model line
+    ring(a.errorbar(vc, dM[i], eM[i], ls="none", marker="o", ms=6.5, mfc="w", mew=1.3, mec=COL["LOS"], color=COL["LOS"], label="data", zorder=3))  # data above the model line
     a.plot(vc, mM[i], color=COL["LOS"], label="model")
     a.set_title(rf"MUSE, {role}: $R={RM[i]:.0f}''$" + "\n" + note + r" km s$^{-1}$", fontsize="small")
     a.set_ylim(top=(1.35 if legend else 1.1) * max((dM[i] + eM[i]).max(), mM[i].max()))  # headroom for the legend
@@ -148,7 +154,7 @@ def p_marg(a, s, i, legend):
         np.add.at(F, (np.repeat(np.arange(K * K), 25), b.ravel()), 1 / 25)
         D, M = S["d"][i] @ F, S["m"][i] @ F
         E = np.sqrt(S["e"][i] ** 2 @ F ** 2)  # a cell's sub-points are fully correlated
-        a.errorbar(cc, D, E, ls="none", marker=mk, ms=6.5, mfc="w", mew=1.3, mec=COL[lab], color=COL[lab], label=f"data, {lab}", zorder=3)
+        ring(a.errorbar(cc, D, E, ls="none", marker=mk, ms=6.5, mfc="w", mew=1.3, mec=COL[lab], color=COL[lab], label=f"data, {lab}", zorder=3))
         a.plot(cc, M, color=COL[lab], ls=ls, label=f"model, {lab}")
     a.set_ylim(top=(1.45 if legend else 1.1) * a.get_ylim()[1])  # headroom for the legend
     if SLIDES:
