@@ -7,6 +7,7 @@ Rules, each -2 ln L summed over all HST stars:
   floor[f, eps]  p = max(p_S, f p_M) + eps * hbar_a,   hbar_a = mean model mass per cell in the star's aperture
                  (eps: outlier floor, a uniform density over the aperture's grid; eps = 0 is the bare floor)
   plain[eps]     p = p_M + eps * hbar_a
+Ranked against the sharpened Laplace statistic (Spearman over models, HST set swapped into kinchi2).
 Also per model: stars with p_M <= 0 (model has no mass under the star) and their star indices, so the same
 stars can be recognised across models.
 """
@@ -14,6 +15,7 @@ import glob
 import sys
 
 import numpy as np
+from scipy.stats import spearmanr
 
 FLOORS = (0.0, 1e-2, 0.1, 0.3)
 EPS = (1e-6, 1e-4, 1e-3, 1e-2)
@@ -33,7 +35,7 @@ def rows(T):
 sS, cS, mS = rows(S)
 sP, cP, mP = rows(P)
 out = dict(floors=np.asarray(FLOORS), eps=np.asarray(EPS), models=[], floor=[], plain=[], ext=[], n_zero=[],
-           zero_stars=[])
+           zero_stars=[], base=[], laplace=[], exact_raw=[], m_bh=[])
 for f in files:
     z = np.load(f, allow_pickle=True)
     h = z["h"].astype(np.float64)                     # n_ap x K^2, mass units
@@ -41,6 +43,10 @@ for f in files:
     pM = np.bincount(sP, weights=mP * h[apert[sP], cP], minlength=n_star)
     hbar = h.mean(1)[apert]
     out["models"].append(str(z["directory"]))
+    out["base"].append(float(z["kinchi2"]) - z["diag"].sum())  # kinchi2 without the HST set
+    out["laplace"].append(z["laplace"].sum())
+    out["exact_raw"].append(z["exact"].sum())
+    out["m_bh"].append(float(z["m_bh"]))
     out["floor"].append([[-2 * np.log(np.maximum(pS, fl * pM) + e * hbar).sum() for e in EPS] for fl in FLOORS])
     out["plain"].append([-2 * np.log(pM + e * hbar).sum() for e in EPS])
     nst = np.bincount(apert, minlength=h.shape[0])
@@ -55,3 +61,17 @@ zs = [set(s.tolist()) for s in out["zero_stars"]]
 common = set.intersection(*zs) if zs else set()
 print(f"stars with p_M<=0 in every model: {len(common)} -> {sorted(common)[:40]}")
 print(f"their apertures: {np.unique(apert[sorted(common)]).tolist() if common else []}")
+
+o = {k: np.asarray(v) for k, v in out.items() if k != "zero_stars"}
+base, ext = o["base"], o["ext"]
+tot = {"laplace_sharp": base + o["laplace"], "exact_sharp_raw": base + o["exact_raw"]}
+for j, e in enumerate(EPS):
+    tot[f"plain eps={e:g}"] = base + ext + o["plain"][:, j]
+    for i, fl in enumerate(FLOORS):
+        tot[f"sharp f={fl:g} eps={e:g}"] = base + ext + o["floor"][:, i, j]
+ref = tot["laplace_sharp"]
+print(f"{len(base)} models")
+print(f"{'statistic':26s} {'rho(lap_s)':>10s} {'best model':>24s} {'M_BH':>8s}")
+for k, v in tot.items():
+    b = int(np.argmin(v))
+    print(f"{k:26s} {spearmanr(v, ref)[0]:10.3f} {o['models'][b]:>24s} {o['m_bh'][b]:8.0f}")
