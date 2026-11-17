@@ -2,9 +2,8 @@
 
 usage: python r9_search.py ALL_MODELS.ecsv RESCORE_DIR OUT.pdf
 Finished models of the v4 grid in the order they were computed (iteration, then time). First panel: each
-model's diagonal chi2 relative to the final best (points) and the running best (line), and the running best
-of the per-star statistic (rescored at fixed weights). Other panels: each parameter against model number,
-coloured by the diagonal chi2, within its search range (Table 2).
+model's per-star -2 ln L relative to the best (points) and the running best (line). Other panels: each
+parameter against model number, coloured by -2 ln L, within its search range (Table 2).
 """
 import glob
 import sys
@@ -32,19 +31,18 @@ w, h = plt.rcParams["figure.figsize"]
 fig, ax = plt.subplots(2, 4, figsize=(3 * w, 1.5 * h), constrained_layout=True, sharex=True)
 ax = ax.ravel()
 a = ax[0]
-a.scatter(n, k - k.min(), s=10, color="0.5", lw=0)
-a.plot(n, np.minimum.accumulate(k) - k.min(), color="#D55E00", label=r"diagonal $\chi^2$")
-a.plot(n, np.fmin.accumulate(ps) - np.nanmin(ps), color="#0072B2", label="per-star")
+d = ps - np.nanmin(ps)
+a.scatter(n, d, s=10, color="0.5", lw=0)
+a.plot(n, np.fmin.accumulate(d), color="#0072B2")
 a.set_yscale("symlog", linthresh=1000)
-a.set_ylabel(r"$\Delta$ statistic")
-a.legend(frameon=False, fontsize="small", loc="lower left")
+a.set_ylabel(r"$\Delta(-2\ln\mathcal{L})$")
 it = np.asarray(t["which_iter"])
 for j in np.flatnonzero(np.diff(it)):
     for b in ax:
         b.axvline(j + 1.5, color="0.85", lw=0.6, zorder=0)
 for b, (col, lab, rng, lg) in zip(ax[1:], P):
-    sc = b.scatter(n, np.asarray(t[col], float), c=k - k.min(), cmap="viridis_r", s=12, lw=0,
-                   vmin=0, vmax=np.percentile(k - k.min(), 90))
+    sc = b.scatter(n, np.asarray(t[col], float), c=d, cmap="viridis_r", s=12, lw=0,
+                   vmin=0, vmax=np.nanpercentile(d, 90))
     b.set_ylim(*rng)
     if lg:
         b.set_yscale("log")
@@ -54,7 +52,7 @@ for b, (col, lab, rng, lg) in zip(ax[1:], P):
     b.set_ylabel(lab)
 for b in ax[4:]:
     b.set_xlabel("model number")
-fig.colorbar(sc, ax=ax[1:].tolist(), label=r"$\Delta$ diagonal $\chi^2$", shrink=0.6, pad=0.01)
+fig.colorbar(sc, ax=ax[1:].tolist(), label=r"$\Delta(-2\ln\mathcal{L})$", shrink=0.6, pad=0.01)
 fig.savefig(sys.argv[3])
 fig.savefig(sys.argv[3].replace(".pdf", ".png"), dpi=200)
 print(len(t), "models; iterations", np.unique(it))

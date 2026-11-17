@@ -24,11 +24,12 @@ for a, key, ttl in ((ax[0], "A", "DYNAMITE grid"), (ax[1], "C", "action-space gr
     a.set_ylabel(r"$J_r/J_{\rm tot}$")
     a.set_title(ttl)
 fig.colorbar(im, ax=ax[:2], label="fraction of energy shells", pad=0.02, shrink=0.9)
+fig.get_layout_engine().set(wspace=0.08)
 for key, lab, c, m in (("A", "DYNAMITE grid", "k", "s"), ("C", "action-space grid", "#0072B2", "o")):
     ax[2].plot(lJ, z[f"{key}_fa"], marker=m, color=c, label=lab, ms=4)
 ax[2].set_ylim(0, 1.08)
 ax[2].set_xlabel(r"energy shell: median $\log_{10} J_{\rm tot}$ [pc km s$^{-1}$]")
-ax[2].set_ylabel("covered fraction of the triangle")
+ax[2].set_ylabel("covered fraction")
 ax[2].legend(frameon=False, loc="lower left")
 ax[2].set_title("coverage per energy shell")
 fig.savefig(sys.argv[2])

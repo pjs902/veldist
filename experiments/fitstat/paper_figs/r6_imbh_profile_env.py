@@ -52,15 +52,15 @@ def main():
     d = np.array([str(x).strip("/") for x in t["directory"]])
     logm = np.log10(np.asarray(t["m-bh"], float))
     have = np.array([k in resc for k in d])
-    stats = [(np.asarray(t["kinchi2"], float)[have], r"diagonal $\chi^2$", "#D55E00"),
-             (np.array([resc[k] for k in d[have]]), "per-star likelihood", "#0072B2")]
+    stats = [(np.array([resc[k] for k in d[have]]), "per-star likelihood", "#0072B2")]
     print(f"{len(t)} finished models, {have.sum()} rescored (both panels use the rescored set)")
     old = np.load(sys.argv[3], allow_pickle=True)
     ok = np.isfinite(old["RV"]) & (old["RV"] - np.nanmin(old["RV"]) < 50)
     lim_rv = 10 ** old["log_m"][ok].min()
 
     w, h = plt.rcParams["figure.figsize"]
-    fig, ax = plt.subplots(2, 1, figsize=(w, 1.7 * h), constrained_layout=True, sharex=True)
+    fig, a0 = plt.subplots(figsize=(w, h), constrained_layout=True)
+    ax = [a0]
     lm = logm[have]
     for a, (y, lab, c) in zip(ax, stats):
         ex, ey = envelope(lm, y)
@@ -71,15 +71,14 @@ def main():
         a.scatter(10 ** lm / 1e3, y - y0, s=10, color="0.45", lw=0, zorder=2)
         a.axvspan(1, lim_rv / 1e3, color="0.9", lw=0, zorder=0)
         a.set_ylim(-0.06 * np.percentile(y - y0, 80), np.percentile(y - y0, 80))
-        a.text(0.97, 0.95, lab, transform=a.transAxes, ha="right", va="top")
-        a.set_ylabel(r"$\Delta$ statistic")
+        a.set_ylabel(r"$\Delta(-2\ln\mathcal{L})$")
         print(lab, "curve min at %.1fk;" % (10 ** xs[np.argmin(ys)] / 1e3), "best model %.1fk" % (10 ** ex[np.argmin(ey)] / 1e3),
               "envelope:", " ".join(f"{10 ** x / 1e3:.1f}k:{v - y0:.0f}" for x, v in zip(ex, ey)))
-    ax[1].set_xscale("log")
-    ax[1].set_xlim(4.5, 65)
-    ax[1].set_xticks([5, 10, 20, 50], ["5", "10", "20", "50"])
-    ax[1].set_xticks([], minor=True)
-    ax[1].set_xlabel(r"$M_{\rm IMBH}$ [$10^3\,M_\odot$]")
+    ax[0].set_xscale("log")
+    ax[0].set_xlim(4.5, 65)
+    ax[0].set_xticks([5, 10, 20, 50], ["5", "10", "20", "50"])
+    ax[0].set_xticks([], minor=True)
+    ax[0].set_xlabel(r"$M_{\rm IMBH}$ [$10^3\,M_\odot$]")
     ax[0].text(0.02, 0.95, "excluded by\nfast stars", transform=ax[0].transAxes, va="top", fontsize="small",
                color="0.4")
     fig.savefig(sys.argv[4])
