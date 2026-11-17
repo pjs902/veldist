@@ -24,6 +24,10 @@ S1, S2, N, NMOCK = 18.0, 16.0, 430, 40
 Ks = [11, 15, 19, 23, 31]
 rng = np.random.default_rng(7)
 res = {"plain": [], "sharp": []}
+DATA = sys.argv[1].replace(".pdf", "_data.npz")
+if Path(DATA).exists():  # replot only
+    res = {k: list(v) for k, v in np.load(DATA).items()}
+    Ks = []
 for K in Ks:
     sol = KinematicSolver2D()
     sol.setup_grid(center=(0.0, 0.0), width=(2 * HST["half"],) * 2, n_bins=K)
@@ -45,12 +49,11 @@ for K in Ks:
         res[key].append((2 * HST["half"] / K, b.mean(), b.std(ddof=1) / np.sqrt(len(b))))
     print(K, {k: tuple(round(x, 3) for x in res[k][-1]) for k in res}, flush=True)
 
-np.savez(sys.argv[1].replace(".pdf", "_data.npz"), **{k: np.array(v) for k, v in res.items()})
+np.savez(DATA, **{k: np.array(v) for k, v in res.items()})
 w, h = plt.rcParams["figure.figsize"]
 fig, ax = plt.subplots(figsize=(w, 0.95 * h), constrained_layout=True)
 # production ranges of Delta/sigma: cell width over the range of dispersions in each dataset's bins
-for (lo, hi), lab, yy in (((7.2 / 20.0, 7.2 / 12.5), r"\textit{HST}", 0.96), ((8.0 / 19.0, 8.0 / 12.5), "MUSE", 0.88),
-                          ((6.6 / 12.3, 6.6 / 7.5), r"\textit{Gaia}", 0.80)):
+for (lo, hi), lab, yy in (((7.2 / 20.0, 7.2 / 12.5), r"\textit{HST}", 0.96), ((8.0 / 19.0, 8.0 / 12.5), "MUSE", 0.88)):
     ax.plot([lo, hi], [yy, yy], transform=ax.get_xaxis_transform(), color="0.35", lw=3, solid_capstyle="butt")
     ax.text(hi + 0.01, yy, lab, transform=ax.get_xaxis_transform(), va="center", fontsize="small", color="0.3")
 q = np.linspace(0.2, 0.9, 100)
