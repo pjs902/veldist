@@ -1,6 +1,6 @@
 """C3: rescore one finished v4 model with the baseline and the Laplace / exact statistics.
 
-    python rescore_v4.py PRIV_CONFIG MODEL_DIRECTORY STAR_TERMS.npz OUT.npz
+    python rescore_v4.py PRIV_CONFIG MODEL_DIRECTORY STAR_TERMS.npz OUT.npz [PLAIN_TERMS.npz]
 
 Runs DYNAMITE's own streamed read (``construct_gram_and_rhs_blockwise``,
 ``rhs_only=True``, ``chi2_w=w``) on a PRIVATE copy (``c3_private_copy.sh``), so
@@ -15,6 +15,13 @@ projected mass M_a, as DYNAMITE fits them). Then, per aperture:
   exact   2 (-log L), extended Poisson    (veldist.fitstat)
   border  border-ring mass / total model mass
   mratio  model aperture mass / M_a
+
+With PLAIN_TERMS (the unsharpened rows of the same stars, when STAR_TERMS is sharpened), also
+  exact_plain       exact with the plain rows
+  exact_floor[f]    exact with p = max(p_S, f * p_M), f in FLOORS: sharpened rows have negative
+                    side lobes, so p_S <= 0 for some stars; the floor keeps those stars finite
+  n_floored[f]      stars where the floor binds
+The model histograms h (n_ap x K^2) are saved too, so other rules can be scored without a re-read.
 """
 import sys
 
@@ -37,6 +44,8 @@ fs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fs)
 
 cfg, mdir, terms_path, out_path = sys.argv[1:5]
+plain_path = sys.argv[5] if len(sys.argv) > 5 else None
+FLOORS = (1e-3, 1e-2, 0.1, 0.3, 1.0)
 HST = "hst_pm"
 
 os.chdir(Path(cfg).parent)
@@ -107,11 +116,26 @@ lap = np.zeros(n_ap)
 lap0 = np.zeros(n_ap)
 exact = np.zeros(n_ap)
 n_neg = np.zeros(n_ap, int)
-for a in range(n_ap):
-    rws = np.nonzero(apert == a)[0]
+if plain_path:
+    P = np.load(plain_path)
+    assert not bool(P.get("PM_star_sharpened", False))
+    np.testing.assert_array_equal(P["PM_star_aperture"], apert)
+    pptr, pcell, pmass = P["PM_star_indptr"], P["PM_star_cell"], P["PM_star_mass"]
+exact_plain = np.zeros(n_ap)
+exact_floor = np.zeros((len(FLOORS), n_ap))
+n_floored = np.zeros((len(FLOORS), n_ap), int)
+
+
+def _dense(rws, ptr, cell, mass):
     M = np.zeros((len(rws), K2))
     for j, r in enumerate(rws):
         M[j, cell[ptr[r]:ptr[r + 1]]] = mass[ptr[r]:ptr[r + 1]]
+    return M
+
+
+for a in range(n_ap):
+    rws = np.nonzero(apert == a)[0]
+    M = _dense(rws, ptr, cell, mass)
     N = len(rws)
     h0 = h0n[a].ravel() * Ma[a]
     F, g = fs.laplace_terms(M, h0, N, Ma[a])
@@ -120,9 +144,18 @@ for a in range(n_ap):
     lap0[a] = fs.stat_laplace(h0, Lt, tg)
     exact[a] = fs.stat_exact(h[a], M, N, Ma[a])
     n_neg[a] = int(np.sum(M @ h[a] <= 0))
+    if plain_path:
+        Mp = _dense(rws, pptr, pcell, pmass)
+        exact_plain[a] = fs.stat_exact(h[a], Mp, N, Ma[a])
+        pS, pM = M @ h[a], Mp @ h[a]
+        ext = N / Ma[a] * h[a].sum()
+        for i, f in enumerate(FLOORS):
+            exact_floor[i, a] = 2.0 * (-np.sum(np.log(np.maximum(pS, f * pM))) + ext)
+            n_floored[i, a] = int(np.sum(pS < f * pM))
 
 np.savez(out_path, directory=mdir, m_bh=row["m-bh"], kinchi2=row["kinchi2"], set_chi2=str(set_chi2),
          diag=diag, laplace=lap, laplace_at_h0=lap0, exact=exact, n_nonpos_p=n_neg,
-         border=h[:, border].sum(1) / h.sum(1), mratio=h.sum(1) / Ma)
+         border=h[:, border].sum(1) / h.sum(1), mratio=h.sum(1) / Ma, h=h.astype(np.float32),
+         floors=np.asarray(FLOORS), exact_plain=exact_plain, exact_floor=exact_floor, n_floored=n_floored)
 print(f"done {mdir}: diag {diag.sum():.1f} laplace {lap.sum():.1f} exact {exact.sum():.1f} "
       f"border max {np.max(h[:, border].sum(1) / h.sum(1)):.4f} nonpos p {n_neg.sum()}", flush=True)
