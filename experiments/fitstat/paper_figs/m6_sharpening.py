@@ -53,7 +53,7 @@ np.savez(DATA, **{k: np.array(v) for k, v in res.items()})
 w, h = plt.rcParams["figure.figsize"]
 fig, ax = plt.subplots(figsize=(w, 0.95 * h), constrained_layout=True)
 # production ranges of Delta/sigma: cell width over the range of dispersions in each dataset's bins
-for (lo, hi), lab, yy in (((7.2 / 20.0, 7.2 / 12.5), r"\textit{HST}", 0.96), ((8.0 / 19.0, 8.0 / 12.5), "MUSE", 0.88)):
+for (lo, hi), lab, yy in (((0.34, 0.57), r"\textit{HST}", 0.96), ((8.0 / 19.0, 8.0 / 12.5), "MUSE", 0.88)):
     ax.plot([lo, hi], [yy, yy], transform=ax.get_xaxis_transform(), color="0.35", lw=3, solid_capstyle="butt")
     ax.text(hi + 0.01, yy, lab, transform=ax.get_xaxis_transform(), va="center", fontsize="small", color="0.3")
 q = np.linspace(0.2, 0.9, 100)
