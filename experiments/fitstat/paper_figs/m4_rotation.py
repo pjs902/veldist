@@ -14,7 +14,7 @@ import numpy as np
 z = np.load(sys.argv[1], allow_pickle=True)
 C = {"relative": "#0072B2", "addback": "#D55E00"}
 w, h = plt.rcParams["figure.figsize"]
-fig, ax = plt.subplots(1, 2, figsize=(2 * w, h), constrained_layout=True, sharex=True)
+fig, ax = plt.subplots(1, 2, figsize=(2.8 * w, 1.15 * h), constrained_layout=True, sharex=True)
 for a in ax:
     a.axvspan(*z["nodata_gap"], color="0.9", lw=0, zorder=0)
     a.set_xscale("log")

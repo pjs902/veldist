@@ -47,7 +47,7 @@ ax[2].set_xscale("log")
 ax[2].set_ylim(0, 1)
 ax[2].set_xlabel(r"mean orbital radius [arcsec]")
 ax[2].set_ylabel("fraction of orbit weight")
-ax[2].legend(frameon=False, loc="upper center", bbox_to_anchor=(0.56, 1.0))
+ax[2].legend(frameon=False, loc="lower center", bbox_to_anchor=(0.5, 0.06), fontsize="small")
 fig.savefig(sys.argv[3])
 fig.savefig(sys.argv[3].replace(".pdf", ".png"), dpi=200)
 fc = o["frac_counter_of_tubes"]

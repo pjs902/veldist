@@ -15,7 +15,7 @@ m, e = (np.load(f, allow_pickle=True) for f in sys.argv[1:3])
 C = {"stars": "#0072B2", "sbh": "#E69F00", "imbh": "#D55E00", "total": "k"}
 PC = 0.026635  # pc per arcsec at 5494 pc
 w, h = plt.rcParams["figure.figsize"]
-fig, ax = plt.subplots(1, 2, figsize=(2 * w, h), constrained_layout=True)
+fig, ax = plt.subplots(1, 2, figsize=(2.8 * w, 1.15 * h), constrained_layout=True)
 
 r = m["r_arcsec"]
 for key, lab in (("M_stars", r"stars ($\Upsilon = %.2f$)" % float(m["ml"])),
