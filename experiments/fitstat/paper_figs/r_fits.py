@@ -7,7 +7,7 @@ Columns: four demonstration bins per set, ordered by radius (demo_pm, demo_muse)
 Paper rows (marginals along the bin's R (filled, solid) and T (open, dashed) directions, linear scale, each cell
 split into 5x5 sub-points before binning the projection; contours at 1e-3, 1e-2, 0.1, 0.5 of the model peak; slides at 0.05-0.8): MUSE LOSVD (data +- error, model line); HST data (grey, log scale down to 1e-3 of the peak) with log-spaced model contours; HST marginals along
 v_maj (circles) and v_min (squares, x 1e-2) on a log axis, cells with data < error omitted (errors summed in quadrature over cells, ignoring cell correlations: display only);
-the same two rows for Gaia. --slides: landscape, data and model only (MUSE, HST 2D, Gaia 2D).
+the same two rows for Gaia. --slides: landscape (~4:3, square panels), data and model only (MUSE, HST 2D, Gaia 2D).
 PM axes are the pack's (pm1 along the kinematic major axis PA 104.3, pm2 along the minor), km/s.
 """
 import sys
@@ -85,8 +85,8 @@ for s, f in (("hst_pm", "hst_veldist_pm_2dhist.npz"), ("gaia_pm", "gaia_veldist_
 
 rows = ["veldist", "hst_pm", "gaia_pm"] if SLIDES else ["veldist", "hst_pm", "hst_marg", "gaia_pm", "gaia_marg"]
 w, h = plt.rcParams["figure.figsize"]
-fig, ax = plt.subplots(len(rows), 4, figsize=(16 / 9 * 2.9 * h, 2.9 * h) if SLIDES else (2.2 * w, 2.9 * h),
-                       constrained_layout=True)
+fig, ax = plt.subplots(len(rows), 4, figsize=(1.3 * 2.9 * h, 2.9 * h) if SLIDES else (2.2 * w, 1.4 * 2.2 * w),
+                       constrained_layout=True, subplot_kw=dict(box_aspect=1))  # every panel square, same size
 LAB = {"hst_pm": "HST", "gaia_pm": "Gaia"}
 for r, kind in enumerate(rows):
     if kind == "veldist":
