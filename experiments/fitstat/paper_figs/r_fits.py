@@ -7,7 +7,7 @@ Columns: four demonstration bins per set, ordered by radius (demo_pm, demo_muse)
 Paper rows (marginals along the bin's R (filled, solid) and T (open, dashed) directions, linear scale, each cell
 split into 5x5 sub-points before binning the projection; contours at 1e-3, 1e-2, 0.1, 0.5 of the model peak; slides at 0.05-0.8): MUSE LOSVD (data +- error, model line); HST data (grey, log scale down to 1e-3 of the peak) with log-spaced model contours; HST marginals along
 v_maj (circles) and v_min (squares, x 1e-2) on a log axis, cells with data < error omitted (errors summed in quadrature over cells, ignoring cell correlations: display only);
-the same two rows for Gaia. --slides: landscape (~4:3, square panels), data and model only (MUSE, HST 2D, Gaia 2D).
+the same two rows for Gaia. --slides: bins chosen as the best-fitting (chi2/cell) of the top 10% per role; landscape (~4:3, square panels), data and model only (MUSE, HST 2D, Gaia 2D).
 PM axes are the pack's (pm1 along the kinematic major axis PA 104.3, pm2 along the minor), km/s.
 """
 import sys
@@ -26,19 +26,30 @@ COL = {"LOS": "#009E73", "R": "#0072B2", "T": "#D55E00"}  # Okabe-Ito; 2D model 
 GREY = ListedColormap(plt.cm.Greys(np.linspace(0, 0.7, 256)))  # darkest = mid grey, so contours stay visible
 
 
-def demo_pm(m):
+def choose(score, chi, mask, best):
+    """Bin with the highest score among mask; with best (talk version) the lowest chi2/cell among the top 10%."""
+    sc = np.where(mask, score, -np.inf)
+    if not best:
+        return int(np.argmax(sc))
+    top = np.flatnonzero(sc >= np.quantile(sc[mask], 0.9))
+    return int(top[np.argmin(chi[top])])
+
+
+def demo_pm(m, chi, best):
     """Columns as (index, role, note), ordered by radius: centre, strongest rotation (mu_T over its error),
     strongest radial anisotropy (lowest sigma_T/sigma_R), outermost; rotation and anisotropy among bins with at
-    least the median star count. A centre bin within 0.8 of the rotation bin's radius is replaced by the median-R bin."""
-    big, ratio = m["n"] >= np.median(m["n"]), m["st"] / m["sr"]
-    rot = int(np.argmax(np.where(big, m["mt"] * np.sqrt(m["n"]) / m["st"], -np.inf)))
-    ani = int(np.argmin(np.where(big, ratio, np.inf)))
-    cen = int(np.argmin(m["R"]))
+    least the median star count. A centre bin within 0.8 of the rotation bin's radius is replaced by the median-R bin.
+    best: within each role, the best-fitting of the top 10% (talk version)."""
+    big, ratio, al = m["n"] >= np.median(m["n"]), m["st"] / m["sr"], np.ones(len(m["R"]), bool)
+    rot = choose(m["mt"] * np.sqrt(m["n"]) / m["st"], chi, big, best)
+    ani = choose(-ratio, chi, big, best)
+    cen = choose(-m["R"], chi, al, best)
     cen = (cen, "centre") if m["R"][cen] < 0.8 * m["R"][rot] else (int(np.argsort(m["R"])[len(m["R"]) // 2]), "intermediate")
+    out = choose(m["R"], chi, al, best)
     cols = [(cen[0], cen[1], rf"$\sigma_T/\sigma_R={ratio[cen[0]]:.2f}$"),
             (rot, "rotation", rf"$\langle v_T\rangle={m['mt'][rot]:+.1f}$ km s$^{{-1}}$"),
             (ani, "radial anisotropy", rf"$\sigma_T/\sigma_R={ratio[ani]:.2f}$"),
-            (int(np.argmax(m["R"])), "outermost", rf"$\sigma_T/\sigma_R={ratio[int(np.argmax(m['R']))]:.2f}$")]
+            (out, "outermost" if not best else "outer", rf"$\sigma_T/\sigma_R={ratio[out]:.2f}$")]
     return sorted(cols, key=lambda c: m["R"][c[0]])
 
 
@@ -48,9 +59,10 @@ def dirs(S, i):
     return rh, -np.array([-rh[1], rh[0]])
 
 
-def demo_muse(R, v):
-    cols = [(int(np.argmin(R)), "centre"), (int(np.argmax(v)), "receding"), (int(np.argmin(v)), "approaching"),
-            (int(np.argmax(R)), "outermost")]
+def demo_muse(R, v, chi, best):
+    al = np.ones(len(R), bool)
+    cols = [(choose(-R, chi, al, best), "centre"), (choose(v, chi, al, best), "receding"),
+            (choose(-v, chi, al, best), "approaching"), (choose(R, chi, al, best), "outermost" if not best else "outer")]
     return [(i, role, rf"$\bar v={v[i]:+.1f}$") for i, role in sorted(cols, key=lambda c: R[c[0]])]
 
 
@@ -67,7 +79,8 @@ dM, eM, mM = unit("veldist")
 L = np.array([T[f"losvd_{j}"] for j in range(len(vc))]).T
 assert dM.shape == L.shape and np.corrcoef((L / L.sum(1, keepdims=True)).ravel(), dM.ravel())[0, 1] > 0.99
 RM = np.hypot(T["xbin"], T["ybin"])
-COLS = {"veldist": demo_muse(RM, np.asarray(T["v"]))}
+CHI = lambda d, e, m: np.mean(((d - m) / np.where(e > 0, e, np.inf)) ** 2, 1)
+COLS = {"veldist": demo_muse(RM, np.asarray(T["v"]), CHI(dM, eM, mM), SLIDES)}
 PA = np.radians(PA_KIN)
 MAJ, MNR = np.array([np.sin(PA), np.cos(PA)]), np.array([-np.cos(PA), np.sin(PA)])
 
@@ -81,7 +94,7 @@ for s, f in (("hst_pm", "hst_veldist_pm_2dhist.npz"), ("gaia_pm", "gaia_veldist_
     cc = np.linspace(-half, half, K + 1)
     PM[s] = dict(K=K, half=half, cc=0.5 * (cc[1:] + cc[:-1]), d=d, e=e, m=m, R=np.hypot(z["xbin"], z["ybin"]),
                  N=z["nstarbin"], x=np.asarray(z["xbin"], float), y=np.asarray(z["ybin"], float))
-    COLS[s] = demo_pm(pm_moments(P / f))
+    COLS[s] = demo_pm(pm_moments(P / f), CHI(d, e, m), SLIDES)
 
 rows = ["veldist", "hst_pm", "gaia_pm"] if SLIDES else ["veldist", "hst_pm", "hst_marg", "gaia_pm", "gaia_marg"]
 w, h = plt.rcParams["figure.figsize"]
