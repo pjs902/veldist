@@ -219,3 +219,4 @@ __marimo__/
 .pi/
 scratchpad/
 fit_all_bins_2d_failures.jsonl
+experiments/fitstat/work/
