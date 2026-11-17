@@ -36,6 +36,22 @@ for n in parset.colnames:
 print("parset:", dict(zip(parset.colnames, parset)), flush=True)
 model = dyn.model.Model(config=c, parset=parset)
 model.setup_directories()
+# register the model in all_models, as the parameter-space iterator does (later steps look the parset up there)
+T = c.all_models.table
+newrow = []
+for col in T.colnames:
+    if col in parset.colnames:
+        newrow.append(parset[col])
+    elif col == "time_modified":
+        newrow.append(str(np.datetime64("now", "s")))
+    elif col == "which_iter":
+        newrow.append(0)
+    elif col == "directory":
+        newrow.append(os.path.relpath(model.directory, c.settings.io_settings["output_directory"] + "models") + "/")
+    else:
+        newrow.append(T[col].dtype.type(None))
+T.add_row(newrow)
+print("registered", T["directory"][-1], flush=True)
 t0 = time.time()
 orblib = model.get_orblib()
 t1 = time.time()
