@@ -1,17 +1,19 @@
-"""Gaia outer-bin test: grid bias of the per-star likelihood on the real production Gaia bins.
+"""Grid test: grid bias of the per-star likelihood on the real production Gaia / HST bins.
 
-For each production Gaia bin (stars and full error covariances from gaia_veldist_refit_20261031.ipynb, cells
-0..38) a 2D Gaussian (m1, m2, s1, s2) is fitted
+For each production bin (stars and full error covariances from the production notebook) a 2D Gaussian (m1, m2, s1, s2) is fitted
   (a) to the stars directly, with no grid: star likelihood N(v_i; m, diag(s1^2, s2^2) + C_i);
   (b) as exact cell masses on a K x K grid over the production extent (+-56.46 km/s), by the exact per-star
-      likelihood (stat_exact) with the plain design matrix M and with the sharpened M S.
+      likelihood (stat_exact) with the plain design matrix M and with the sharpened M S, over the production extent.
 bias = (b) - (a) per axis isolates the grid error: same stars, same family, so (a) is the grid-free answer.
-K = 17 (production, 6.64 km/s cells), 25 and 33.
+Gaia: K = 17 (production, 6.64 km/s cells), 25, 33.  HST: K = 23 (production, 7.20 km/s), 31, 39.
 
-usage (cwd = omegaCen/dynamite_dataprep): python gaia_grid_test.py OUT.npz [NPROC]
+usage:
+  dump (cwd = omegaCen/dynamite_dataprep; data prep only, no fitting): python grid_test.py dump gaia|hst BINS.pkl
+  fit:  python grid_test.py fit BINS.pkl OUT.npz [NPROC]
 """
 import json
 import os
+import pickle
 import sys
 from multiprocessing import Pool
 
@@ -25,10 +27,11 @@ from scipy.special import ndtr  # noqa: E402
 from veldist.fitstat import sharpen_matrix, stat_exact  # noqa: E402
 from veldist.veldist2d import KinematicSolver2D, precompute_design_matrix_2d  # noqa: E402
 
-HALF, KS = 112.91314746000282 / 2, (17, 25, 33)
-
-
-def bins_from_notebook(nb="gaia_veldist_refit_20261031.ipynb", upto=38):
+SETS = {  # notebook, last cell, cut that cell before this text (None: whole cell), PREFIX, half-width, K list
+    "gaia": ("gaia_veldist_refit_20261031.ipynb", 38, None, "gaia_v2_noscale", 112.91314746000282 / 2, (17, 25, 33)),
+    "hst": ("hst_veldist_refit_20261031.ipynb", 18, "cache_path = Path", "hst", 165.61277588006868 / 2, (23, 31, 39)),
+}
+def bins_from_notebook(nb, upto, cut, prefix, K0):
     sys.path.insert(0, os.getcwd())
     for k in ("DS_PM_MODE", "DS_GAIA_V2", "DS_GAIA_ESCALE"):
         os.environ.pop(k, None)
@@ -36,8 +39,10 @@ def bins_from_notebook(nb="gaia_veldist_refit_20261031.ipynb", upto=38):
     for i, c in enumerate(json.load(open(nb))["cells"][: upto + 1]):
         if c["cell_type"] == "code":
             src = "\n".join(ln for ln in "".join(c["source"]).splitlines() if not ln.lstrip().startswith(("%", "!")))
+            if i == upto and cut:
+                src = src[: src.index(cut)]
             exec(compile(src, f"{nb}:cell{i}", "exec"), ns)
-    assert ns["PREFIX"] == "gaia_v2_noscale" and ns["grid_kwargs"]["n_bins"] == 17
+    assert ns["PREFIX"] == prefix and ns["grid_kwargs"]["n_bins"] == K0
     return [bd for bd in ns["bin_data_list"] if bd is not None]
 
 
@@ -47,7 +52,7 @@ def gmass(e, p):
     return h / h.sum()
 
 
-def fit_one(bd):
+def fit_one(bd, HALF, KS):
     v, C = np.c_[bd["pm1"], bd["pm2"]], bd["cov"]
 
     def nll(p):  # grid-free Gaussian, full per-star covariance
@@ -71,10 +76,16 @@ def fit_one(bd):
     return out
 
 
-if __name__ == "__main__":
-    bins = bins_from_notebook()
+if __name__ == "__main__" and sys.argv[1] == "dump":
+    nb, upto, cut, prefix, half, ks = SETS[sys.argv[2]]
+    pickle.dump({"bins": bins_from_notebook(nb, upto, cut, prefix, ks[0]), "half": half, "K": ks, "set": sys.argv[2]},
+                open(sys.argv[3], "wb"))
+elif __name__ == "__main__":
+    d = pickle.load(open(sys.argv[2], "rb"))
+    HALF, KS, bins = d["half"], d["K"], d["bins"]
+    sys.argv = sys.argv[1:]
     with Pool(int(sys.argv[2]) if len(sys.argv) > 2 else 4) as pool:
-        res = pool.map(fit_one, bins)
+        res = pool.starmap(fit_one, [(bd, HALF, KS) for bd in bins])
     save = {k: np.array([r[k] for r in res]) for k in res[0]}
     save["K"], save["half"] = np.array(KS), HALF
     np.savez(sys.argv[1], **save)
