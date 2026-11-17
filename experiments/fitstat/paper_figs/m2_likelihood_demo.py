@@ -77,9 +77,11 @@ for a, z, lab, ttl in ((ax[0], wa, r"$(d_k/\sigma_k)^2$",
     a.scatter(v[:, 0], v[:, 1], s=3, c="#D55E00", lw=0, alpha=0.8, label=f"{N} measured stars")
     im = a.imshow(np.clip(z, lo, None).T, origin="lower", extent=ext, cmap="Blues",
                   norm=mcolors.LogNorm(vmin=lo, vmax=hi))
-    fig.colorbar(im, ax=a, shrink=0.85, label="stars credited per cell, " + lab, pad=0.02)
+    a.text(0.97, 0.03, lab, transform=a.transAxes, ha="right", va="bottom",
+           bbox=dict(fc="w", ec="none", alpha=0.8, pad=1))
+fig.colorbar(im, ax=ax[:2], shrink=0.5, aspect=30, location="bottom", label="stars credited per cell", pad=0.02)
 print("effective stars: diag sum %.0f, per-star sum %.0f, N %d" % (wa.sum(), wb.sum(), n))
-ax[0].legend(frameon=False, loc="upper left", markerscale=3, handletextpad=0.1)
+ax[0].legend(loc="upper left", markerscale=3, handletextpad=0.1, framealpha=0.8, edgecolor="none")
 for a in ax[:2]:
     a.set_xlim(-60, 60)
     a.set_ylim(-60, 60)
