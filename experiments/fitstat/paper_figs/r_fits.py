@@ -104,8 +104,11 @@ LAB = {"hst_pm": "HST", "gaia_pm": "Gaia"}
 
 
 def ring(eb):
-    """Black outline around the white-faced, colour-edged markers: visible on top of a line of the same colour."""
-    eb[0].set_path_effects([pe.Stroke(linewidth=3.0, foreground="k"), pe.Normal()])
+    """Black rims outside and inside the white-faced, colour-edged markers: visible on top of a line of the same colour."""
+    m = eb[0]
+    m.set_path_effects([pe.Stroke(linewidth=3.0, foreground="k"), pe.Normal()])  # outer rim
+    ms = m.get_markersize() - m.get_markeredgewidth() - 0.6  # inner rim (0.6 pt) touches the colour ring from inside
+    m.axes.plot(*m.get_data(), ls="none", marker=m.get_marker(), ms=ms, mfc="w", mec="k", mew=0.6, zorder=m.get_zorder() + 0.1)
 
 
 def p_muse(a, i, role, note, legend):
