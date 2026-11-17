@@ -83,7 +83,7 @@ if __name__ == "__main__" and sys.argv[1] == "dump":
 elif __name__ == "__main__":
     d = pickle.load(open(sys.argv[2], "rb"))
     HALF, KS, bins = d["half"], d["K"], d["bins"]
-    sys.argv = sys.argv[1:]
+    sys.argv = sys.argv[2:]  # -> [BINS, OUT, NPROC]
     with Pool(int(sys.argv[2]) if len(sys.argv) > 2 else 4) as pool:
         res = pool.starmap(fit_one, [(bd, HALF, KS) for bd in bins])
     save = {k: np.array([r[k] for r in res]) for k in res[0]}
