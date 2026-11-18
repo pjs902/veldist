@@ -1,6 +1,8 @@
 """Paper figure r6: profile of the fit statistic against IMBH mass, diagonal chi2 vs the per-star likelihood.
 
-usage: python r6_imbh_profile_env.py ALL_MODELS.ecsv RESCORE_DIR OLD_PROFILE.npz OUT.pdf [--slides]   (--slides: 16:9)
+usage: python r6_imbh_profile_env.py ALL_MODELS.ecsv RESCORE_DIR OLD_PROFILE.npz OUT.pdf [--slides] [--prod DIR]
+(--slides: 16:9; --prod: overlay the production re-solves DIR/prod_*.npz from prod_one.py, kinematic sets only,
+i.e. the per-star Laplace on MUSE, HST, Gaia plus LVM chi2 at the re-solved weights, relative to their own minimum)
 Each statistic's profile is a smooth lower envelope of the computed models: at each mass a soft minimum of the
 models' statistics with Gaussian weights in log M_IMBH (0.08 dex), so it follows the best models near each mass.
 Grey points: all rescored models.
@@ -67,19 +69,31 @@ def main():
         xs = np.linspace(lm.min(), lm.max(), 300)
         ys = softmin_curve(lm, y, xs)
         y0 = ys.min()
-        a.plot(10 ** xs / 1e3, ys - y0, color=c)
+        a.plot(10 ** xs / 1e3, ys - y0, color=c, label=f"per-star HST at v4 weights ({have.sum()} models)")
         a.scatter(10 ** lm / 1e3, y - y0, s=10, color="0.45", lw=0, zorder=2)
         a.axvspan(1, lim_rv / 1e3, color="0.9", lw=0, zorder=0)
         a.set_ylim(-0.06 * np.percentile(y - y0, 80), np.percentile(y - y0, 80))
         a.set_ylabel(r"$\Delta(-2\ln\mathcal{L})$")
         print(lab, "curve min at %.1fk;" % (10 ** xs[np.argmin(ys)] / 1e3), "best model %.1fk" % (10 ** ex[np.argmin(ey)] / 1e3),
               "envelope:", " ".join(f"{10 ** x / 1e3:.1f}k:{v - y0:.0f}" for x, v in zip(ex, ey)))
+    if "--prod" in sys.argv:
+        import ast
+        P = []
+        for f in glob.glob(f"{sys.argv[sys.argv.index('--prod') + 1]}/prod_*.npz"):
+            z = np.load(f, allow_pickle=True)
+            sets = ast.literal_eval(str(z["sets_new"]))
+            P.append((float(z["m_bh"]), sum(v for k, v in sets.items() if k != "mass")))
+        pm, py = np.array(sorted(P)).T
+        ax[0].plot(pm / 1e3, py - py.min(), "D", ms=7, mfc="w", mec="k", mew=1.2, zorder=4,
+                   label=f"production fit, re-solved ({len(pm)} models)")
+        ax[0].legend(frameon=False, fontsize="small", loc="upper right")
+        print("production:", " ".join(f"{m / 1e3:.1f}k:{v - py.min():.0f}" for m, v in zip(pm, py)))
     ax[0].set_xscale("log")
     ax[0].set_xlim(4.5, 65)
     ax[0].set_xticks([5, 10, 20, 50], ["5", "10", "20", "50"])
     ax[0].set_xticks([], minor=True)
     ax[0].set_xlabel(r"$M_{\rm IMBH}$ [$10^3\,M_\odot$]")
-    ax[0].text(0.02, 0.95, "excluded by\nfast stars", transform=ax[0].transAxes, va="top", fontsize="small",
+    ax[0].text(0.02, 0.03, "excluded by\nfast stars", transform=ax[0].transAxes, va="bottom", fontsize="small",
                color="0.4")
     fig.savefig(sys.argv[4])
     fig.savefig(sys.argv[4].replace(".pdf", ".png"), dpi=200)
