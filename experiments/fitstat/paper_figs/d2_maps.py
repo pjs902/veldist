@@ -17,9 +17,11 @@ from matplotlib.patches import Circle
 PA_KIN = 104.3  # deg, N through E (omegaCen dynamite_frame.PA_KIN): pm1 along it, pm2 along +90 deg E->N
 
 
-def pm_moments(path):
+def pm_moments(path, H=None):
+    """H: (n_ap, K, K) histograms to use instead of the file's PM_2dhist (e.g. a model's)."""
     z = np.load(path)
-    H, K, half = z["PM_2dhist"], z["PM_2dhist"].shape[1], float(z["vxrange"])
+    H = z["PM_2dhist"] if H is None else np.asarray(H).reshape(z["PM_2dhist"].shape)
+    K, half = H.shape[1], float(z["vxrange"])
     h = 2 * half / K
     c = np.linspace(-half + h / 2, half - h / 2, K)
     w = H / H.sum((1, 2), keepdims=True)
