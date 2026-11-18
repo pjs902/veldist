@@ -157,3 +157,10 @@ Plan and analysis: `docs/laplace-solve-speedup-analysis.md`. Scripts: `experimen
   E = 0.0040 (HST), 0.0022 (Gaia). Each read took 33-34 min at load ~180 (4 threads).
   First run (m4row) found a real bug: zero-A rows with b != 0 (cells no orbit reaches) were dropped
   with their b; fixed in f2c4780 with a test.
+- M1 (`m1_syrk_bench.py`, one 2048-row block into a 45k x 45k Gram, best of 2, load ~160-165, ENV_mkl
+  MKL): dsyrk 147 / 132 / 302 GFLOP/s at 4 / 8 / 16 threads (37 / 17 / 19 per thread); ssyrk 156 / 298 /
+  527. The first repeat of each is slower (first touch of G's pages). Noisy under contention (8 threads
+  slower than 4 for dsyrk), but 16 threads give ~2x over 4 and float32 ~1.75x at 16 threads.
+  One production Gram build (~1.5e15 flop) is ~2.8 h of dsyrk at 4 threads at the measured rate, close to
+  the ~4.5 h observed in the six-at-once production runs. With row-space rows (3.8x) and 16 threads (2x):
+  ~20-25 min of dsyrk per build.
