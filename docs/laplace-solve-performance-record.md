@@ -139,3 +139,21 @@ relB6 at 5 passes after 26 h and still running.
   histograms at v4, E1 and prod1 weights; keys like `hst_pm|model|prod_orblib_001_001_ml02.96:w_new`,
   shape (1406, 529); check its normalisation against M_a before using).
   The orbit library itself is only on the node (45k orbits, ~12 GB bzip2 per model).
+
+## 6. Node checks of the speedup plan (2026-11-18 evening)
+
+Plan and analysis: `docs/laplace-solve-speedup-analysis.md`. Scripts: `experiments/fitstat/speed/`.
+
+- L1 (support overlap, E1 outputs, 9 models): pass-1 support 13.8k-17.6k of 45k orbits; ~1% of the
+  pass-2 support is new and carries 0.25-0.53% of the pass-2 weight.
+- M3/M6 (`m3_support.py`, one rhs-only read of prod1 = orblib_001_001 at `w_new`, 33 min at load ~185):
+  orbits with any non-zero cell per aperture, median (p10-p90): MUSE 0.35, HST 0.335 (0.29-0.43),
+  Gaia 0.19 (0.16-0.23); non-zero orbits are scattered (median ~120 runs per aperture). Star-row rank:
+  MUSE 18/21, HST 160/529, Gaia 285/289. Dropped-ridge share of an orbit's Laplace diagonal: max 5e-5
+  (HST), 2e-12 (Gaia). Per-set statistic at `w_new` reproduces prod1 `sets_new` exactly.
+- M4 (`m4_rowspace.py`, fork f2c4780, `pm_laplace_rowspace_kappa: 10`): rows reaching dsyrk
+  HST 174,805 / 745,180, Gaia 16,015 / 43,210; all rows 210,793 / 808,363 (3.83x fewer, so ~3.8x less
+  dsyrk work). The chi2 read gives prod1's per-set values to <= 3e-16 relative; reported bound
+  E = 0.0040 (HST), 0.0022 (Gaia). Each read took 33-34 min at load ~180 (4 threads).
+  First run (m4row) found a real bug: zero-A rows with b != 0 (cells no orbit reaches) were dropped
+  with their b; fixed in f2c4780 with a test.
