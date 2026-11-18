@@ -40,21 +40,23 @@ ws = wsmod.NNLS(config=c, model=model)
 assert ws.gram_blockwise
 ws.settings["pm_laplace_rowspace_kappa"] = float(kappa)
 
-used = {}
+used, kept = {}, {}
 _add = wsmod.NormalEquationAccumulator.add
 
 
 def add(self, A, b):
     _add(self, A, b)
     used[self.tag] = used.get(self.tag, 0) + int(np.shape(A)[0])  # rows offered
+    kept[self.tag] = kept.get(self.tag, 0) + int(np.count_nonzero(np.asarray(A).any(axis=1)))  # rows reaching dsyrk
 
 
 wsmod.NormalEquationAccumulator.add = add
 t0 = time.time()
 gp = ws.construct_gram_and_rhs_blockwise(orblib, rhs_only=True)
-acc_rows = ws._lap_acc.rows_used if ws._lap_acc is not None else None
+acc_rows = dict(kept)
 t_read = time.time() - t0
-print(f"reduced read {t_read:.0f} s; rows offered by tag {used}; rows used {acc_rows}", flush=True)
+print(f"reduced read {t_read:.0f} s; rows offered by tag {used}; rows kept (non-zero) {kept}", flush=True)
+used.clear(); kept.clear()
 
 t0 = time.time()
 gp = ws.construct_gram_and_rhs_blockwise(orblib, rhs_only=True, chi2_w=w)
