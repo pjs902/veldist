@@ -1,6 +1,6 @@
 """Paper figure r10: the fitting statistic changes the inferred anisotropy. sigma_T/sigma_R against R for the data and
-for one model (orbit library orblib_001_001) solved under two statistics: diagonal chi2 on every set (v4) and the
-per-star HST likelihood (E1; MUSE and Gaia still diagonal).
+for orbit libraries solved under different statistics: diagonal chi2 on every set (v4), the per-star HST likelihood
+(E1), and the production statistic (per-star on MUSE, HST, Gaia). Main model thick, --also models thin.
 
 usage: python r10_aniso.py PACK_DIR MODEL_ANISO.npz TAG OUT.pdf [--slides] [--also MODEL_ANISO.npz ...]
 --also: other models (thin lines), each at v4 and at its one other weight tag, to show the change is not one model's.
@@ -21,7 +21,7 @@ P, Z, TAG, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), sys.argv[3], sys.argv[
 SLIDES = "--slides" in sys.argv
 ALSO = sys.argv[sys.argv.index("--also") + 1:] if "--also" in sys.argv else []
 ALSO = [(np.load(f), next(k.split("|")[1] for k in np.load(f).files if k.split("|")[1] != "v4")) for f in ALSO]
-LABEL = "model, per-star likelihood" if TAG.startswith("prod") else "model, per-star HST"
+LABEL = "per-star, MUSE+HST+Gaia (production)" if TAG.startswith("prod") else "model, per-star HST"
 COL = {"hst_pm": "#0072B2", "gaia_pm": "#D55E00"}
 LAB = {"hst_pm": "HST", "gaia_pm": "Gaia"}
 
@@ -38,14 +38,16 @@ for s, f in (("hst_pm", "hst"), ("gaia_pm", "gaia")):
     r, m, e = mean_err(d["R"], d["st"] / d["sr"], g)
     ax.errorbar(r, m, e, ls="none", marker="o", color=COL[s], mec=COL[s], mfc="w", label=f"{LAB[s]} data", zorder=3)
     ax.plot(r, mean_err(d["R"], ratio("v4"), g)[1], color="0.4", ls="--",
-            label=r"model, diagonal $\chi^2$" if s == "hst_pm" else None)
+            label=r"diagonal $\chi^2$" + (f" ({len(ALSO)} models)" if ALSO else "") if s == "hst_pm" else None)
     ax.plot(r, mean_err(d["R"], ratio(TAG), g)[1], color="k",
             label=LABEL if s == "hst_pm" else None)
     for Zo, to in ALSO:
         ax.plot(r, mean_err(d["R"], ratio("v4", Zo), g)[1], color="0.4", ls="--", lw=0.6, alpha=0.7)
         ax.plot(r, mean_err(d["R"], ratio(to, Zo), g)[1], color="k", lw=0.6, alpha=0.7,
-                label="other models" if s == "hst_pm" and to == ALSO[0][1] else None)
+                label=f"per-star HST only ({len(ALSO)} models)" if s == "hst_pm" and to == ALSO[0][1] else None)
 ax.axhline(1, color="0.7", lw=0.5)
+if ALSO:
+    ax.set_ylim(0.45, None)  # room for the legend below the curves
 ax.set_xscale("log")
 ax.set_xlabel(r"$R$ [arcsec]")
 ax.set_ylabel(r"$\sigma_T/\sigma_R$")
