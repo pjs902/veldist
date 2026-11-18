@@ -1,6 +1,7 @@
 """Paper figure r11: data, model and data - model maps for one dataset, on the sky without radial stretch.
 
 usage: python r11_dataset_maps.py PACK_DIR MODEL_HISTS.npz TAG SET OUT.pdf      SET = veldist | hst_pm | gaia_pm
+       python r11_dataset_maps.py PACK_DIR R1_RESID.npz - lvm OUT.pdf           (LVM: mean velocity from the extract_resid layout)
 MODEL_HISTS.npz from experiments/fitstat/model_hists.py ('{set}|data', '{set}|model|{TAG}', n_ap x cells). Data and
 model moments are computed the same way from the histograms (unit-sum per aperture; Sheppard-corrected dispersions):
 MUSE v_LOS and sigma_LOS from the LOSVD cells (pack ecsv meta 'vcent'); PM mu_T (positive along the rotation), mu_R,
@@ -18,8 +19,8 @@ from astropy.table import Table
 from d2_maps import binmap, fill_holes, pm_moments
 
 P, Z, TAG, SET, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-STEM = {"veldist": "veldist", "hst_pm": "hst_veldist", "gaia_pm": "gaia_veldist"}[SET]
-NAME = {"veldist": "MUSE", "hst_pm": r"\textit{HST}", "gaia_pm": r"\textit{Gaia}"}[SET]
+STEM = {"veldist": "veldist", "hst_pm": "hst_veldist", "gaia_pm": "gaia_veldist", "lvm": "lvm"}[SET]
+NAME = {"veldist": "MUSE", "hst_pm": r"\textit{HST}", "gaia_pm": r"\textit{Gaia}", "lvm": "LVM"}[SET]
 
 
 def muse_moments(H):
@@ -37,8 +38,11 @@ def moments(H):
     return pm_moments(P / f"{STEM}_pm_2dhist.npz", H)
 
 
-D, M = moments(Z[f"{SET}|data"]), moments(Z[f"{SET}|model|{TAG}"])
-Q = ([("v", r"v_{\rm LOS}"), ("s", r"\sigma_{\rm LOS}")] if SET == "veldist" else
+if SET == "lvm":  # only the mean velocity is fit for LVM
+    D, M = {"v": Z["lvm_data_v"]}, {"v": Z["lvm_model_v"]}
+else:
+    D, M = moments(Z[f"{SET}|data"]), moments(Z[f"{SET}|model|{TAG}"])
+Q = ([("v", r"v_{\rm LOS}")] if SET == "lvm" else [("v", r"v_{\rm LOS}"), ("s", r"\sigma_{\rm LOS}")] if SET == "veldist" else
      [("mt", r"\mu_T"), ("mr", r"\mu_R"), ("st", r"\sigma_T"), ("sr", r"\sigma_R")])
 xe, ye, b = binmap(P, STEM)
 b = fill_holes(b)
