@@ -8,7 +8,7 @@ well the fitted orbit weights reproduce the proper motions that were not fit.
 - DYNAMITE fork `feature/pm-fit-statistic`, setting `fit_exclude_sets: [hst_pm, gaia_pm]` (33ab210): the PM sets
   are not read and add no kinematic or projected-mass rows. Fit = MUSE (per-star Laplace, one re-expansion) + LVM
   (diagonal chi2) + the mass constraints, production ridge `ridge_lambda: 0.03` unless stated.
-- Driver `experiments/fitstat/los_only.py`: LOS-only solve, then one read with every set at the LOS-only weights;
+- Driver `experiments/fitstat/exclude_predict.py` (was los_only.py): LOS-only solve, then one read with every set at the LOS-only weights;
   the PM statistic there is the prediction (per-star Laplace about the data, the joint fit's own statistic).
   Profiles: `experiments/fitstat/profile_compare.py` on `model_hists.py` output.
 - The six production libraries (the prod re-solves of the v4 grid, each its own potential and IMBH mass).
