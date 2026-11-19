@@ -36,17 +36,10 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   (f253678..9835e9c); analysis `docs/laplace-solve-speedup-analysis.md`.
 - [RUNNING] s1a node acceptance run of A+B+D1 (`experiments/fitstat/speed/s1_resolve.py`): chi2 within 0.5 of
   prod1, E < 0.05, gap <= 0.01. B already verified on real data (15.5-min read reproduces prod1).
-- [RUNNING] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `fit_exclude_sets` (fork 33ab210),
-  `experiments/fitstat/los_only.py`, node `$W/losonly/`. los1 (orblib_001_001, 2.0e4): LOS-only solve 31 min;
-  MUSE 708 / LVM 1212 (joint 557 / 1655); predicted HST 56 972, Gaia 4365 (joint 10 994 / 1483). los2-4 and the
-  model histograms at w_los: LOS-only predicts HST sT/sR ~1.0 at 260" (data 0.87), the Gaia sT/sR gradient
-  reversed (1.12 -> 0.85 vs data 0.88 -> 1.05), outer Gaia rotation 0.4 vs 1.8 km/s; but MUSE sigma at 21" is 17.1
-  (data 20.1, joint 18.5): ridge suspected. Ridge scan 0.003 / 0.0003 on 001_001 running (los1r*); los2b-4b
-  (000_002, 002_000, 004_005) at ridge 0.03 done: LOS-only MUSE+LVM 1887 / 1942 / 1920 / 1829 at M_IMBH 10.7k /
-  14.2k / 20.0k / 34.5k (joint fit 2143 / 2145 / 2212 / 2116); predicted HST 45k / 70k / 57k / 81k (joint
-  11.7k / 12.5k / 11.0k / 13.0k), Gaia 3.8k / 5.2k / 4.4k / 6.2k (joint 1.6k / 1.8k / 1.5k / 1.7k). LOS alone
-  ranks the potentials differently (best 34.5k) and predicts the PMs 3-6x worse; ridge dependence pending.
-  002_006, 003_006 held (node load). Figure `figs/los_only_001_001.png`.
+- [DONE] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `docs/los-only-prediction.md`. LOS data do not predict
+  the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS
+  better and predicts PMs worse; LOS-only IMBH ranking flat 10.7k-56.4k.
+- [ ] LOS-only at ridge 0.003 for all six libraries (ranking vs ridge); exclude-HST-only and exclude-Gaia-only.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
 - [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
   relC6 (relative HST, no rotation rows) done 11-19 01:12 local, 4 vp rounds, 33.4 h. On prod1's footing
