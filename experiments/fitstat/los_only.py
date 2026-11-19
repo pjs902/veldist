@@ -1,6 +1,9 @@
 """LOS-only fit of one model, then the proper motions predicted (the extragalactic case; Kranjcevic / Hogg).
 
-    python los_only.py PRIV_CONFIG MODEL_DIRECTORY PROD.npz OUT.npz
+    python los_only.py PRIV_CONFIG MODEL_DIRECTORY PROD.npz OUT.npz [RIDGE_LAMBDA]
+
+RIDGE_LAMBDA overrides the config's ridge_lambda (0.03): with only the LOS rows the ridge dominates many more
+directions than in the joint fit, so the prediction has to be checked against it.
 
 1. ``NNLS._solve_laplace`` with ``fit_exclude_sets: [hst_pm, gaia_pm]``: the weights are fit to MUSE (per-star
    Laplace, one re-expansion) and LVM (diagonal chi2) plus the mass constraints only. No files are written in the
@@ -25,6 +28,7 @@ import dynamite as dyn  # noqa: E402
 from dynamite import weight_solvers as wsmod  # noqa: E402
 
 cfg, mdir, prod_path, out_path = sys.argv[1:5]
+ridge = float(sys.argv[5]) if len(sys.argv) > 5 else None
 os.chdir(Path(cfg).parent)
 c = dyn.config_reader.Configuration(cfg, reset_logging=True, user_logfile=False, reset_existing_output=False)
 rows = [i for i, d in enumerate(c.all_models.table["directory"]) if d.rstrip("/") == mdir.rstrip("/")]
@@ -36,6 +40,9 @@ assert orblib._orblib_marker_matches_parset()
 kin = c.system.get_unique_triaxial_visible_component().kinematic_data
 ws = wsmod.NNLS(config=c, model=model)
 assert ws.gram_blockwise and ws.stream_reads
+if ridge is not None:
+    ws.ridge_lambda = ridge
+print(f"ridge_lambda {ws.ridge_lambda}", flush=True)
 prod = np.load(prod_path)
 sets_joint = ast.literal_eval(str(prod["sets_new"]))
 timing = {}
@@ -59,4 +66,4 @@ sets["mass"] = float((gp.row0_vec @ w - gp.b0) ** 2 + mass_r2.sum())
 print(f"at w_los: {sets}\njoint fit: {sets_joint}\nd (los - joint): "
       f"{ {k: sets[k] - sets_joint[k] for k in sets_joint if k in sets} }", flush=True)
 np.savez(out_path, directory=mdir, w_los=w, w_joint=np.asarray(prod["w_new"], float), m_bh=prod["m_bh"],
-         sets_los=str(sets), sets_joint=str(sets_joint), timing=str(timing))
+         sets_los=str(sets), sets_joint=str(sets_joint), timing=str(timing), ridge_lambda=ws.ridge_lambda)
