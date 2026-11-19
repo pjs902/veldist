@@ -191,3 +191,15 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
   took 33-34 min at similar load). Per set against prod1 `sets_new`: MUSE 557.23437907 vs ...881 (rel 5e-10),
   HST 10994.4758635 vs ...4758616 (rel 2e-10), LVM identical, Gaia 1482.64493681 vs ...68526 (rel 3e-11).
   E = 0.0040 (HST), 0.0022 (Gaia), as M4.
+- **s1a result (A + B + D1, kappa 10, FRAC 0.5, 4 threads, load 140-200): passes.** Solve 4.01 h (prod1 14.3 h
+  at the old code, six solves at once; 3.6x). Per set against prod1: MUSE -0.0000, HST +0.0003, LVM +0.0001,
+  Gaia +0.0004, mass -0.0005; weights rel L1 difference 3e-6, same support (16 960 orbits). E = 0.0040 (HST),
+  0.0022 (Gaia). Timeline (local): pass 1 (row-space build + ADMM 363 it) ~1.5 h; working-set pass 2 at m = 22 500
+  (build + ADMM 301 it) 49 min; final read with the pass-2 gradient 16 min -> 9 violators outside S; round 2 at
+  m = 22 509: rebuild + ADMM + final read 66 min, no violator, gap 0. Final-read profile 17 min (prepare 9.3,
+  group reads 4.9). Round 1's logged bound (2 M max(-gamma) = 11 195) is the loose first-order bound; fork
+  08d6cdc adds the strong-convexity bound from the ridge and gates on the smaller.
+- Where the 4 h go now: pass-1 build (~1.4 h; dsyrk on 211k rows at 4 threads) is the largest piece; then the
+  pass-2 builds (49 + ~50 min) and three ~16-min reads. Next levers: 16 threads (M1: ~2x on dsyrk), skipping the
+  second working-set round (a margin of the round-1 violators' kind: FRAC slightly larger, or adding the
+  smallest-gamma orbits up front), and a working-set pass 1 (D2).
