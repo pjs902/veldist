@@ -39,6 +39,9 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [ ] **After the speed work (user 2026-11-19): re-solve all finished v4 models (the 50 of fig r6) AND the 24 profile-fill models (user: both) with the full
   per-star (Laplace/Fisher covariance) statistic on every veldist set (MUSE, HST, Gaia; LVM has no star rows and
   stays diagonal)**, settings as the accepted s1 runs. Replaces the rescored-at-v4-weights profile in r6.
+  READY (11-19): `$W/regrid/` set up by `regrid_setup.sh` (74 private copies, all orblib markers match, config =
+  prodone + kappa 10 + FRAC 0.6); lanes `regrid/lane{1,2,3}.txt` (mass-interleaved); runner `regrid_lane.sh W LIST FORK`.
+  Launch after s1d validates 6aa90a7 (and E, if taken). ~1.1 h/model at 16 threads.
 - [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
   second working-set round (log violators' dual rank first); D2 (working-set pass 1) after the 16-thread profile.
   [DONE] s1b: passes, 2.13 h at 16 threads; FRAC 0.6 avoids round 2; copy fixes 3a4bd95, 2636fae.
