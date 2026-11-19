@@ -46,8 +46,12 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   relC6 (relative HST, no rotation rows) done 11-19 01:12 local, 4 vp rounds, 33.4 h. On prod1's footing
   (eval_weights, $W/relprod): MUSE 524 / HST-addback 13 179 / LVM 1694 / Gaia 1502 (prod1 557 / 10 994 / 1655 /
   1483). HST anisotropy as prod1; rotation too fast (HST muT 8.0 vs 6.9 at 260", Gaia 7.9 -> 2.7 vs 5.8 -> 1.8) and
-  Gaia more radial (0.86 -> 0.97): relative HST leaves the rotation free. `figs/relC6_vs_prod1.png`. relB6 (with
-  rotation rows) still at round 4.
+  Gaia more radial (0.86 -> 0.97): relative HST leaves the rotation free. `figs/relC6_vs_prod1.png`.
+  relB6 (relative HST + 10 rotation rows, pass0 normalisation) done 11-19 04:10 local, 5 rounds, 37.5 h: weights
+  within 0.09% (L1) of relC6, prod1-footing sets 524 / 13 162 / 1694 / 1502, same profiles to 0.01
+  (`figs/relB6_vs_prod1.png`). The rotation rows do not bind: errors 0.56-1.1 km/s per ring, chi2 12.3 for 10 rows
+  at the relative solution, which already rotates ~1 km/s faster than the absolute HST means. Addback vs relative =
+  how much to trust the absolute HST mean motions (user decision; paper sec. 4).
 - [ ] Open border cells in the 2D design matrix (needed by every per-star option).
 
 ### 2026-10-14 code audit (`AUDIT_2026-10-14.md`)
