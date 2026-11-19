@@ -207,3 +207,16 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
   fork 6306848 (strong-convexity gap gate; the working-set log now gives each violator's selection rank and the most
   negative gamma, to size FRAC so that round 2 is not needed). Node load 117 at launch (s1a: 140-200), e1s1-3 running.
   Compare per phase (`speed/s1b_profile.json` vs `s1a_profile.json`), not wall-clock totals.
+- **s1b so far (local times):** read at prod1 `w_new` 14.6 min (s1a 15.5: the read does not use threads) and
+  reproduces prod1. Pass-1 build 42 min (s1a ~85: 16 threads halve it), ADMM 363 it; working-set pass 2 at
+  m = 22 500: build 27 min (s1a 49), ADMM 301 it, final read 14 min. Round 1: 9 violators at selection ranks
+  22 742-24 905 (m = 22 500, n = 45 000), most negative gamma -5597, gap_sc 0.42 > 0.01, so round 2 ran
+  (build 25 min, ADMM 263 it). **FRAC 0.56 (m >= 24 906) would have skipped round 2**; m^2 makes that build
+  ~23% dearer (~6 min) against a ~40 min second round, so use FRAC 0.6.
+- **py-spy of the round-2 build** (`$W/prof/s1b_ws2_build.txt`, 15 min, 10 Hz): ~68% single-threaded copies,
+  dsyrk not among the top lines. `NormalEquationAccumulator.add` dropping zero rows (`asfortranarray(A[keep])`,
+  two copies) 27%; the per-aperture histogram gather `orb[:, a]` (stride n_ap: the PM rebin output was
+  orbit-major) 22%; the working-set column gather (`asfortranarray(A[:, cols])`, two copies) 19%.
+  Fork 3a4bd95: one selection copy for rows and columns (`_select_rows_cols`; every other term on the whole
+  block) and an aperture-major PM rebin (contraction order with (x', y') stores). Laptop: selection 2.6x
+  faster; rebin + 128 per-aperture reads 10.9 -> 5.0 s. To be measured on the node in the next run.
