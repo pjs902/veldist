@@ -1,6 +1,6 @@
-"""LOS-only fit vs joint fit: radial profiles of the proper-motion moments the LOS-only weights predict.
+"""Radial moment profiles of two weight vectors against the data (e.g. LOS-only or relative-HST fit vs the joint fit).
 
-    python los_only_compare.py PACK_DIR MODEL_HISTS.npz LOS_TAG JOINT_TAG OUT.png [LABEL]
+    python profile_compare.py PACK_DIR MODEL_HISTS.npz LOS_TAG JOINT_TAG OUT.png [LABEL]
 
 LABEL names the LOS_TAG curve (default 'LOS-only fit'; e.g. 'relative HST' for a relative-PM solve).
 
