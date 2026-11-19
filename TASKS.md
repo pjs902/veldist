@@ -42,7 +42,11 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   model histograms at w_los: LOS-only predicts HST sT/sR ~1.0 at 260" (data 0.87), the Gaia sT/sR gradient
   reversed (1.12 -> 0.85 vs data 0.88 -> 1.05), outer Gaia rotation 0.4 vs 1.8 km/s; but MUSE sigma at 21" is 17.1
   (data 20.1, joint 18.5): ridge suspected. Ridge scan 0.003 / 0.0003 on 001_001 running (los1r*); los2b-4b
-  (000_002, 002_000, 004_005) at ridge 0.03 running; 002_006, 003_006 next. Figure `figs/los_only_001_001.png`.
+  (000_002, 002_000, 004_005) at ridge 0.03 done: LOS-only MUSE+LVM 1887 / 1942 / 1920 / 1829 at M_IMBH 10.7k /
+  14.2k / 20.0k / 34.5k (joint fit 2143 / 2145 / 2212 / 2116); predicted HST 45k / 70k / 57k / 81k (joint
+  11.7k / 12.5k / 11.0k / 13.0k), Gaia 3.8k / 5.2k / 4.4k / 6.2k (joint 1.6k / 1.8k / 1.5k / 1.7k). LOS alone
+  ranks the potentials differently (best 34.5k) and predicts the PMs 3-6x worse; ridge dependence pending.
+  002_006, 003_006 held (node load). Figure `figs/los_only_001_001.png`.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
 - [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
 - [ ] Open border cells in the 2D design matrix (needed by every per-star option).
