@@ -64,6 +64,20 @@ Profiles for 001_001 at ridge 0.03 (`experiments/fitstat/figs/los_only_001_001.p
    not reproduce the joint fit's choice; the order of the middle libraries changes with the ridge.
 4. At ridge 0.003 every library predicts the PMs worse than at 0.03 (HST 88k-176k, Gaia 5.0k-8.8k), as for 001_001.
 
+## HST held out (MUSE + LVM + Gaia fit, HST predicted)
+
+Same driver with `EXCLUDE = hst_pm`, orblib_001_001, ridge 0.03 (node `$W/holdout/`; solve 53 min):
+
+| fit | MUSE | LVM | Gaia | HST |
+|---|---|---|---|---|
+| joint (all four) | 557 | 1655 | 1483 | 10 994 |
+| HST held out | 749 | 1322 | 1480 | 37 819 (predicted) |
+| LOS only | 708 | 1212 | 4365 (predicted) | 56 972 (predicted) |
+
+Gaia narrows the HST prediction (57k -> 38k) but it stays 3.4x the joint fit's (the v4 diagonal grid weights give
+~13.8k on this statistic): the inner proper-motion structure is not implied by the LOS data plus the outer PMs.
+
 ## Open
 
-- The same exclude-and-predict test for HST alone (fit MUSE+LVM+Gaia, predict HST) and for Gaia alone.
+- Profiles of the HST hold-out prediction (model_hists running); Gaia held out (needs the HST rows: ~4 h with
+  the speedup settings).
