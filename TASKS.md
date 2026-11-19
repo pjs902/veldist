@@ -38,7 +38,7 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   E 0.004 / 0.002, working-set gap 0 after one violator round). Record sec. 7.
 - [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
   second working-set round (log violators' dual rank first); D2 (working-set pass 1) after the 16-thread profile.
-  [RUNNING] s1b: 16 threads + violator-rank log (fork 6306848), launched 11-19 09:48 local.
+  [DONE] s1b: passes, 2.13 h at 16 threads; FRAC 0.6 avoids round 2; copy fixes 3a4bd95, 2636fae. Next: compact rows, E.
 - [DONE] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `docs/los-only-prediction.md`. LOS data do not predict
   the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS
   better and predicts PMs worse; LOS-only IMBH ranking flat 10.7k-56.4k.

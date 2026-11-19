@@ -213,10 +213,20 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
   22 742-24 905 (m = 22 500, n = 45 000), most negative gamma -5597, gap_sc 0.42 > 0.01, so round 2 ran
   (build 25 min, ADMM 263 it). **FRAC 0.56 (m >= 24 906) would have skipped round 2**; m^2 makes that build
   ~23% dearer (~6 min) against a ~40 min second round, so use FRAC 0.6.
-- **py-spy of the round-2 build** (`$W/prof/s1b_ws2_build.txt`, 15 min, 10 Hz): ~68% single-threaded copies,
-  dsyrk not among the top lines. `NormalEquationAccumulator.add` dropping zero rows (`asfortranarray(A[keep])`,
-  two copies) 27%; the per-aperture histogram gather `orb[:, a]` (stride n_ap: the PM rebin output was
-  orbit-major) 22%; the working-set column gather (`asfortranarray(A[:, cols])`, two copies) 19%.
-  Fork 3a4bd95: one selection copy for rows and columns (`_select_rows_cols`; every other term on the whole
-  block) and an aperture-major PM rebin (contraction order with (x', y') stores). Laptop: selection 2.6x
-  faster; rebin + 128 per-aperture reads 10.9 -> 5.0 s. To be measured on the node in the next run.
+- **s1b result: passes.** Solve 2.13 h (s1a 4.01 h at 4 threads). Per set against prod1: MUSE -0.0000, HST
+  +0.0003, LVM +0.0001, Gaia +0.0004, mass -0.0005; E 0.0040 / 0.0022; round 2 at m = 22 509: no violator,
+  gap 0 (gap_sc 1.5e-9).
+- **py-spy of the round-2 build** (`$W/prof/s1b_ws2_build.txt`, 15 min, 10 Hz; local copy
+  `experiments/fitstat/work/speed_prof/`), per HST group of 128 apertures (~6.9 groups in the window): zero-row
+  drop in `NormalEquationAccumulator.add` (`asfortranarray(A[keep])`, two float64 copies) 27%; per-aperture
+  gather `orb[:, a]` 22%; **dsyrk 19%** (a multi-line call is reported at its first line: an earlier note here
+  called this the column gather, which is 0.5%); reads ~12%; other Laplace maths ~13%. No rebin frames: this
+  library takes the no-rebin branch of `ProperMotions.transform_orblib_to_observables`, so the reader's
+  (orbit, vx, vy, aperture) layout makes `orb[:, a]` a stride-n_ap gather.
+- Fixes in the fork: 3a4bd95 one selection copy for the dsyrk (`_select_rows_cols`; every other term on the
+  whole block; laptop 2.6x on the copy) and an aperture-major PM rebin (helps only the rebin branch);
+  2636fae `_aperture_major`: one chunked transpose per group before the aperture loop (both branches; laptop
+  scaled to 45k orbits 394 -> 91 ms per aperture; +12 GB per group transient) and one `hold_decompressed` for
+  the whole Laplace solve (each PM archive was decompressed per set per build: 44-88 s each time; ~12 GB of
+  held files). Remaining ranked levers (Fable review): compact Laplace rows (no zero padding, no rows in the
+  cell read; ~8-10 min), float32 ssyrk (E; ~10 min, to be measured on signed rows), then D2 / C.
