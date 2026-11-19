@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).parent / "paper_figs"))
 from d2_maps import pm_moments  # noqa: E402
 
 P, Z, LOS, JNT, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-TAGS = [("data", "data", "k"), ("joint fit", f"model|{JNT}", "C0"), ("LOS-only fit", f"model|{LOS}", "C3")]
+TAGS = [("data", "data", "k"), ("joint fit", f"model|{JNT}", "C1"), ("LOS-only fit", f"model|{LOS}", "C2")]
 
 
 def annuli(R, vals, n=9):
@@ -62,6 +62,7 @@ ax[2, 0].set_ylabel(r"MUSE median $|v_{\rm LOS}|$ [km s$^{-1}$]")
 ax[2, 1].set_ylabel(r"MUSE $\sigma_{\rm LOS}$ [km s$^{-1}$]")
 for c in (0, 1):
     ax[2, c].set_xscale("log")
+    ax[2, c].xaxis.set_minor_formatter(plt.NullFormatter())
 for c in (2, 3):
     ax[2, c].axis("off")
 for a in ax[1]:
