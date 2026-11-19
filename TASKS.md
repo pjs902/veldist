@@ -40,7 +40,8 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [DONE] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `docs/los-only-prediction.md`. LOS data do not predict
   the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS
   better and predicts PMs worse; LOS-only IMBH ranking flat 10.7k-56.4k.
-- [ ] LOS-only at ridge 0.003 for all six libraries (ranking vs ridge); exclude-HST-only and exclude-Gaia-only.
+- [DONE] LOS-only at ridge 0.003, all six libraries: ranking still flat 10.7k-56.4k (best 34.5k), PM prediction worse.
+- [ ] Exclude-HST-only and exclude-Gaia-only predictions.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
 - [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
   relC6 (relative HST, no rotation rows) done 11-19 01:12 local, 4 vp rounds, 33.4 h. On prod1's footing

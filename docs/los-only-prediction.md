@@ -30,6 +30,17 @@ Statistic per set (lower is better); "joint" = the production fit of the same li
 | 34 486 | 004_005 | 0.03 | 1829 (806 / 1023) | 2116 | 80 843 / 13 022 | 6247 / 1719 |
 | 56 368 | 002_006 | 0.03 | 1923 (857 / 1067) | 2207 | 67 509 / 16 260 | 4909 / 2085 |
 
+Ridge 0.003 at every library:
+
+| M_IMBH | library | ridge | MUSE+LVM, LOS-only (MUSE / LVM) | MUSE+LVM, joint | HST predicted / joint | Gaia predicted / joint |
+|---|---|---|---|---|---|---|
+| 5 513 | 003_006 | 0.003 | 1832 (1232 / 600) | 2130 | 175 481 / 15 742 | 7682 / 1818 |
+| 10 676 | 002_000 | 0.003 | 1295 (500 / 795) | 2143 | 88 448 / 11 664 | 5006 / 1607 |
+| 14 159 | 000_002 | 0.003 | 1359 (646 / 713) | 2145 | 111 933 / 12 516 | 6842 / 1763 |
+| 20 000 | 001_001 | 0.003 | 1356 (562 / 794) | 2212 | 94 151 / 10 994 | 5377 / 1483 |
+| 34 486 | 004_005 | 0.003 | 1255 (602 / 653) | 2116 | 119 533 / 13 022 | 8786 / 1719 |
+| 56 368 | 002_006 | 0.003 | 1271 (597 / 674) | 2207 | 121 559 / 16 260 | 6932 / 2085 |
+
 \* ADMM stopped at 4000 iterations without reaching its tolerance (126 min); the trend is the point.
 
 Profiles for 001_001 at ridge 0.03 (`experiments/fitstat/figs/los_only_001_001.png`):
@@ -47,11 +58,12 @@ Profiles for 001_001 at ridge 0.03 (`experiments/fitstat/figs/los_only_001_001.p
    better (MUSE 562, as good as the joint fit's 557; LVM 794) and predicts the PMs worse (HST 94k, Gaia 5.4k);
    another tenfold (not converged) continues the trend (MUSE 536, LVM 653; HST 123k, Gaia 5.7k): the orbit-weight
    directions the PMs constrain are left to the ridge.
-3. The LOS-only ranking of the potentials is flat from 10.7k to 56.4k (MUSE+LVM 1829-1942) and rejects only 5.5k
-   (2371), while the joint fit prefers 20.0k by 700+ over its neighbours. At this ridge the LOS data alone do not
-   constrain the IMBH mass; the ranking itself is ridge dependent (one library tested at a second ridge).
+3. The LOS-only ranking of the potentials is nearly flat from 10.7k to 56.4k and rejects only 5.5k, at both
+   ridges: 1829-1942 at 0.03 (best 34.5k), 1255-1359 at 0.003 (best 34.5k, then 56.4k, 10.7k; 20.0k fourth). The
+   joint fit prefers 20.0k by 700+ over its neighbours. The LOS data alone weakly favour the heavier IMBHs and do
+   not reproduce the joint fit's choice; the order of the middle libraries changes with the ridge.
+4. At ridge 0.003 every library predicts the PMs worse than at 0.03 (HST 88k-176k, Gaia 5.0k-8.8k), as for 001_001.
 
 ## Open
 
-- Ridge dependence of the LOS-only IMBH ranking (all six libraries at 0.003).
 - The same exclude-and-predict test for HST alone (fit MUSE+LVM+Gaia, predict HST) and for Gaia alone.
