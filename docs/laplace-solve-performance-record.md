@@ -164,3 +164,26 @@ Plan and analysis: `docs/laplace-solve-speedup-analysis.md`. Scripts: `experimen
   One production Gram build (~1.5e15 flop) is ~2.8 h of dsyrk at 4 threads at the measured rate, close to
   the ~4.5 h observed in the six-at-once production runs. With row-space rows (3.8x) and 16 threads (2x):
   ~20-25 min of dsyrk per build.
+
+## 7. Options B and D1 implemented (2026-11-18 night)
+
+Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). Tests:
+`dev_tests/test_laplace_fused.py` (6), `dev_tests/test_laplace_working_set.py` (6); full suite unchanged
+(same 45 pre-existing failures).
+
+- **B, always on.** Each re-expansion pass's build forms `h_a = w_prev @ H_a` from the H_a it holds and expands
+  about `mix(h_a) M_a` (`NNLS._lap_reexpand`), so the capture read is gone; `h0` is bitwise the two-read value
+  (grouped streamed reads included). The final chi2 read is cell space: zero rows with `b = -Lt d`, no `H Lt'`
+  (only when no vp gradient/line term needs the rows). `laplace_info["h0_pass"]` keeps the expansion points.
+  The driver now keeps only the previous solver's `(z, u)`, freeing its p x p factor before the next build.
+- **D1, `pm_laplace_working_set: FRAC`** (off by default), last re-expansion pass only. S = previous support plus the
+  zero orbits with the largest ADMM dual u, `max(ceil(FRAC n), |support|)` orbits. G is accumulated over S only
+  (`NormalEquationAccumulator(cols=S)`); column scaling and the ridge scale (`p_diag_mean`) come from every
+  orbit's diagonal, so the restricted P is the full P's sub-matrix. The final chi2 read also returns the
+  half-gradient of the pass's own objective for all orbits in cell space (`_lap_grad`: `H (C'C d2 + g2)`,
+  C = R or Lt), giving `gamma = g + ridge - nu` (nu = median over the support) and the gap bound
+  `2 M max(-gamma)_+` (chi2 units). Above `pm_laplace_working_set_gap` (0.01) the violators are added and the
+  pass repeated (<= 4 rounds); `laplace_info["working_set"]` logs m, gap, violators, nu and its p10-p90 spread.
+- Node acceptance run `s1a` (`experiments/fitstat/speed/s1_resolve.py`, orblib_001_001, kappa 10, FRAC 0.5,
+  4 threads, `DYNAMITE_GRAM_PROFILE` on), launched 2026-11-19 ~02:25 local: first a cell-space chi2 read at
+  prod1 `w_new` (must reproduce `sets_new`), then the driver. Results to follow here.
