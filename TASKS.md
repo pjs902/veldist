@@ -49,6 +49,11 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   002_006, 003_006 held (node load). Figure `figs/los_only_001_001.png`.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
 - [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
+  relC6 (relative HST, no rotation rows) done 11-19 01:12 local, 4 vp rounds, 33.4 h. On prod1's footing
+  (eval_weights, $W/relprod): MUSE 524 / HST-addback 13 179 / LVM 1694 / Gaia 1502 (prod1 557 / 10 994 / 1655 /
+  1483). HST anisotropy as prod1; rotation too fast (HST muT 8.0 vs 6.9 at 260", Gaia 7.9 -> 2.7 vs 5.8 -> 1.8) and
+  Gaia more radial (0.86 -> 0.97): relative HST leaves the rotation free. `figs/relC6_vs_prod1.png`. relB6 (with
+  rotation rows) still at round 4.
 - [ ] Open border cells in the 2D design matrix (needed by every per-star option).
 
 ### 2026-10-14 code audit (`AUDIT_2026-10-14.md`)

@@ -1,6 +1,8 @@
 """LOS-only fit vs joint fit: radial profiles of the proper-motion moments the LOS-only weights predict.
 
-    python los_only_compare.py PACK_DIR MODEL_HISTS.npz LOS_TAG JOINT_TAG OUT.png
+    python los_only_compare.py PACK_DIR MODEL_HISTS.npz LOS_TAG JOINT_TAG OUT.png [LABEL]
+
+LABEL names the LOS_TAG curve (default 'LOS-only fit'; e.g. 'relative HST' for a relative-PM solve).
 
 MODEL_HISTS.npz from model_hists.py (keys '{set}|data', '{set}|model|{tag}'). Per PM set (HST, Gaia): sigma_T/sigma_R,
 mean mu_T (along the rotation), sigma_R and sigma_T per aperture (d2_maps.pm_moments, Sheppard-corrected), median in
@@ -18,7 +20,8 @@ sys.path.insert(0, str(Path(__file__).parent / "paper_figs"))
 from d2_maps import pm_moments  # noqa: E402
 
 P, Z, LOS, JNT, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
-TAGS = [("data", "data", "k"), ("joint fit", f"model|{JNT}", "C1"), ("LOS-only fit", f"model|{LOS}", "C2")]
+LAB = sys.argv[6] if len(sys.argv) > 6 else "LOS-only fit"
+TAGS = [("data", "data", "k"), ("joint fit", f"model|{JNT}", "C1"), (LAB, f"model|{LOS}", "C2")]
 
 
 def annuli(R, vals, n=9):
