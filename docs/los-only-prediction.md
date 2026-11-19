@@ -76,8 +76,12 @@ Same driver with `EXCLUDE = hst_pm`, orblib_001_001, ridge 0.03 (node `$W/holdou
 
 Gaia narrows the HST prediction (57k -> 38k) but it stays 3.4x the joint fit's (the v4 diagonal grid weights give
 ~13.8k on this statistic): the inner proper-motion structure is not implied by the LOS data plus the outer PMs.
+Profiles (`experiments/fitstat/figs/holdout_hst_001_001.png`): the predicted HST sigma_T/sigma_R stays ~0.97-0.98 at
+180-260" (data 0.92 / 0.87, joint 0.89 / 0.85) and the rotation there is low (6.3 vs 6.9 km/s), the same failure as
+the LOS-only fit; Gaia is fit as well as in the joint fit; MUSE sigma_LOS at 21" is 17.2 (data 20.1, joint 18.5).
+The radial anisotropy at 100-260" comes from HST alone.
 
 ## Open
 
-- Profiles of the HST hold-out prediction (model_hists running); Gaia held out (needs the HST rows: ~4 h with
+- Gaia held out (needs the HST rows: ~4 h with
   the speedup settings).
