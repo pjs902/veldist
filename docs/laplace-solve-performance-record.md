@@ -203,3 +203,7 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
   pass-2 builds (49 + ~50 min) and three ~16-min reads. Next levers: 16 threads (M1: ~2x on dsyrk), skipping the
   second working-set round (a margin of the round-1 violators' kind: FRAC slightly larger, or adding the
   smallest-gamma orbits up front), and a working-set pass 1 (D2).
+- **s1b** (launched 2026-11-19 09:48 local): s1a's settings (kappa 10, FRAC 0.5, orblib_001_001) at **16 threads**,
+  fork 6306848 (strong-convexity gap gate; the working-set log now gives each violator's selection rank and the most
+  negative gamma, to size FRAC so that round 2 is not needed). Node load 117 at launch (s1a: 140-200), e1s1-3 running.
+  Compare per phase (`speed/s1b_profile.json` vs `s1a_profile.json`), not wall-clock totals.

@@ -36,14 +36,19 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   (f253678..9835e9c); analysis `docs/laplace-solve-speedup-analysis.md`.
 - [DONE] s1a node acceptance run of A+B+D1: passes (solve 4.0 h vs 14.3 h; per-set chi2 within 4e-4 of prod1,
   E 0.004 / 0.002, working-set gap 0 after one violator round). Record sec. 7.
-- [ ] Next speed levers: 16 threads; avoid the second working-set round; D2 (working-set pass 1).
+- [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
+  second working-set round (log violators' dual rank first); D2 (working-set pass 1) after the 16-thread profile.
+  [RUNNING] s1b: 16 threads + violator-rank log (fork 6306848), launched 11-19 09:48 local.
 - [DONE] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `docs/los-only-prediction.md`. LOS data do not predict
   the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS
   better and predicts PMs worse; LOS-only IMBH ranking flat 10.7k-56.4k.
 - [DONE] LOS-only at ridge 0.003, all six libraries: ranking still flat 10.7k-56.4k (best 34.5k), PM prediction worse.
-- [ ] Exclude-HST-only and exclude-Gaia-only predictions.
+- [ ] Exclude-HST done; exclude-Gaia (~4 h) deferred behind the speed work.
+- [DONE] Paper: sec. "What the Proper Motions Add" + fig:holdout (paper_figs/r12_holdout.py), paper 42aa4b9.
+- [DONE] Paper: IMBH mass 2.0e4 filled (b25e6ba); error bars NN kept under \ps until the uncertainty method exists.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
-- [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
+- [DONE] relB6 / relC6 evaluated. **Decision (user 2026-11-19): addback (prod1) is production**; relative is a check.
+  Paper sec. 4 HST treatment: resolve the relative-mode \ps accordingly.
   relC6 (relative HST, no rotation rows) done 11-19 01:12 local, 4 vp rounds, 33.4 h. On prod1's footing
   (eval_weights, $W/relprod): MUSE 524 / HST-addback 13 179 / LVM 1694 / Gaia 1502 (prod1 557 / 10 994 / 1655 /
   1483). HST anisotropy as prod1; rotation too fast (HST muT 8.0 vs 6.9 at 260", Gaia 7.9 -> 2.7 vs 5.8 -> 1.8) and
