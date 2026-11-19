@@ -42,6 +42,9 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   READY (11-19): `$W/regrid/` set up by `regrid_setup.sh` (74 private copies, all orblib markers match, config =
   prodone + kappa 10 + FRAC 0.6); lanes `regrid/lane{1,2,3}.txt` (mass-interleaved); runner `regrid_lane.sh W LIST FORK`.
   Launch after s1d validates 6aa90a7 (and E, if taken). ~1.1 h/model at 16 threads.
+- [ ] From the regrid: report the enclosed mass M(<r) at a few resolved radii (e.g. 1", 5", 20") next to
+  M_IMBH (finite-radius quantities are robust where asymptotic ones are prior/degeneracy-limited: Miyazaki et al.
+  2026, arXiv:2611.17835, cited as \ps in the paper's Discussion and hold-out subsection).
 - [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
   second working-set round (log violators' dual rank first); D2 (working-set pass 1) after the 16-thread profile.
   [DONE] s1b: passes, 2.13 h at 16 threads; FRAC 0.6 avoids round 2; copy fixes 3a4bd95, 2636fae.
