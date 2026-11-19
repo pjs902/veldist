@@ -187,3 +187,7 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
 - Node acceptance run `s1a` (`experiments/fitstat/speed/s1_resolve.py`, orblib_001_001, kappa 10, FRAC 0.5,
   4 threads, `DYNAMITE_GRAM_PROFILE` on), launched 2026-11-18 ~23:20 local (UTC-3): first a cell-space chi2 read at
   prod1 `w_new` (must reproduce `sets_new`), then the driver. Results to follow here.
+- s1a step 1 (B on real data): cell-space chi2 read at prod1 `w_new` in **15.5 min** (the row-based reads M3/M4
+  took 33-34 min at similar load). Per set against prod1 `sets_new`: MUSE 557.23437907 vs ...881 (rel 5e-10),
+  HST 10994.4758635 vs ...4758616 (rel 2e-10), LVM identical, Gaia 1482.64493681 vs ...68526 (rel 3e-11).
+  E = 0.0040 (HST), 0.0022 (Gaia), as M4.
