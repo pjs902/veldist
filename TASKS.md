@@ -34,8 +34,9 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [DONE] Time one production solve: `docs/laplace-solve-performance-record.md` (dsyrk ~70%).
 - [DONE] Speedups A (row-space rows), B (fused capture, cell-space chi2), D1 (KKT working set) in the fork
   (f253678..9835e9c); analysis `docs/laplace-solve-speedup-analysis.md`.
-- [RUNNING] s1a node acceptance run of A+B+D1 (`experiments/fitstat/speed/s1_resolve.py`): chi2 within 0.5 of
-  prod1, E < 0.05, gap <= 0.01. B already verified on real data (15.5-min read reproduces prod1).
+- [DONE] s1a node acceptance run of A+B+D1: passes (solve 4.0 h vs 14.3 h; per-set chi2 within 4e-4 of prod1,
+  E 0.004 / 0.002, working-set gap 0 after one violator round). Record sec. 7.
+- [ ] Next speed levers: 16 threads; avoid the second working-set round; D2 (working-set pass 1).
 - [DONE] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `docs/los-only-prediction.md`. LOS data do not predict
   the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS
   better and predicts PMs worse; LOS-only IMBH ranking flat 10.7k-56.4k.
