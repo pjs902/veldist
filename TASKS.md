@@ -42,6 +42,10 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   READY (11-19): `$W/regrid/` set up by `regrid_setup.sh` (74 private copies, all orblib markers match, config =
   prodone + kappa 10 + FRAC 0.6); lanes `regrid/lane{1,2,3}.txt` (mass-interleaved); runner `regrid_lane.sh W LIST FORK`.
   s1d validated 6aa90a7 (0.95 h, exact to 5e-4); E not taken. ~1 h/model at 16 threads.
+  [RUNNING] lane 1 (tmux regrid_l1) since 11-19 15:05 local, lane 2 (regrid_l2) since 15:53; lane 3 waits for
+  load (precheck: load + 16 <= 192). Results `$W/regrid/results/<model>.npz`, per-model logs `$W/regrid/logs/`.
+  Lanes skip finished models, so a lane can be relaunched. Next: verify the first result end to end; then
+  r6 from the regrid + enclosed mass M(<r).
 - [ ] From the regrid: report the enclosed mass M(<r) at a few resolved radii (e.g. 1", 5", 20") next to
   M_IMBH (finite-radius quantities are robust where asymptotic ones are prior/degeneracy-limited: Miyazaki et al.
   2026, arXiv:2611.17835, cited as \ps in the paper's Discussion and hold-out subsection).
