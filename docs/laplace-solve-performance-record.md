@@ -236,3 +236,8 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
   gap 0. Phases: read at prod1 `w_new` 11.6 min (s1b 14.6); pass-1 build 37 min (42); working-set build 17 min
   (27, at m 27 000 vs 22 500); final read ~10 min (14). Whole-run py-spy: `$W/prof/s1c_full.txt`.
   Compact Laplace rows (6aa90a7) are not in s1c.
+- **s1d (fork 6aa90a7: + compact Laplace rows): passes, solve 0.95 h.** Per set against prod1 as s1c (max
+  |d| 5e-4); E 0.0040 / 0.0022; one working-set round at m = 27 000, gap 0. Read at prod1 weights 9.0 min (s1c
+  11.6); pass-1 build 26 min (37); working-set build 17 min (17: now led by the per-aperture Laplace prepare,
+  ~70 s per group of 128); peak RSS 72 GiB. **Production setting for the regrid: 6aa90a7, kappa 10, FRAC 0.6,
+  16 threads.** Option E (float32 ssyrk) not taken: a few minutes per model, would need its own validation.
