@@ -42,7 +42,7 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
   second working-set round (log violators' dual rank first); D2 (working-set pass 1) after the 16-thread profile.
   [DONE] s1b: passes, 2.13 h at 16 threads; FRAC 0.6 avoids round 2; copy fixes 3a4bd95, 2636fae.
-  [RUNNING] s1c (2636fae, FRAC 0.6, 16 threads, py-spy whole run), launched 12:24 local. Compact rows done
+  [DONE] s1c passes: 1.16 h (2636fae, FRAC 0.6, one working-set round). Compact rows done
   (6aa90a7, not yet on the node). Left: E (float32 ssyrk), D2/C.
 - [DONE] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `docs/los-only-prediction.md`. LOS data do not predict
   the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS

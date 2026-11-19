@@ -230,3 +230,9 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
   the whole Laplace solve (each PM archive was decompressed per set per build: 44-88 s each time; ~12 GB of
   held files). Remaining ranked levers (Fable review): compact Laplace rows (no zero padding, no rows in the
   cell read; ~8-10 min), float32 ssyrk (E; ~10 min, to be measured on signed rows), then D2 / C.
+- **s1c (fork 2636fae: copy fixes + aperture-major slabs + solve-wide decompression hold; FRAC 0.6, 16 threads):
+  passes, solve 1.16 h** (s1b 2.13 h, s1a 4.01 h, prod1 14.3 h). Per set against prod1: MUSE -0.0000, HST +0.0003,
+  LVM +0.0001, Gaia +0.0004, mass -0.0005; E 0.0040 / 0.0022. Working set: one round at m = 27 000, no violator,
+  gap 0. Phases: read at prod1 `w_new` 11.6 min (s1b 14.6); pass-1 build 37 min (42); working-set build 17 min
+  (27, at m 27 000 vs 22 500); final read ~10 min (14). Whole-run py-spy: `$W/prof/s1c_full.txt`.
+  Compact Laplace rows (6aa90a7) are not in s1c.
