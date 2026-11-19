@@ -37,7 +37,9 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [RUNNING] s1a node acceptance run of A+B+D1 (`experiments/fitstat/speed/s1_resolve.py`): chi2 within 0.5 of
   prod1, E < 0.05, gap <= 0.01. B already verified on real data (15.5-min read reproduces prod1).
 - [RUNNING] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `fit_exclude_sets` (fork 33ab210),
-  `experiments/fitstat/los_only.py`, node `$W/losonly/`; los1 on orblib_001_001, then the other five prod libraries.
+  `experiments/fitstat/los_only.py`, node `$W/losonly/`. los1 (orblib_001_001, 2.0e4): LOS-only solve 31 min;
+  MUSE 708 / LVM 1212 (joint 557 / 1655); predicted HST 56 972, Gaia 4365 (joint 10 994 / 1483). los2-4 and the
+  model histograms at w_los (mhlos1) running; 002_006, 003_006 next.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
 - [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
 - [ ] Open border cells in the 2D design matrix (needed by every per-star option).
