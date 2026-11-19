@@ -185,5 +185,5 @@ Fork `feature/pm-fit-statistic`: 6605e3d (B), 8d5d965 (B guard), 9835e9c (D1). T
   `2 M max(-gamma)_+` (chi2 units). Above `pm_laplace_working_set_gap` (0.01) the violators are added and the
   pass repeated (<= 4 rounds); `laplace_info["working_set"]` logs m, gap, violators, nu and its p10-p90 spread.
 - Node acceptance run `s1a` (`experiments/fitstat/speed/s1_resolve.py`, orblib_001_001, kappa 10, FRAC 0.5,
-  4 threads, `DYNAMITE_GRAM_PROFILE` on), launched 2026-11-18 ~22:20 local (UTC-3): first a cell-space chi2 read at
+  4 threads, `DYNAMITE_GRAM_PROFILE` on), launched 2026-11-18 ~23:20 local (UTC-3): first a cell-space chi2 read at
   prod1 `w_new` (must reproduce `sets_new`), then the driver. Results to follow here.
