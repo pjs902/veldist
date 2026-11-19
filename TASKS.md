@@ -39,7 +39,10 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [RUNNING] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `fit_exclude_sets` (fork 33ab210),
   `experiments/fitstat/los_only.py`, node `$W/losonly/`. los1 (orblib_001_001, 2.0e4): LOS-only solve 31 min;
   MUSE 708 / LVM 1212 (joint 557 / 1655); predicted HST 56 972, Gaia 4365 (joint 10 994 / 1483). los2-4 and the
-  model histograms at w_los (mhlos1) running; 002_006, 003_006 next.
+  model histograms at w_los: LOS-only predicts HST sT/sR ~1.0 at 260" (data 0.87), the Gaia sT/sR gradient
+  reversed (1.12 -> 0.85 vs data 0.88 -> 1.05), outer Gaia rotation 0.4 vs 1.8 km/s; but MUSE sigma at 21" is 17.1
+  (data 20.1, joint 18.5): ridge suspected. Ridge scan 0.003 / 0.0003 on 001_001 running (los1r*); los2b-4b
+  (000_002, 002_000, 004_005) at ridge 0.03 running; 002_006, 003_006 next. Figure `figs/los_only_001_001.png`.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
 - [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
 - [ ] Open border cells in the 2D design matrix (needed by every per-star option).
