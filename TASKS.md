@@ -36,7 +36,7 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   (f253678..9835e9c); analysis `docs/laplace-solve-speedup-analysis.md`.
 - [DONE] s1a node acceptance run of A+B+D1: passes (solve 4.0 h vs 14.3 h; per-set chi2 within 4e-4 of prod1,
   E 0.004 / 0.002, working-set gap 0 after one violator round). Record sec. 7.
-- [ ] **After the speed work (user 2026-11-19): re-solve all finished v4 models (the 50 of fig r6) with the full
+- [ ] **After the speed work (user 2026-11-19): re-solve all finished v4 models (the 50 of fig r6) AND the 24 profile-fill models (user: both) with the full
   per-star (Laplace/Fisher covariance) statistic on every veldist set (MUSE, HST, Gaia; LVM has no star rows and
   stays diagonal)**, settings as the accepted s1 runs. Replaces the rescored-at-v4-weights profile in r6.
 - [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
