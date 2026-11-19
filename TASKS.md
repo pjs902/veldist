@@ -36,9 +36,14 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   (f253678..9835e9c); analysis `docs/laplace-solve-speedup-analysis.md`.
 - [DONE] s1a node acceptance run of A+B+D1: passes (solve 4.0 h vs 14.3 h; per-set chi2 within 4e-4 of prod1,
   E 0.004 / 0.002, working-set gap 0 after one violator round). Record sec. 7.
+- [ ] **After the speed work (user 2026-11-19): re-solve all finished v4 models (the 50 of fig r6) with the full
+  per-star (Laplace/Fisher covariance) statistic on every veldist set (MUSE, HST, Gaia; LVM has no star rows and
+  stays diagonal)**, settings as the accepted s1 runs. Replaces the rescored-at-v4-weights profile in r6.
 - [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
   second working-set round (log violators' dual rank first); D2 (working-set pass 1) after the 16-thread profile.
-  [DONE] s1b: passes, 2.13 h at 16 threads; FRAC 0.6 avoids round 2; copy fixes 3a4bd95, 2636fae. Next: compact rows, E.
+  [DONE] s1b: passes, 2.13 h at 16 threads; FRAC 0.6 avoids round 2; copy fixes 3a4bd95, 2636fae.
+  [RUNNING] s1c (2636fae, FRAC 0.6, 16 threads, py-spy whole run), launched 12:24 local. Compact rows done
+  (6aa90a7, not yet on the node). Left: E (float32 ssyrk), D2/C.
 - [DONE] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `docs/los-only-prediction.md`. LOS data do not predict
   the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS
   better and predicts PMs worse; LOS-only IMBH ranking flat 10.7k-56.4k.
