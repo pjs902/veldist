@@ -31,7 +31,15 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   First C3 result: rankings flip between baseline and Laplace/exact (radial reweighting); see design doc.
 - [ ] Real-aperture bootstrap + fast-star injection (about 20 HST apertures).
 - [ ] Phase 2 gate: rescore finished v4 models, baseline vs Laplace, along the IMBH profile.
-- [ ] Time one production solve (Gram build vs admm iterations).
+- [DONE] Time one production solve: `docs/laplace-solve-performance-record.md` (dsyrk ~70%).
+- [DONE] Speedups A (row-space rows), B (fused capture, cell-space chi2), D1 (KKT working set) in the fork
+  (f253678..9835e9c); analysis `docs/laplace-solve-speedup-analysis.md`.
+- [RUNNING] s1a node acceptance run of A+B+D1 (`experiments/fitstat/speed/s1_resolve.py`): chi2 within 0.5 of
+  prod1, E < 0.05, gap <= 0.01. B already verified on real data (15.5-min read reproduces prod1).
+- [RUNNING] LOS-only fit, PMs predicted (Kranjcevic / Hogg): `fit_exclude_sets` (fork 33ab210),
+  `experiments/fitstat/los_only.py`, node `$W/losonly/`; los1 on orblib_001_001, then the other five prod libraries.
+- [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
+- [RUNNING] relB6 / relC6 (relative PM + Laplace): evaluate, then rewrite paper sec. 4 HST treatment.
 - [ ] Open border cells in the 2D design matrix (needed by every per-star option).
 
 ### 2026-10-14 code audit (`AUDIT_2026-10-14.md`)
