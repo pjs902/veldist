@@ -1,10 +1,11 @@
 """Paper figure r12: the proper motions predicted by fits that leave them out. sigma_T/sigma_R and mean mu_T against R
-for HST and Gaia: data, the joint fit (all four sets), the fit without HST (MUSE+LVM+Gaia) and the LOS-only fit
+for HST and Gaia: data, the joint fit (all four sets), the fits without HST (MUSE+LVM+Gaia) and without Gaia
+(MUSE+LVM+HST), and the LOS-only fit
 (MUSE+LVM), all on orblib_001_001 at the production ridge.
 
-usage: python r12_holdout.py PACK_DIR MODEL_HISTS_LOS.npz MODEL_HISTS_NOHST.npz OUT.pdf
+usage: python r12_holdout.py PACK_DIR MODEL_HISTS_LOS.npz MODEL_HISTS_NOHST.npz MODEL_HISTS_NOGAIA.npz OUT.pdf
 MODEL_HISTS_*.npz from experiments/fitstat/model_hists.py (keys '{set}|data', '{set}|model|{tag}'); the joint fit's tag
-starts with 'prod', the left-out fit's with 'los' / 'nohst'. Pack: work/v4pack (1406 apertures).
+starts with 'prod', the left-out fit's with 'los' / 'nohst' / 'nogaia'. Pack: work/v4pack (1406 apertures).
 Moments: d2_maps.pm_moments (cell-width corrected); annuli of equal aperture count, data mean +- error of the mean.
 """
 import sys
@@ -16,7 +17,7 @@ import numpy as np
 from d2_maps import pm_moments
 from d3_profiles import annuli, mean_err
 
-P, ZL, ZH, OUT = Path(sys.argv[1]), np.load(sys.argv[2]), np.load(sys.argv[3]), sys.argv[4]
+P, ZL, ZH, ZG, OUT = Path(sys.argv[1]), *(np.load(f) for f in sys.argv[2:5]), sys.argv[5]
 
 
 def tag(Z, s, start):
@@ -31,6 +32,7 @@ for r, (s, f, nm) in enumerate((("hst_pm", "hst", "HST"), ("gaia_pm", "gaia", "G
     g = annuli(d["R"], nper=len(d["R"]) // 8)
     curves = [("joint fit", pm_moments(path, ZL[tag(ZL, s, "prod")]), dict(color="k")),
               ("without HST", pm_moments(path, ZH[tag(ZH, s, "nohst")]), dict(color="#0072B2")),
+              ("without Gaia", pm_moments(path, ZG[tag(ZG, s, "nogaia")]), dict(color="#009E73", ls=":")),
               ("LOS only", pm_moments(path, ZL[tag(ZL, s, "los")]), dict(color="#D55E00", ls="--"))]
     for c, (q, ql) in enumerate(((lambda m: m["st"] / m["sr"], r"$\sigma_T/\sigma_R$"),
                                  (lambda m: m["mt"], r"$\langle\mu_T\rangle$ [km s$^{-1}$]"))):

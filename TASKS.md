@@ -62,7 +62,9 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   the PMs (HST 3-9x, Gaia 2-4x the joint statistic; Gaia anisotropy gradient reversed); lower ridge fits LOS
   better and predicts PMs worse; LOS-only IMBH ranking flat 10.7k-56.4k.
 - [DONE] LOS-only at ridge 0.003, all six libraries: ranking still flat 10.7k-56.4k (best 34.5k), PM prediction worse.
-- [ ] Exclude-HST done; exclude-Gaia (~4 h) deferred behind the speed work.
+- [DONE] Exclude-HST and exclude-Gaia (nogaia1, regrid config, 11-19). Gaia held out: MUSE/LVM/HST 551/1668/10865,
+  Gaia predicted 2902 vs 1483; sigma_T/sigma_R fine, outer rotation too slow (1.9 vs 3.6 at 970", 0.5 vs 1.7 at
+  1370"). r12 + paper sec. holdout updated (paper c0e53fa).
 - [DONE] Paper: sec. "What the Proper Motions Add" + fig:holdout (paper_figs/r12_holdout.py), paper 42aa4b9.
 - [DONE] Paper: IMBH mass 2.0e4 filled (b25e6ba); error bars NN kept under \ps until the uncertainty method exists.
 - [ ] Relative-PM scoring of an excluded set (centring at the fitted weights) for the exclude-and-check test.
