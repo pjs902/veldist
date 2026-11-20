@@ -5,8 +5,9 @@ ALL_MODELS.ecsv: $W/regrid/NGC5139_output/all_models.ecsv (74 models; kinchi2 = 
 the 12 profile-fill models that never got v4 weights). RESULTS_DIR: regrid_one.py outputs (chi2_kin = per-star Laplace
 on MUSE, HST, Gaia + LVM chi2 at the re-solved weights).
 Top: each model's move from its old Delta (v4 kinchi2) to its new Delta (chi2_kin), old relative to the v4 minimum over
-all 62 models with a v4 chi2, new relative to the minimum over the re-solved models; models not re-solved yet in grey. Bottom: new Delta with the lower envelope
-(best model per 0.04-dex mass group).
+all 62 models with a v4 chi2, new relative to the minimum over the re-solved models; models not re-solved yet in grey. Bottom: new Delta with the
+GP profile (gp_profile.py: GP over the 7 varied parameters, minimum of the GP mean over the
+models' own values of the 6 others at each M_IMBH; band = GP sd; legend: leave-one-out rms).
 """
 import glob
 import sys
@@ -16,8 +17,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from astropy.table import Table
 
-sys.path.insert(0, str(Path(__file__).parent / "paper_figs"))
-from r6_imbh_profile_env import envelope  # noqa: E402
+from gp_profile import gp_profile, loo_rmse  # noqa: E402
+
+PARS = ("m-bh", "mscale-sbh", "rscale-sbh", "q-stars", "p-stars", "u-stars", "ml")  # the 7 that vary in v4
 
 t = Table.read(sys.argv[1])
 d = [str(x).strip("/") for x in t["directory"]]
@@ -53,8 +55,16 @@ if done.any():
     b.scatter(m[done], new[done] - n0, s=14, color="#0072B2", lw=0)
     if done.sum() >= 4:
         lm = np.log10(m[done])
-        ex, ey = envelope(lm, new[done])  # best model per 0.04-dex mass group; no smoothing while sparse
-        b.plot(10 ** ex, ey - n0, color="#0072B2", lw=1)
+        X = np.column_stack([np.log10(np.asarray(t[k], float)) if k == "m-bh" else np.asarray(t[k], float)
+                             for k in PARS])[done]
+        xs = np.linspace(X[:, 0].min(), X[:, 0].max(), 40)  # log10 M in Msun (X column 0)
+        ys, sd, gp = gp_profile(X, new[done], 0, xs)
+        rmse = loo_rmse(X, new[done])[0]
+        xs = xs - 3  # plot in 1e3 Msun
+        b.plot(10 ** xs, ys - n0, color="#0072B2", lw=1.2, label=f"GP profile (LOO rms {rmse:.0f})")
+        b.fill_between(10 ** xs, ys - sd - n0, ys + sd - n0, color="#0072B2", alpha=0.2, lw=0)
+        b.legend(frameon=False, fontsize="small", loc="upper right")
+        print("GP profile min at %.1fk; LOO rms %.0f;" % (10 ** xs[np.argmin(ys)], rmse), "kernel", gp.kernel_)
     print("best re-solved model:", d[int(np.nanargmin(new))], "M_IMBH %.1fk" % m[np.nanargmin(new)])
 b.set_ylabel(r"$\Delta(-2\ln\mathcal{L})$, re-solve")
 b.set_xlabel(r"$M_{\rm IMBH}$ [$10^3\,M_\odot$]")
