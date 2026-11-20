@@ -5,7 +5,8 @@ ALL_MODELS.ecsv: $W/regrid/NGC5139_output/all_models.ecsv (74 models; kinchi2 = 
 the 12 profile-fill models that never got v4 weights). RESULTS_DIR: regrid_one.py outputs (chi2_kin = per-star Laplace
 on MUSE, HST, Gaia + LVM chi2 at the re-solved weights).
 Top: each model's move from its old Delta (v4 kinchi2) to its new Delta (chi2_kin), old relative to the v4 minimum over
-all 62 models with a v4 chi2, new relative to the minimum over the re-solved models; models not re-solved yet in grey. Bottom: new Delta with the soft lower envelope of r6.
+all 62 models with a v4 chi2, new relative to the minimum over the re-solved models; models not re-solved yet in grey. Bottom: new Delta with the lower envelope
+(best model per 0.04-dex mass group).
 """
 import glob
 import sys
@@ -16,7 +17,7 @@ import numpy as np
 from astropy.table import Table
 
 sys.path.insert(0, str(Path(__file__).parent / "paper_figs"))
-from r6_imbh_profile_env import softmin_curve  # noqa: E402
+from r6_imbh_profile_env import envelope  # noqa: E402
 
 t = Table.read(sys.argv[1])
 d = [str(x).strip("/") for x in t["directory"]]
@@ -52,10 +53,8 @@ if done.any():
     b.scatter(m[done], new[done] - n0, s=14, color="#0072B2", lw=0)
     if done.sum() >= 4:
         lm = np.log10(m[done])
-        xs = np.linspace(lm.min(), lm.max(), 300)
-        ys = softmin_curve(lm, new[done], xs)
-        b.plot(10 ** xs, ys - n0, color="#0072B2", lw=1)
-        print("re-solve envelope min at %.1fk" % 10 ** xs[np.argmin(ys)])
+        ex, ey = envelope(lm, new[done])  # best model per 0.04-dex mass group; no smoothing while sparse
+        b.plot(10 ** ex, ey - n0, color="#0072B2", lw=1)
     print("best re-solved model:", d[int(np.nanargmin(new))], "M_IMBH %.1fk" % m[np.nanargmin(new)])
 b.set_ylabel(r"$\Delta(-2\ln\mathcal{L})$, re-solve")
 b.set_xlabel(r"$M_{\rm IMBH}$ [$10^3\,M_\odot$]")
