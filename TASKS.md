@@ -42,7 +42,10 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   READY (11-19): `$W/regrid/` set up by `regrid_setup.sh` (74 private copies, all orblib markers match, config =
   prodone + kappa 10 + FRAC 0.6); lanes `regrid/lane{1,2,3}.txt` (mass-interleaved); runner `regrid_lane.sh W LIST FORK`.
   s1d validated 6aa90a7 (0.95 h, exact to 5e-4); E not taken. ~1 h/model at 16 threads.
-  [RUNNING] lanes 1-3 (tmux regrid_l1/l2/l3) since 11-19 15:05 / 15:53 / 16:37 local. Results
+  [DONE 11-21 ~03 local] all 74 in, lanes exit 0; all pass (weights sum 1, >=0, E < 0.05, final gap 0). Best
+  orblib_001_001/ml02.96 (20k) 14688.96. GP profile (paper_figs/r6_regrid_profile.py, LOO rms 478): min 23.9k;
+  +370 at 10k, ~+800 below 6k, +2170 at 57k; M(<5") min 24.9k, M(<20") min 32.1k. Paper r6 + IMBH section
+  updated (paper e997443). Was: lanes 1-3 (tmux regrid_l1/l2/l3) since 11-19 15:05 / 15:53 / 16:37 local. Results
   `$W/regrid/results/<model>.npz`, per-model logs `$W/regrid/logs/`. Lanes skip finished models (relaunchable).
   First result verified (orblib_000_003/ml03.06): weights sum 1, 16842 > 0; E 0.0040/0.0025; mass chi2 26155
   (s1d model 26836); 2 working-set rounds (gap 0.086 -> 0 with 1 column added); 1.46 h at load ~165. Next:
@@ -60,7 +63,7 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   2026, arXiv:2611.17835, cited as \ps in the paper's Discussion and hold-out subsection).
   M(<r) of all 74 models done (enclosed_mass.py -> $W/regrid/mass/enclosed_mass.npz, local work/regrid/mass/):
   non-IMBH mass inside 1" is 5-170 Msun (so M(<1") = M_IMBH), inside 5" 0.5-5.5e3, inside 20" 0.6-2.2e4 Msun
-  (sBH mscale/rscale). Next: once the regrid is in, the profile against M(<5"), M(<20") as well as M_IMBH.
+  (sBH mscale/rscale). [DONE] profile against M(<5"), M(<20") in r6 (see regrid entry).
 - [ ] Next speed levers (user 2026-11-19: speed work before any more node science runs): 16 threads; avoid the
   second working-set round (log violators' dual rank first); D2 (working-set pass 1) after the 16-thread profile.
   [DONE] s1b: passes, 2.13 h at 16 threads; FRAC 0.6 avoids round 2; copy fixes 3a4bd95, 2636fae.
