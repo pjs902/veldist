@@ -47,6 +47,14 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   First result verified (orblib_000_003/ml03.06): weights sum 1, 16842 > 0; E 0.0040/0.0025; mass chi2 26155
   (s1d model 26836); 2 working-set rounds (gap 0.086 -> 0 with 1 column added); 1.46 h at load ~165. Next:
   r6 from the regrid + enclosed mass M(<r).
+- [ ] **GP run under the per-star statistic (user 2026-11-20)**: once the 74 regrid models are in, let the BayesOpt
+  GP (v4 settings: qLogNEI, trust region, escape feasibility) continue from them. User: batches of 12 (48 cores),
+  2 batches (24 new models) then stop for a look; e1s1-3 stopped (11-20 21:30 local), rss1-4 kept.
+  `gp_setup.sh W` -> $W/gprun (config: 12 libs x 2 chunks, 3 solves x 16 MKL threads, n_max_mods 98, n_max_iter 2,
+  warmup_mode sobol so no axial replay; table: kinchi2 = chi2_kin, chi2 = chi2_tot, profile-fill rows marked done);
+  `gp_run.py` = v4 driver minus profile rounds/plots. Before launch: one-model pool-solve test on a scratch copy
+  (orblib_001_001 weights removed, n_max_iter 0: kinchi2 must return 14688.96 in ~1 h at 16 threads); after
+  launch, read the 12 proposed rows at once (no duplicates, no axial points) and diff one new infil vs v4.
 - [ ] From the regrid: report the enclosed mass M(<r) at a few resolved radii (e.g. 1", 5", 20") next to
   M_IMBH (finite-radius quantities are robust where asymptotic ones are prior/degeneracy-limited: Miyazaki et al.
   2026, arXiv:2611.17835, cited as \ps in the paper's Discussion and hold-out subsection).
