@@ -57,10 +57,76 @@ Other details:
 
 ## Results
 
-### (a) 1D mock (`experiments/fitstat/ml_stretch_mock.py`)
+All tests: `pytest experiments/fitstat/test_ml_stretch.py` (26 pass, 2026-11-23).
 
-RESULTS-A
+### Identities and normalization (exact; `test_ml_stretch.py` T1–T2)
 
-### (b)–(d) Real data
+- T1: production `precompute_design_matrix` (1D) and `precompute_design_matrix_2d` (2D, correlated and diagonal
+  covariances) give rows(v/s, C/s²; e) = rows(v, C; s·e) to 1e-12 (2e-7 for the float32 2D output), s = 0.9–1.12.
+- T2: the stretch formula with the Jacobian equals −2lnL computed by independent quadrature (1D quad, 2D dblquad) of
+  the stretched flat-cell density; a known-answer Gaussian recovers its scale, and dropping or flipping the Jacobian
+  misses it by > 0.02 in s (T2d).
 
-PLAN-BCD
+### Mocks
+
+- `ml_stretch_mock.py` (1D, fitted weights by EM, exact log-likelihood): smooth components — every method tracks
+  the exact likelihood to ~15 over the Υ scan; orbit-like narrow components on coarse cells — *every* binned method,
+  a fresh library included, bends 40–390 from exact (cell discretisation), and the unsharpened stretch bends more
+  than the spline regrid (62 vs 36 at h = 5, converged at 4000 EM iterations). The spline regrid puts negative mass
+  in 14–400 model cells at every s ≠ 1; the linear regrid bends 2–7× more than a fresh library. With sharpened rows
+  the exact-log EM breaks (negative per-star probabilities): production linearises (Laplace), so the sharpened case is
+  tested at fixed weights instead.
+- `ml_stretch_alias.py` (one HST axis, 610k stars, the dump's errors — median 1.5 km/s against 7.2 km/s cells —
+  fixed smooth model, sharpened rows as production): over s = 0.95–1.05 the stretch has detrended rms 10.0,
+  peak-to-peak 35, trend +21 per 0.01 in s; a fresh library 5.6 / 19 / −29. Both recover the scale to 0.0025
+  (exact 0.9775, truth 0.98); the curvature is ~94 per 0.01 in s, so either trend moves Υ by ~0.2%. Without
+  sharpening both carry trends ~10× larger: sharpening is what makes binned Υ comparisons work at all. The stretch's
+  noise does not shrink with N (9.6 at 150k stars): a few window-edge stars (±2.5 each) and fast precise tail stars
+  (±0.3 each) whose cells move under the stretch. ~0.6% in Υ at HST scale (T3).
+
+### Real data: stretched packs
+
+- `c3_hst_terms.py build … stretch=S` (HST) and `ml_stretch_export.py` (Gaia, MUSE: the production notebook cells and
+  writers, nothing refitted) build stretched star rows; `ml_stretch_pack.py` assembles the four replaced files and
+  makes all three expansion points; `stretch_setup.sh` builds a private node copy.
+- Parity: at s = 1 the Gaia and MUSE exports equal the production regrid input bit for bit (every array; md5 of
+  the node files); HST rows equal production to 2e-6 of each row's maximum (laptop vs node float rounding at the
+  1e-6 sparsification cut, 4267 of 610,822 stars; the s = 1 run uses the production HST file itself) (T4a, T5).
+- Frozen star set: every stretched pack keeps exactly the s = 1 stars per aperture (610,822 HST, 64,539 Gaia,
+  24,925 MUSE) (T4b, T6).
+- Stars scale by 1/s: on the real Gaia and MUSE stars, row centroids of the stretched packs regress on the s = 1
+  ones with slope 1/s to 4 decimals (median residual 0.000 Gaia, 0.002–0.009 km/s MUSE); per star for the Gaia stars
+  whose kernel spans ≥ 2 cells (T6).
+- Expansion point: the production h0 has a 1% uniform part; regridding it without undoing that costs a second 1%
+  (+8.7k HST at s = 1.017). Undo, spline-CDF regrid (+106 HST, against +1683 for a linear CDF), clip, redo. The
+  reference then costs the same at every s once the Jacobian is added — E0(s) + 2Nd ln s − E0(1):
+
+  | Υ | s | HST (Jacobian) | Gaia (Jacobian) | MUSE (Jacobian) |
+  |---|---|---|---|---|
+  | 2.66 | 0.9472 | +780 (−132,611) | +7.5 (−14,012) | −14.5 (−2706) |
+  | 2.76 | 0.9648 | +442 (−87,526) | +3.2 (−9248) | −8.5 (−1786) |
+  | 2.86 | 0.9821 | +141 (−44,046) | +0.8 (−4654) | −3.2 (−899) |
+  | 3.065 | 1.0167 | +106 (+40,524) | +4.7 (+4282) | −0.3 (+827) |
+  | 3.165 | 1.0332 | +477 (+79,743) | +17.2 (+8426) | +2.9 (+1627) |
+
+  Residuals are < 0.6% of the Jacobian: its sign and size are right on the real data. The HST residual grows
+  ~(s−1)² (spline fidelity on 7.2 km/s cells); it enters only through the Laplace error (T7).
+- The fork's h0-vs-data check (`_laplace_setup`: median correlation ≥ 0.9, no flip/transpose gain) passes for every
+  pack (correlation ≥ 0.997).
+
+### Node runs (pending: node load ≥ 192 on 2026-11-23 evening)
+
+Each: `stretch_setup.sh W NAME` then `regrid_one.py $W/stretch/NAME/config.yaml orblib_001_001/ml02.96 …/result.npz`
+(regrid speed settings; ~1.5–4 h, ≤ ~70 GB, 16 MKL threads). Absolute comparison across s:
+
+    A(s) − A(1) = ΣQ(s) − ΣQ(1) + Σ_sets [E0(s) + jac(s) − E0(1)] + χ²_LVM(s) − χ²_LVM(1)
+
+1. `s1` (production files): must reproduce the regrid's orblib_001_001 per-set values (14,688.96) — identity.
+2. `ml3.065`, `ml3.165`: free cross-check against orblib_000_000 (Υ 3.065, Δ = +2167) and orblib_001_000 (Υ 3.165,
+   +5202), which share 001_001's other parameters; the stretched models' dark masses are 3.4% / 6.7% higher, so
+   agreement to a few hundred is expected, a normalization error would show as tens of thousands.
+3. `ml2.86`, `ml2.76`, `ml2.66`: the low-Υ ray (dark masses × 0.965 / 0.931 / 0.897).
+4. Exact post-check: from each solve's weights, the model cell masses per aperture and the exact per-star
+   −2lnL against each pack's rows (independent of h0 and of the Laplace expansion).
+5. Gold standard (stage-3 slot): integrate orblib_001_001's potential with every mass × k (k ≈ 0.93) — the exact
+   scaled copy; the stretched solve must match it far below the ~100 library noise.
