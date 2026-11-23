@@ -54,7 +54,7 @@ cfg = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
 c = dyn.config_reader.Configuration(cfg, reset_logging=True, user_logfile=False, reset_existing_output=False)
 t = c.all_models.table
 assert "/veldist-fitstat/gp" in c.settings.io_settings["output_directory"], c.settings.io_settings  # gprun or a test copy
-stat = {k.name: getattr(k, "statistic", "diag") for k in c.system.cmp_list[-1].kinematic_data}
+stat = {k.name: getattr(k, "statistic", "diag") for k in c.system.get_unique_triaxial_visible_component().kinematic_data}
 assert all(stat[n] == "laplace" for n in ("veldist", "hst_pm", "gaia_pm")), stat
 mp, stop = c.settings.multiprocessing_settings, c.settings.parameter_space_settings["stopping_criteria"]
 print(f"dynamite {dyn.__version__} at {dyn.__path__}; statistic {stat}")
