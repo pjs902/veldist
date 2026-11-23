@@ -25,10 +25,11 @@ sed -e "s|output_directory: \".*\"|output_directory: \"$PO/\"|" \
     -e 's|^\( *\)ncpus: 24 .*$|\1ncpus: 12  # concurrent orbit libraries (gprun: 12 x 2 chunks x 2 families = 48)|' \
     -e 's|^\( *\)ncpus_weights: 6$|\1ncpus_weights: 3  # gprun: 3 x 16 MKL threads = 48 cores, ~220 GB|' \
     -e 's|^\( *\)n_max_mods: 180$|\1n_max_mods: 98  # gprun: 74 warm start + 2 batches of 12|' \
-    -e 's|^\( *\)n_max_iter: 100$|\1n_max_iter: 2|' \
+    -e 's|^\( *\)n_max_iter: 100$|\1n_max_iter: 6|' \
+    -e 's|^\( *\)directory: "default"$|\1directory: "/nexus/posix0/MIA-astro-env/nneum/pesmith/dynamite-escape-feasibility/legacy_fortran"  # the fork has no compiled Fortran; sources identical|' \
     -e 's|^\( *\)warmup_mode: "initial_guess"$|\1warmup_mode: "sobol"  # gprun: 74 done >= n_initial_random 24 -> straight to GP (initial_guess would replay leftover axial points)|' \
     "$R/config.yaml" > "$G/config.yaml"
-for k in "output_directory: \"$PO/\"" "total_cores: 48" "ncpus: 12 " "ncpus_weights: 3 " "n_max_mods: 98 " "n_max_iter: 2$" 'warmup_mode: "sobol"'; do
+for k in "output_directory: \"$PO/\"" "total_cores: 48" "ncpus: 12 " "ncpus_weights: 3 " "n_max_mods: 98 " "n_max_iter: 6$" "dynamite-escape-feasibility/legacy_fortran" 'warmup_mode: "sobol"'; do
     grep -q "$k" "$G/config.yaml" || { echo "config rewrite failed: $k"; exit 1; }
 done
 "$W/../ENV_mkl/bin/python" - "$PO/all_models.ecsv" "$R/results" <<'EOF'
