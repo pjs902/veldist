@@ -3,6 +3,8 @@ from the full-covariance re-solve of the grid (regrid).
 
 usage: python r6_regrid_profile.py ALL_MODELS.ecsv RESULTS_DIR ENCLOSED_MASS.npz OUT.pdf
 Statistic: chi2_kin of regrid_one.py (per-star Laplace on MUSE, HST, Gaia + LVM chi2 at the re-solved weights).
+ALL_MODELS may be the GP run's table ($W/gprun, warm-started from the regrid): rows without a regrid result take its
+kinchi2 (the same statistic, solved by DYNAMITE) if all_done; ENCLOSED_MASS must then come from the gprun config.
 Profile: GP surrogate over the 7 varied parameters (gp_profile.py). Against M_IMBH: min over the models' own values of
 the other six of the GP mean. Against M(<r): M(<r) = M_IMBH + M_other(<r; theta), with M_other the stars + dark remnants
 + halo inside r (enclosed_mass.py) of each model's theta; at each M(<r) and each model's theta, M_IMBH = M(<r) -
@@ -27,6 +29,13 @@ y = np.full(len(t), np.nan)
 for f in glob.glob(f"{sys.argv[2]}/*.npz"):
     z = np.load(f)
     y[d.index(str(z["directory"]).strip("/"))] = float(z["chi2_kin"])
+gp_rows = ~np.isfinite(y) & np.asarray(t["all_done"], bool)
+y[gp_rows] = np.asarray(t["kinchi2"], float)[gp_rows]
+k = np.asarray(t["kinchi2"], float)
+both = np.isfinite(y) & ~gp_rows & np.isfinite(k) & (k > 0)
+if gp_rows.any():  # the GP table's kinchi2 for regrid rows must be the regrid statistic
+    assert np.allclose(k[both], y[both], rtol=1e-6), np.abs(k[both] - y[both]).max()
+print(f"{(~gp_rows & np.isfinite(y)).sum()} regrid + {gp_rows.sum()} later models")
 done = np.isfinite(y)
 X = np.column_stack([np.log10(np.asarray(t[k], float)) if k == "m-bh" else np.asarray(t[k], float)
                      for k in PARS])[done]
