@@ -11,6 +11,11 @@ must carry the same stretch. Prints the total Jacobian 2 sum N d ln S, and per s
 the data-reference term the fork's offset-free Q is measured from (the aperture-mass terms are the same at every S
 and cancel), so that A(S) - A(1) = sum Q(S) - sum Q(1) + E0(S) - E0(1) + Jacobian(S) + chi2_LVM(S) - chi2_LVM(1).
 HST_ROWS may be the production file itself (no stretch key: S = 1).
+The expansion point h0 of all three sets is made here, from the production h0, in one way (whatever the builders
+wrote is replaced): undo the writer's 1% uniform mix, move the masses to the stretched cells S*e with the fork's
+spline-CDF regrid (cdf_regrid_matrix), clip its few negative tail cells, re-apply the 1% mix. Only the expansion point
+is regridded, never the model. At ml 3.065 the reference costs E0(s) + jac - E0(1) = +106 for HST with the spline
+against +1683 with a linear CDF (which smears by ~h^2/6). At S = 1 this returns production's h0 (to rounding).
     python ml_stretch_pack.py PROD_HST.npz PROD_DIR HST_ROWS.npz EXPORT_XEAST OUTDIR
 """
 import sys
@@ -23,6 +28,23 @@ prod_hst, prod_dir, hst_rows, exp_dir, out = map(Path, sys.argv[1:6])
 out.mkdir(parents=True, exist_ok=True)
 STAR = ("PM_star_indptr", "PM_star_cell", "PM_star_mass", "PM_star_aperture", "PM_lap_h0", "n_star_used")
 
+
+
+def stretch_h0(h0, edges, S):
+    """h0 (n_ap, *cells), each summing to 1 with the writer's 1% uniform part; edges per cell axis."""
+    sys.path.insert(0, "/Users/pesmith/research/dynamite-fitstat")
+    from dynamite.kinematics import cdf_regrid_matrix
+    n_cell = np.prod(h0.shape[1:])
+    h = (h0 - 0.01 / n_cell) / 0.99
+    if S != 1.0:
+        for ax, e in enumerate(edges, start=1):
+            h = np.moveaxis(np.moveaxis(h, ax, -1) @ cdf_regrid_matrix(e, S * e).T, -1, ax)
+    h = np.clip(h, 0, None)
+    norm = tuple(range(1, h.ndim))
+    h = 0.99 * h / h.sum(axis=norm, keepdims=True) + 0.01 / n_cell
+    return h / h.sum(axis=norm, keepdims=True)
+
+
 # HST
 P, R = dict(np.load(prod_hst)), dict(np.load(hst_rows))
 R.setdefault("stretch", np.asarray(1.0))
@@ -32,6 +54,8 @@ np.testing.assert_array_equal(R["PM_star_aperture"], P["PM_star_aperture"])
 np.testing.assert_array_equal(R["n_star_used"], P["n_star_used"])
 assert bool(R["PM_star_sharpened"]) and bool(P["PM_star_sharpened"])
 H = {**P, **{k: R[k] for k in STAR}, "stretch": R["stretch"], "jacobian": R["jacobian"]}
+eh = np.linspace(-82.80638794003434, 82.80638794003434, 24)  # the HST grid (c3_hst_terms: one grid, all apertures)
+H["PM_lap_h0"] = stretch_h0(P["PM_lap_h0"], (eh, eh), S)
 np.savez(out / "hst_veldist_pm_2dhist.npz", **H)
 jac = {"hst": float(R["jacobian"])}
 
@@ -46,6 +70,16 @@ for f, pre in (("gaia_veldist_pm_2dhist.npz", "PM"), ("veldist_kinematics_stars.
             assert Z[k].shape == Q[k].shape
             continue
         np.testing.assert_array_equal(Z[k], Q[k], err_msg=f"{f}:{k}")
+    if pre == "PM":
+        half, K = float(Q["vxrange"]), Q["PM_2dhist"].shape[1]
+        assert np.isclose(float(Q["vyrange"]), half)
+        e = np.linspace(-half, half, K + 1)
+        Z[f"{pre}_lap_h0"] = stretch_h0(Q[f"{pre}_lap_h0"], (e, e), S)
+    else:
+        meta = Table.read(prod_dir / "veldist_kinematics.ecsv").meta
+        K, dv = int(meta["nvbins"]), float(meta["dv"])
+        e = (np.arange(K + 1) - K / 2) * dv
+        Z[f"{pre}_lap_h0"] = stretch_h0(Q[f"{pre}_lap_h0"], (e,), S)
     np.savez(out / f, **Z)
     jac[f.split("_")[0]] = float(Z["jacobian"])
 

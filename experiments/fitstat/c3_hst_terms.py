@@ -18,8 +18,8 @@ usage:
         python c3_hst_terms.py build IN.pkl OUT.npz [sharpen] [stretch=S]
 stretch=S (docs/ml-reuse-investigation.md): rows for an orbit library reused at s = sqrt(ml/ml_orblib), on the
 library's native cells: each star's pm / S, cov / S^2 (= its kernel over the stretched cells S*e); the star set is
-the s = 1 set (frozen); h0 regridded to the stretched cells (spline CDF, clipped, 1% uniform). Add 2 N d ln S
-(d = 2) to compare the absolute -2lnL across S.
+the s = 1 set (frozen); h0 is left as production's (ml_stretch_pack.py makes the stretched one). Records
+jacobian = 2 N d ln S (d = 2) for comparing the absolute -2lnL across S.
 relative: DS_PM_MODE=relative, cache hst_relative_veldist_solvers_cache.pkl (same bins and grid as addback).
 """
 import ast
@@ -85,19 +85,6 @@ def dump(out, relative):
     print(f"dumped {len(solved)} apertures to {out}")
 
 
-def _stretch_h0(h0, grid, s):
-    """h0 (n_ap, K, K; pm2 flipped) as masses on the native cells of the data divided by s, i.e. on s * edges."""
-    sys.path.insert(0, "/Users/pesmith/research/dynamite-fitstat")
-    sys.path.insert(0, "/nexus/posix0/MIA-astro-env/nneum/pesmith/veldist-fitstat/dynamite-6aa90a7")
-    from dynamite.kinematics import cdf_regrid_matrix
-    ex = np.asarray(grid["edges_x"], float)
-    ey = -np.asarray(grid["edges_y"], float)[::-1]  # x-East flip of pm2
-    Rx, Ry = cdf_regrid_matrix(ex, s * ex), cdf_regrid_matrix(ey, s * ey)
-    h = np.clip(np.einsum("ij,ajk,lk->ail", Rx, h0, Ry), 0, None)
-    h = 0.99 * h / h.sum(axis=(1, 2), keepdims=True) + 0.01 / (K * K)
-    return h / h.sum(axis=(1, 2), keepdims=True)
-
-
 def build(inp, out, sharpen, stretch=1.0):
     d = pickle.load(open(inp, "rb"))
     assert all(np.allclose(b["grid"]["edges_x"], d["bins"][0]["grid"]["edges_x"]) and
@@ -126,7 +113,7 @@ def build(inp, out, sharpen, stretch=1.0):
         nst.append(len(M))
     np.savez(out, PM_star_indptr=np.asarray(indptr, np.int64), PM_star_cell=np.concatenate(cells_),
              PM_star_mass=np.concatenate(masses), PM_star_aperture=np.concatenate(apert),
-             PM_lap_h0=d["h0"] if stretch == 1.0 else _stretch_h0(d["h0"], d["bins"][0]["grid"], stretch),
+             PM_lap_h0=d["h0"],  # the stretched expansion point is made by ml_stretch_pack.py
              n_star_used=np.asarray(nst), PM_star_sharpened=np.asarray(bool(sharpen)),
              stretch=np.asarray(stretch), jacobian=np.asarray(2 * sum(nst) * 2 * np.log(stretch)))
     print(f"wrote {out}: {len(d['bins'])} apertures, {indptr[-1]} nonzeros, {sum(nst)} stars, sharpened={sharpen}, "

@@ -199,7 +199,7 @@ def test_c3_build_stretch_1_is_the_production_build(hst_subset, tmp_path):
 def test_c3_build_stretch_freezes_stars_and_matches_direct_rows(hst_subset, tmp_path, s):
     """T4b: real HST stars. The stretched build keeps exactly the s = 1 stars, its rows equal the production 2D
     design matrix of pm / s, cov / s^2 (x-East flip, sharpened, sparsified), records the Jacobian 2 N d ln s, and
-    its h0 is a normalized non-negative distribution whose mean scales by 1/s."""
+    and leaves h0 as production's (ml_stretch_pack.py makes the stretched one)."""
     import pickle
     from veldist.fitstat import sharpen_matrix
     a = _build(hst_subset, tmp_path / "a.npz")
@@ -223,11 +223,7 @@ def test_c3_build_stretch_freezes_stars_and_matches_direct_rows(hst_subset, tmp_
         row[cell[ptr[j]:ptr[j + 1]]] = mass[ptr[j]:ptr[j + 1]]
         big = np.abs(Ms[j]) >= 1e-6 * np.abs(Ms[j]).max()
         np.testing.assert_allclose(row[big], Ms[j][big], rtol=2e-6, atol=1e-7)
-    h0, h1 = a["PM_lap_h0"], b["PM_lap_h0"]
-    assert np.all(h1 >= 0) and np.allclose(h1.sum(axis=(1, 2)), 1)
-    c = np.asarray(st["grid"]["centers_x"], float)
-    mean = lambda h: np.einsum("aij,i->a", h, c)  # noqa: E731
-    np.testing.assert_allclose(mean(h1), mean(h0) / s, atol=0.08)  # 1% uniform mix + spline regrid
+    np.testing.assert_array_equal(a["PM_lap_h0"], b["PM_lap_h0"])
 
 
 # ---- pack level: ml_stretch_export.py outputs in work/stretch (skip if not built) ----------------------------------
@@ -303,5 +299,38 @@ def test_stretched_packs_freeze_stars_and_scale_each_star_by_1_over_s(f, pre, di
         if broad.sum() > 100:  # Gaia: per star, where the kernel spans >= ~2 cells (MUSE has none)
             for a, b in zip(c1, cs):
                 np.testing.assert_allclose(b[broad], a[broad] / s, atol=0.03 * h)
-        h0 = z[f"{pre}_lap_h0"]
-        assert np.all(h0 >= 0) and np.allclose(h0.sum(axis=tuple(range(1, h0.ndim))), 1)
+
+
+def test_assembled_packs_reference_costs_the_same_at_every_s():
+    """T7 (ml_stretch_pack.py outputs, work/stretch/*/replace): at s = 1 the assembled h0 is production's; at every s
+    each set's h0 is positive and normalized, and the data reference costs the same as at
+    s = 1 once the Jacobian is added: E0(s) + 2 N d ln s - E0(1) is small against the Jacobian itself (measured at
+    ml 3.065: HST +106 of 40524, Gaia +4.7 of 4282, MUSE -0.3 of 827). A wrong sign or a missing factor would leave
+    the full Jacobian. LVM: v, dv, sigma, dsigma divided by s, h3..h6 untouched."""
+    from astropy.table import Table
+    root, _ = _packs()
+    base = root / "s1.000" / "final"
+    reps = sorted(root.glob("ml*/replace/stretch_meta.npz"))
+    if not (base / "stretch_meta.npz").exists() or not reps:
+        pytest.skip("assembled packs not built")
+    m1 = np.load(base / "stretch_meta.npz")
+    prod = dict(np.load(root / "hst_prod.npz"))
+    np.testing.assert_allclose(dict(np.load(base / "hst_veldist_pm_2dhist.npz"))["PM_lap_h0"], prod["PM_lap_h0"],
+                               atol=1e-15)
+    lvm1 = Table.read(root.parent / "stars_pack2" / "xeast" / "lvm_kins.ecsv")
+    bound = {"hst": 300.0, "gaia": 30.0, "veldist": 15.0}
+    for r in reps:
+        m = np.load(r)
+        s = float(m["stretch"])
+        for k, lim in bound.items():
+            d = float(m[f"e0_{k}"]) + float(m[f"jac_{k}"]) - float(m1[f"e0_{k}"])
+            assert abs(d) < lim and abs(d) < 0.01 * abs(float(m[f"jac_{k}"])), (r.parent.parent.name, k, d)
+        for f, pre in (("hst_veldist_pm_2dhist.npz", "PM"), ("gaia_veldist_pm_2dhist.npz", "PM"),
+                       ("veldist_kinematics_stars.npz", "LOS")):
+            h = np.load(r.parent / f)[f"{pre}_lap_h0"]
+            assert np.all(h > 0) and np.allclose(h.sum(axis=tuple(range(1, h.ndim))), 1)
+        lvm = Table.read(r.parent / "lvm_kins.ecsv")
+        for c in ("v", "dv", "sigma", "dsigma"):
+            np.testing.assert_allclose(lvm[c], lvm1[c] / s, rtol=1e-12)
+        for c in ("h3", "dh3", "h4", "dh4"):
+            np.testing.assert_array_equal(lvm[c], lvm1[c])
