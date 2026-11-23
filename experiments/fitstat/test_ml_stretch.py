@@ -228,3 +228,80 @@ def test_c3_build_stretch_freezes_stars_and_matches_direct_rows(hst_subset, tmp_
     c = np.asarray(st["grid"]["centers_x"], float)
     mean = lambda h: np.einsum("aij,i->a", h, c)  # noqa: E731
     np.testing.assert_allclose(mean(h1), mean(h0) / s, atol=0.08)  # 1% uniform mix + spline regrid
+
+
+# ---- pack level: ml_stretch_export.py outputs in work/stretch (skip if not built) ----------------------------------
+def _packs():
+    from pathlib import Path
+    root = Path(__file__).parent / "work" / "stretch"
+    return root, sorted(p for p in root.glob("ml*") if (p / "xeast").exists())
+
+
+def _centroids(z, pre, centres):
+    ptr, cell, mass = z[f"{pre}_star_indptr"], z[f"{pre}_star_cell"], z[f"{pre}_star_mass"].astype(float)
+    seg = np.repeat(np.arange(len(ptr) - 1), np.diff(ptr))
+    tot = np.bincount(seg, mass)
+    cs = [np.bincount(seg, mass * c[cell]) / tot for c in centres]
+    sec = [np.bincount(seg, mass * c[cell] ** 2) / tot - m ** 2 for c, m in zip(centres, cs)]
+    return cs, sec, tot
+
+
+@pytest.mark.parametrize("f,pre", [("gaia_veldist_pm_2dhist.npz", "PM"), ("veldist_kinematics_stars.npz", "LOS")])
+def test_export_s1_is_the_production_input_bit_for_bit(f, pre):
+    """T5: the stretched exporter at s = 1 reproduces the production sidecar (stars_pack2 = the regrid input on the
+    node, md5-checked 2026-11-23) in every array."""
+    root, _ = _packs()
+    a_p, b_p = root / "s1.000" / "xeast" / f, root.parent / "stars_pack2" / "xeast" / f
+    if not (a_p.exists() and b_p.exists()):
+        pytest.skip("packs not built")
+    a, b = dict(np.load(a_p)), dict(np.load(b_p))
+    for k in b:
+        np.testing.assert_array_equal(a[k], b[k], err_msg=k)
+
+
+@pytest.mark.parametrize("f,pre,dim", [("gaia_veldist_pm_2dhist.npz", "PM", 2), ("veldist_kinematics_stars.npz", "LOS", 1)])
+def test_stretched_packs_freeze_stars_and_scale_each_star_by_1_over_s(f, pre, dim):
+    """T6: every stretched pack keeps exactly the s = 1 stars per aperture, records 2 N d ln s, and each interior
+    star's row centroid is its s = 1 centroid / s (and its row variance / s^2, up to the cell term) -- a check of
+    the stretch on the real Gaia/MUSE stars that does not use the code that made it."""
+    root, packs = _packs()
+    if not packs:
+        pytest.skip("no stretched packs")
+    z1 = dict(np.load(root / "s1.000" / "xeast" / f))
+    if pre == "PM":
+        K, half = z1["PM_2dhist"].shape[1], float(z1["vxrange"])
+        c = np.linspace(-half, half, K + 1)
+        c = 0.5 * (c[1:] + c[:-1])
+        G = [g.ravel() for g in np.meshgrid(c, c, indexing="ij")]
+        h = c[1] - c[0]
+    else:
+        from astropy.table import Table
+        meta = Table.read(root / "s1.000" / "xeast" / "veldist_kinematics.ecsv").meta
+        K, dv = int(meta["nvbins"]), float(meta["dv"])
+        G = [(np.arange(K) - (K - 1) / 2) * dv]
+        h = dv
+    c1, v1, t1 = _centroids(z1, pre, G)
+    for p in packs:
+        z = dict(np.load(p / "xeast" / f))
+        s = float(z["stretch"])
+        np.testing.assert_array_equal(z[f"{pre}_star_aperture"], z1[f"{pre}_star_aperture"])
+        N = len(z1[f"{pre}_star_aperture"])
+        assert np.isclose(float(z["jacobian"]), 2 * N * dim * np.log(s))
+        cs, vs, ts = _centroids(z, pre, G)
+        inner = np.ones(N, bool)
+        for a in c1:
+            inner &= np.abs(a) < 0.6 * np.abs(G[0]).max()
+        inner &= (t1 > 0.99) & (ts > 0.99)  # kernel fully on the grid at both s
+        # a row's centroid on cell centres is a binned mean: for kernels narrower than a cell it aliases (that is
+        # ml_stretch_alias.py), so test the stars whose kernel spans >= ~2 cells per axis
+        for a, b in zip(c1, cs):  # every interior star: aliasing averages out of the slope and the median
+            assert abs(np.polyfit(a[inner], b[inner], 1)[0] * s - 1) < 1e-3
+            assert np.median(np.abs(b[inner] - a[inner] / s)) < 0.02 * h
+        broad = inner.copy()
+        for v in v1:
+            broad &= v >= (1.5 * h) ** 2
+        if broad.sum() > 100:  # Gaia: per star, where the kernel spans >= ~2 cells (MUSE has none)
+            for a, b in zip(c1, cs):
+                np.testing.assert_allclose(b[broad], a[broad] / s, atol=0.03 * h)
+        h0 = z[f"{pre}_lap_h0"]
+        assert np.all(h0 >= 0) and np.allclose(h0.sum(axis=tuple(range(1, h0.ndim))), 1)
