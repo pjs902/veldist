@@ -62,6 +62,15 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   (gp_profile_fill.py -> profile_fill.ecsv: GP-mean minimum over the other six at M_IMBH 3.5k..75k, dense below
   15k; then gp_run.py config.yaml --profile-fill profile_fill.ecsv). 11-21: first test failed at the statistic
   assert (cmp_list[-1] is the escape term; fixed fa02e03); test rerun gptest2 PASSED 11-23 00:35 local: kinchi2 14688.963 (expect 14688.96), 1.3 h. GP run 11-23 05:18 local failed at the first orbit library: the fork has no compiled Fortran -> legacy_settings.directory = dynamite-escape-feasibility/legacy_fortran (sources identical). First batch kept only 4 of 12 proposals (8 duplicates of existing rows; v4 always 12/12) -> n_max_iter 6 so n_max_mods 98 still yields 24. Failed iteration removed (table back to 74; copy gprun/all_models.failed_iter6.ecsv). Relaunched as gprun2 05:22 local; iteration 6 (4 models) runs ~20 h on the loaded node (box chunk c0 with energy retries) -> user 11-23: stop after iteration 6 (laptop watcher work/gprun_stop_watch.sh kills at the 'iteration 7' log line, after the table save; precheck NO-GO on load for a node-side watcher), remove any iteration-7 rows, then gp_profile_fill.py and stage 3 (gpfill) after a precheck.
+- [ ] **Orbit-library noise (paper Uncertainties, needed for the M_IMBH error bar).** Free upper bound now: the GP
+  white-noise term on the 74 regrid models is sd ~98 in -2lnL (includes surrogate misfit; y sd 1960), vs the 725 gap
+  best -> second. Direct measurement when the node load allows: the start grid is deterministic (start_grid.py, no seed;
+  dithering is a fixed sub-grid), so make replicas of orblib_001_001 (ml 2.96) by shifting logrmin/logrmax by
+  +-1/3 of an energy step (and one with dithering 3 -> 4), 3-4 libraries x (~2 chunks, ~6-20 h on the loaded node)
+  + one Laplace solve each (~1.5 h, 3 x 16 MKL). Scatter of kinchi2 = the library term.
+- [ ] Laptop findings 11-23 (regrid_sets.py): HST carries a median 90% of each model's gap to the best; the best
+  model fits MUSE/HST/Gaia better than all 73 others but LVM worse than all 73 (by 96-301), and its excluded mass term
+  is worse than 54 of 73. Best is the only model with ml < 3.05 (2.96): check whether lower ml trades LVM rotation.
 - [ ] From the regrid: report the enclosed mass M(<r) at a few resolved radii (e.g. 1", 5", 20") next to
   M_IMBH (finite-radius quantities are robust where asymptotic ones are prior/degeneracy-limited: Miyazaki et al.
   2026, arXiv:2611.17835, cited as \ps in the paper's Discussion and hold-out subsection).
