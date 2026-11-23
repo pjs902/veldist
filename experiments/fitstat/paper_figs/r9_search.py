@@ -1,7 +1,8 @@
 """Paper figure r9 (appendix): convergence and coverage of the Bayesian-optimization parameter search.
 
-usage: python r9_search.py ALL_MODELS.ecsv RESCORE_DIR OUT.pdf
-Finished models of the v4 grid in the order they were computed (iteration, then time). First panel: each
+usage: python r9_search.py ALL_MODELS.ecsv REGRID_RESULTS_DIR OUT.pdf
+Models of the v4 grid in the order they were computed (iteration, then time), scored with the regrid
+re-solve under the per-star statistic (chi2_kin of each regrid result; every model with a result). First panel: each
 model's per-star -2 ln L relative to the best (points) and the running best (line). Other panels: each
 parameter against model number, coloured by -2 ln L, within its search range (Table 2).
 """
@@ -13,15 +14,16 @@ import numpy as np
 from astropy.table import Table
 
 t = Table.read(sys.argv[1])
-t = t[np.asarray(t["all_done"], bool)]
-t.sort(["which_iter", "time_modified"])
-n = np.arange(1, len(t) + 1)
-k = np.asarray(t["kinchi2"], float)
 resc = {}
-for f in glob.glob(f"{sys.argv[2]}/rescore_*.npz"):
+for f in glob.glob(f"{sys.argv[2]}/*.npz"):
     z = np.load(f, allow_pickle=True)
-    resc[str(z["directory"]).strip("/")] = float(z["kinchi2"]) - z["diag"].sum() + z["laplace"].sum()
+    resc[str(z["directory"]).strip("/")] = float(z["chi2_kin"])
 ps = np.array([resc.get(str(d).strip("/"), np.nan) for d in t["directory"]])
+t, ps = t[np.isfinite(ps)], ps[np.isfinite(ps)]
+assert len(t) == len(resc), (len(t), len(resc))
+o = np.lexsort((np.asarray(t["time_modified"]), np.asarray(t["which_iter"])))
+t, ps = t[o], ps[o]
+n = np.arange(1, len(t) + 1)
 
 P = [("m-bh", r"$M_{\rm IMBH}$ [$M_\odot$]", (10 ** 3.5, 1e5), True),
      ("mscale-sbh", r"$f_{M,\rm sBH}$", (0.5, 2), True), ("rscale-sbh", r"$f_{r,\rm sBH}$", (0.5, 2), True),
