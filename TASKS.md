@@ -58,6 +58,10 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   `gp_run.py` = v4 driver minus profile rounds/plots. Before launch: one-model pool-solve test on a scratch copy
   (orblib_001_001 weights removed, n_max_iter 0: kinchi2 must return 14688.96 in ~1 h at 16 threads); after
   launch, read the 12 proposed rows at once (no duplicates, no axial points) and diff one new infil vs v4.
+  Stage 3 (user 2026-11-23): after the 2 batches, one profile-fill iteration of 12 hand-placed models
+  (gp_profile_fill.py -> profile_fill.ecsv: GP-mean minimum over the other six at M_IMBH 3.5k..75k, dense below
+  15k; then gp_run.py config.yaml --profile-fill profile_fill.ecsv). 11-21: first test failed at the statistic
+  assert (cmp_list[-1] is the escape term; fixed fa02e03); test rerun gptest2 started 11-22 23:15 local.
 - [ ] From the regrid: report the enclosed mass M(<r) at a few resolved radii (e.g. 1", 5", 20") next to
   M_IMBH (finite-radius quantities are robust where asymptotic ones are prior/degeneracy-limited: Miyazaki et al.
   2026, arXiv:2611.17835, cited as \ps in the paper's Discussion and hold-out subsection).

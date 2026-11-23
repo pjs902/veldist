@@ -2,6 +2,8 @@
 74 re-solved regrid models ($W/gprun from gp_setup.sh). Two batches of 12 new models (n_max_iter 2, n_max_mods 98).
 
     cd $W/gprun && MKL_NUM_THREADS=16 PYTHONPATH=$W/dynamite-6aa90a7 python gp_run.py config.yaml
+Stage 3 (after the 2 batches; user 2026-11-23): gp_profile_fill.py writes 12 hand-placed profile models, then
+    ... python gp_run.py config.yaml --profile-fill profile_fill.ecsv
 
 Driver = PM_grid/sBH_GP_grid_v4/run_sBH_GP_grid.py without its profile-round / profile-fill / final-plot branches, and
 with ModelIterator(plots=False): v4's per-iteration plots peaked the parent at ~450 GB. The fork-safety prelude is kept
@@ -51,12 +53,31 @@ for _i in threadpool_info():
             int(os.environ.get("MKL_NUM_THREADS", "8"))))
 
 cfg = sys.argv[1] if len(sys.argv) > 1 else "config.yaml"
+fill = sys.argv[sys.argv.index("--profile-fill") + 1] if "--profile-fill" in sys.argv else None
 c = dyn.config_reader.Configuration(cfg, reset_logging=True, user_logfile=False, reset_existing_output=False)
 t = c.all_models.table
+mp, stop = c.settings.multiprocessing_settings, c.settings.parameter_space_settings["stopping_criteria"]
 assert "/veldist-fitstat/gp" in c.settings.io_settings["output_directory"], c.settings.io_settings  # gprun or a test copy
+if fill:
+    # stage 3: one iteration of exactly these hand-placed rows (gp_profile_fill.py), no GP batch; as v4's
+    # --profile-fill, all in memory except the appended rows
+    sys.path.insert(0, "/nexus/posix0/MIA-astro-env/nneum/pesmith/PM_grid/sBH_GP_grid_v4/escape_restart")
+    from add_fill_rows import append  # noqa: E402  (asserts every existing row is done, values in the box)
+    print(f"--profile-fill: appended {append(c, fill)} rows from {fill}")
+    c.all_models.save()
+
+    def _no_new_models(self, current_models=None, **kw):
+        self.current_models = current_models
+        self.status.update(stop=False, n_new_models=0, last_iter_added_no_new_models=False)
+        return self.status
+
+    getattr(dyn.parameter_space, c.settings.parameter_space_settings["generator_type"]).generate = _no_new_models
+    stop["n_max_iter"] = 1
+    stop["n_max_mods"] = len(t)
+    # the startup reattempt's chi2_ext pass would pick up the fresh rows (no directory) and crash (v4 11-15)
+    c.settings.weight_solver_settings["reattempt_failures"] = False
 stat = {k.name: getattr(k, "statistic", "diag") for k in c.system.get_unique_triaxial_visible_component().kinematic_data}
 assert all(stat[n] == "laplace" for n in ("veldist", "hst_pm", "gaia_pm")), stat
-mp, stop = c.settings.multiprocessing_settings, c.settings.parameter_space_settings["stopping_criteria"]
 print(f"dynamite {dyn.__version__} at {dyn.__path__}; statistic {stat}")
 print(f"warm start: {len(t)} models, {int(np.sum(t['all_done']))} done, best kinchi2 {np.min(t['kinchi2']):.1f} "
       f"({t['directory'][int(np.argmin(t['kinchi2']))]})")
