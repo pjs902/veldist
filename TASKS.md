@@ -1109,6 +1109,13 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
     factor. NOTE: there is NO "-12% drift bug" in _gmrf_deviation_scale_2d - the
     constant is supposed to vary with k, that is what the Sorbye-Rue
     standardisation does (P2)
+- [x] 2026-11-24: gprun2 stopped in iteration 7 (watcher died with ssh; killed 09:37 local); 9 unfinished
+  iteration-7 rows dropped (backup all_models_with_iter7.ecsv.bak, libraries in gprun/aborted_iter7/); 78 done.
+  NEW BEST: orblib_006_002/ml02.95 (ml 2.952, M_IMBH 2.46e4) kinchi2 14042.6 (-646 vs 001_001); update paper text,
+  r6, r9 when stage 3 lands.
+- [x] 2026-11-24 09:48 local: stage 3 `gpfill` launched (config_stage3.yaml: ncpus 13, total_cores 52; 13 rows,
+  orblib_007_000..012, 012 = gold standard). Stretch s1 identity solve running (`stretch_s1`); cross-checks
+  ml3.065/ml3.165 wait for s1 (user).
 - [ ] Stage 3 (gpfill): gp_profile_fill.py now writes 13 rows (12 profile + ml-reuse gold standard: orblib_001_001
   with every mass x 0.93086 = Υ 2.760, m-bh 18617, mscale 0.931). gprun ncpus is 12: set ncpus 13 (52 cores) for
   stage 3 or the gold library waits for the first free slot. Gold result vs the ml2.76 stretched solve:
