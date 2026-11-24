@@ -114,7 +114,11 @@ All tests: `pytest experiments/fitstat/test_ml_stretch.py` (26 pass, 2026-11-23)
 - The fork's h0-vs-data check (`_laplace_setup`: median correlation ≥ 0.9, no flip/transpose gain) passes for every
   pack (correlation ≥ 0.997).
 
-### Node runs (pending: node load ≥ 192 on 2026-11-23 evening)
+### Node runs (set up 2026-11-24 00:25 UTC: all six `$W/stretch/NAME/` ready; solves wait for load < 176)
+
+Per run, one job: `regrid_one.py CFG orblib_001_001/ml02.96 $W/stretch/NAME/result.npz && ml_stretch_exact.py CFG
+orblib_001_001/ml02.96 …/result.npz …/exact.npz` (the exact check: one extra library read). Compare:
+`ml_stretch_compare.py $W/stretch s1 ml3.065 ml3.165 ml2.86 ml2.76 ml2.66`.
 
 Each: `stretch_setup.sh W NAME` then `regrid_one.py $W/stretch/NAME/config.yaml orblib_001_001/ml02.96 …/result.npz`
 (regrid speed settings; ~1.5–4 h, ≤ ~70 GB, 16 MKL threads). Absolute comparison across s:
