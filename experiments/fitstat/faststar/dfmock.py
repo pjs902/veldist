@@ -5,6 +5,8 @@ annular (v2D, |v_los|) mass tables, i.e. what the orbit library will provide for
 Units: pc, km/s, Msun. The tracer is massless (its density need not match the potential).
 """
 import numpy as np
+
+_trapz = getattr(np, "trapezoid", None) or np.trapz      # numpy < 2 on the node
 from scipy.interpolate import interp1d
 
 G = 4.30091e-3
@@ -30,7 +32,7 @@ class Cluster:
         eps = np.logspace(np.log10(psi.min()) + 0.01, np.log10(psi.max()) - 0.01, 600)
         t = np.linspace(0, 1, 2001)[None, :]
         x = eps[:, None] - (t * np.sqrt(eps[:, None])) ** 2
-        F = 2 * np.sqrt(eps) * np.trapezoid(g(np.log(np.maximum(x, 1e-300))) * (x > 0), t, axis=1)
+        F = 2 * np.sqrt(eps) * _trapz(g(np.log(np.maximum(x, 1e-300))) * (x > 0), t, axis=1)
         f = np.gradient(F, eps) / (np.sqrt(8) * np.pi ** 2)
         assert np.all(f[5:-5] > 0), "Eddington f(E) < 0: tracer cusp too shallow for this BH"
         self._lf = interp1d(np.log(eps), np.log(np.maximum(f, 1e-300)), bounds_error=False,
@@ -99,7 +101,7 @@ class Cluster:
         """Surface density (arbitrary units) at projected R."""
         Rp = np.atleast_1d(np.asarray(R_arcsec, float)) * ARCSEC_PC
         zg = np.concatenate([[0], np.logspace(-5, np.log10(60.0), 600)])
-        return np.trapezoid(self.rho(np.hypot(Rp[:, None], zg[None, :])), zg, axis=1)
+        return _trapz(self.rho(np.hypot(Rp[:, None], zg[None, :])), zg, axis=1)
 
     def projected_R(self, n, rmax_arcsec, rng, n_grid=2000):
         """Projected radii of n tracer stars inside rmax, from the surface density Sigma(R)."""

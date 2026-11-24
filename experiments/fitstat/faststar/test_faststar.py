@@ -1,6 +1,8 @@
 """Quick checks of the fast-star term (seconds; the recovery study is run_recovery.py on the node)."""
 import numpy as np
 
+from dfmock import _trapz
+
 import dfmock as d
 import likelihood as lk
 
@@ -18,10 +20,10 @@ def test_kernels():
     # v2D kernel integrates to 1 over v_obs
     vgrid = np.linspace(40, 100, 3001)
     K = lk.v2d_kernel(vgrid, np.full(vgrid.size, e), edges)[:, 0]
-    assert abs(np.trapezoid(K, vgrid) - 1) < 1e-3
+    assert abs(_trapz(K, vgrid) - 1) < 1e-3
     # v_los kernel of a |v| cell integrates to 1 over signed v_los
     Kz = lk.vlos_kernel(np.linspace(-150, 150, 3001), np.full(3001, 5.0), np.array([20.0, 30.0]))[:, 0]
-    assert abs(np.trapezoid(Kz, np.linspace(-150, 150, 3001)) - 1) < 1e-3
+    assert abs(_trapz(Kz, np.linspace(-150, 150, 3001)) - 1) < 1e-3
 
 
 def test_rv_conditional_normalised():
@@ -36,7 +38,7 @@ def test_rv_conditional_normalised():
     a, _ = t.annulus()
     num = np.einsum("kij,ki,kj->k", P[a], t.Kv, t.Kz)
     den = np.einsum("ki,ki->k", P.sum(-1)[a], t.Kv)
-    assert abs(np.trapezoid(num / den, vz) - 1) < 2e-3
+    assert abs(_trapz(num / den, vz) - 1) < 2e-3
 
 
 def test_mock_recovery_quick():
