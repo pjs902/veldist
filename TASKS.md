@@ -1125,6 +1125,14 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
 - [x] 2026-11-24 09:48 local: stage 3 `gpfill` launched (config_stage3.yaml: ncpus 13, total_cores 52; 13 rows,
   orblib_007_000..012, 012 = gold standard). Stretch s1 identity solve running (`stretch_s1`); cross-checks
   ml3.065/ml3.165 wait for s1 (user).
+- [x] 2026-11-24 stretch results. s1 identity: per-set sum 14688.97 vs 14688.96 (pass). Cross-checks vs s1:
+  ml3.065 +2333 (integrated orblib_000_000: +2167), ml3.165 +5984 (orblib_001_000: +5202). NOT decisive: the
+  references hold m-bh/mscale fixed while the stretch scales all masses by k (+3.4%, +6.8%), so the gold model
+  (orblib_007_012, every mass x k) is the real test. Laplace sums reproduce the solves exactly.
+- [ ] Exact-check bookkeeping: the ml_stretch_compare exact column disagrees with Laplace by ~-50k (HST -49k vs
+  +2000 at ml3.065; per star about -8.9 ln s before the Jacobian). Likely the row normalisation or the Jacobian
+  in the exact path; find it before using the exact column.
+- [ ] Low-Υ stretch runs ml2.86 / ml2.76 / ml2.66 (ml2.76 pairs with the gold model).
 - [ ] Stage 3 (gpfill): gp_profile_fill.py now writes 13 rows (12 profile + ml-reuse gold standard: orblib_001_001
   with every mass x 0.93086 = Υ 2.760, m-bh 18617, mscale 0.931). gprun ncpus is 12: set ncpus 13 (52 cores) for
   stage 3 or the gold library waits for the first free slot. Gold result vs the ml2.76 stretched solve:
