@@ -30,6 +30,8 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [RUNNING] C1 synthetic six-version comparison and C3 v4 rescoring on astro-node-12 (`veldist-fitstat/`).
   First C3 result: rankings flip between baseline and Laplace/exact (radial reweighting); see design doc.
 - [ ] Real-aperture bootstrap + fast-star injection (about 20 HST apertures).
+- [ ] Revisit the fast-star component of the likelihood (user 2026-11-24): drop the z = 0 constraint and let the
+  fast stars follow a 3D distribution around the IMBH instead.
 - [ ] Phase 2 gate: rescore finished v4 models, baseline vs Laplace, along the IMBH profile.
 - [DONE] Time one production solve: `docs/laplace-solve-performance-record.md` (dsyrk ~70%).
 - [DONE] Speedups A (row-space rows), B (fused capture, cell-space chi2), D1 (KKT working set) in the fork
