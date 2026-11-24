@@ -1109,3 +1109,7 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
     factor. NOTE: there is NO "-12% drift bug" in _gmrf_deviation_scale_2d - the
     constant is supposed to vary with k, that is what the Sorbye-Rue
     standardisation does (P2)
+- [ ] Stage 3 (gpfill): gp_profile_fill.py now writes 13 rows (12 profile + ml-reuse gold standard: orblib_001_001
+  with every mass x 0.93086 = Υ 2.760, m-bh 18617, mscale 0.931). gprun ncpus is 12: set ncpus 13 (52 cores) for
+  stage 3 or the gold library waits for the first free slot. Gold result vs the ml2.76 stretched solve:
+  docs/ml-reuse-investigation.md step 5.

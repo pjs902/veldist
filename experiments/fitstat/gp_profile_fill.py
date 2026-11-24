@@ -1,4 +1,5 @@
-"""Stage 3 of the GP run: hand-placed models along the M_IMBH profile (one profile-only iteration of 12).
+"""Stage 3 of the GP run: hand-placed models along the M_IMBH profile (one profile-only iteration of 12),
+plus the ml-reuse gold standard (a 13th row: GOLD_DIR with every mass x K_GOLD).
 The BayesOpt batches (stages 1-2) chase the minimum, so the profile's wings stay GP extrapolation. For each target
 M_IMBH, take the other six parameters at the minimum of the GP mean over a shared Sobol sample (mean of three GP fits,
 seeds 0-2, on kinchi2 = the per-star statistic), kinematics only: no fast-star constraint, since these map the curve.
@@ -18,6 +19,10 @@ TARGETS = (3500, 4500, 5500, 7000, 8500, 10000, 12500, 15000, 32000, 42000, 5500
 SEEDS = (0, 1, 2)
 N = 20000  # shortcut: best Sobol point, no local refinement (as v4)
 OUT = "profile_fill.ecsv"
+# ml-reuse gold standard (docs/ml-reuse-investigation.md step 5): orblib_001_001 with EVERY mass x K_GOLD (stars via
+# ml; IMBH; sBH mscale, a mass; halo f is a fraction of M*, and does not enter the potential), the exact scaled copy the
+# stretched solve of work/stretch/ml2.76 (s = 0.964811) must reproduce. Appended as a 13th row.
+GOLD_DIR, K_GOLD = "orblib_001_001/ml02.96/", 0.964811 ** 2
 
 
 def main():
@@ -77,6 +82,15 @@ def main():
         phys = {p.name: float(10 ** raw[i, j] if p.logarithmic else raw[i, j]) for j, p in enumerate(free)}
         rows.append(dict(phys, pred_kinchi2=float(mu[i]), pred_sd=float(sd[i]),
                          nearest_done=float(np.min(np.linalg.norm(Xdone - U[i], axis=1)))))
+    phys_t = c.all_models.get_physical_parameter_table()
+    g = [i for i, d in enumerate(phys_t["directory"]) if d == GOLD_DIR]
+    assert len(g) == 1, GOLD_DIR
+    gold = {p.name: float(phys_t[p.name][g[0]]) for p in free}
+    assert set(gold) == {"m-bh", "mscale-sbh", "rscale-sbh", "q-stars", "p-stars", "u-stars", "ml"}, gold
+    for k in ("m-bh", "mscale-sbh", "ml"):
+        gold[k] *= K_GOLD
+    assert abs(gold["ml"] - 2.76) < 1e-3 and abs(gold["m-bh"] - 2e4 * K_GOLD) < 1, gold
+    rows.append(dict(gold, pred_kinchi2=np.nan, pred_sd=np.nan, nearest_done=np.nan))
     out = Table(rows=rows, names=list(rows[0]))
     for k in out.colnames:
         out[k].format = ".4g"
