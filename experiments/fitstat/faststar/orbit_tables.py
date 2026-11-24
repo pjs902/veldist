@@ -107,7 +107,7 @@ def prepare(mdir, run, with_kin=False, start=None, number=None):
 
 def walk(raw, n_pairs):
     """(start, ivmin0, ivmin1, n0, nv) per (orbit, aperture) pair of a raw 2D-histogram stream (fork format)."""
-    mv = memoryview(raw).cast("i")
+    mv = memoryview(raw)[: len(raw) // 4 * 4].cast("i")     # a prefix read of the stored file can end mid-record
     p, out = 0, np.zeros((5, n_pairs), np.int64)
     for k in range(n_pairs):
         i0, i1, a0, a1 = mv[p + 1], mv[p + 2], mv[p + 3], mv[p + 4]
