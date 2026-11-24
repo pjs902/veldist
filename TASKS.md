@@ -1138,3 +1138,11 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   with every mass x 0.93086 = Υ 2.760, m-bh 18617, mscale 0.931). gprun ncpus is 12: set ncpus 13 (52 cores) for
   stage 3 or the gold library waits for the first free slot. Gold result vs the ml2.76 stretched solve:
   docs/ml-reuse-investigation.md step 5.
+
+### Future options (not scheduled; user 2026-11-24: "future options we could test")
+
+- Orbit-weight marginalisation instead of profiling (calibration kappa):
+  - (a) exact truncated-Gaussian HMC (Pakman & Paninski 2014) on the Laplace posterior, whitened with the factored P + rho I; one model first (006_002). Output: weight posterior, induced Delta chi2 spread, fast-star term (a) propagated. Compare with the frozen-curvature bootstrap.
+  - (b) Behroozi ray-tracing sampler (arXiv:2510.25824) with stochastic (aperture-subsampled) gradients on the EXACT per-star likelihood; its edge over HMC is noise-tolerant gradients and hard walls (w >= 0).
+  - Caveat: marginalising turns the profile into an evidence that depends on the weight prior in unconstrained directions; needs a principled prior (e.g. smoothness over the (E, I2, I3) grid).
+- binference (github.com/joshspeagle/binference): same model as our exact statistic (L_ik = (M_i A)_k, orbit weights = simplex fractions). Ideas, not a dependency: selection-on-truth normalisation (cross-check of fast-star term a), Dirichlet-tree / logistic-GP priors as principled regularisation, mix-SQP for exact-statistic MAP (stretch goal D). Too small-scale to use directly (dense L, NUTS metric <= 500 dims).
