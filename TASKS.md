@@ -32,6 +32,10 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
 - [ ] Real-aperture bootstrap + fast-star injection (about 20 HST apertures).
 - [ ] Revisit the fast-star component of the likelihood (user 2026-11-24): drop the z = 0 constraint and let the
   fast stars follow a 3D distribution around the IMBH instead.
+  The z weighting must be the conditional of stars at that speed, p(z|R,v) ∝ ∫f dv_z (zero beyond r where
+  v_esc = v, concentrated on the IMBH), NOT the all-star density (flat over the ~90" core -> spuriously strong).
+  Routes: Eddington f(E) from the model's own rho, psi (potential-only); orbit-library DF (real target);
+  condition on the speed selection; drop the mass-minimising IMBH offset (inconsistent with the kinematics).
 - [ ] Phase 2 gate: rescore finished v4 models, baseline vs Laplace, along the IMBH profile.
 - [DONE] Time one production solve: `docs/laplace-solve-performance-record.md` (dsyrk ~70%).
 - [DONE] Speedups A (row-space rows), B (fused capture, cell-space chi2), D1 (KKT working set) in the fork
