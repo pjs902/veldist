@@ -159,3 +159,58 @@ def bg_density(real, edges=V_EDGES):
     """(eta, edges, density) of contaminant v2D from the real 20-90" selected stars."""
     h, _ = np.histogram(np.asarray(real["bg_v2d"]), edges, density=True)
     return float(real["bg_per_star"]), edges, h
+
+
+class TangentialCluster(Cluster):
+    """Cored tracer with constant beta = -1/2 around the BH: f(E, L) = L f_E(E), f_E = pi^-2 d^2(rho/r)/dpsi^2
+    (Cuddeford 1991 with beta = -1/2: rho r^(2 beta) = pi^2 int_0^psi f_E (psi - E) dE). Needs gamma >= beta + 1/2
+    = 0, so a core is allowed (an isotropic DF is not). rho ~ (1 + r^2/b^2)^-5/2 (r/r_c)^-gamma_in."""
+
+    def __init__(self, m_bh, b=2.4, vesc0=62.0, gamma_in=0.2, r_c=0.3, n=4000):
+        self.m_bh, self.b, self.gamma, self.r_c = m_bh, b, gamma_in, r_c
+        self.m_cl = vesc0 ** 2 / 2 * b / G
+        r = np.logspace(-5, 3, n)
+        psi = self.psi(r)
+        u = (self.rho(r) / r)[::-1]
+        lp = np.log(psi[::-1])
+        # d^2 u / dpsi^2 on the log-psi grid
+        du = np.gradient(u, lp) / psi[::-1]
+        d2u = np.gradient(du, lp) / psi[::-1]
+        fE = d2u / np.pi ** 2
+        ok = slice(10, -10)
+        assert np.all(fE[ok] > 0), "constant-beta f_E < 0"
+        self._lf = interp1d(lp, np.log(np.maximum(fE, 1e-300)), bounds_error=False,
+                            fill_value=(np.log(max(fE[10], 1e-300)), -np.inf))
+
+    def rho(self, r):
+        return (1 + (r / self.b) ** 2) ** -2.5 * (r / self.r_c) ** -self.gamma
+
+    def sample_at(self, R_arcsec, rng, n_grid=120):
+        """Velocities from p(v_r, v_t) ~ v_t^2 f_E(psi - v^2/2), v_t in a random direction perpendicular to r."""
+        Rp = np.asarray(R_arcsec, float) * ARCSEC_PC
+        z = self.sample_los(Rp, rng)
+        r = np.hypot(Rp, z)
+        n = len(r)
+        vr, vt = np.empty(n), np.empty(n)
+        g = (np.arange(n_grid) + 0.5) / n_grid
+        for s in range(0, n, 2000):
+            rc = r[s:s + 2000]
+            ve = np.sqrt(2 * self.psi(rc))
+            VR = (2 * g[None, :, None] - 1) * ve[:, None, None]
+            VT = g[None, None, :] * ve[:, None, None]
+            p = VT ** 2 * self.f(self.psi(rc)[:, None, None] - (VR ** 2 + VT ** 2) / 2)
+            p = p.reshape(len(rc), -1)
+            c = np.cumsum(p, 1)
+            c /= c[:, -1:]
+            k = (c < rng.random(len(rc))[:, None]).sum(1)
+            ir, it = np.divmod(k, n_grid)
+            jit = lambda i: (i + rng.random(len(i))) / n_grid
+            vr[s:s + 2000] = (2 * jit(ir) - 1) * ve
+            vt[s:s + 2000] = jit(it) * ve
+        # geometry: star at (Rx, 0, z) with random azimuth later (isotropic in the sky-plane angle)
+        rhat = np.stack([Rp / r, np.zeros(n), z / r], 1)
+        e1 = np.stack([-z / r, np.zeros(n), Rp / r], 1)              # perpendicular to rhat in the x-z plane
+        e2 = np.tile([0.0, 1.0, 0.0], (n, 1))
+        a = rng.uniform(0, 2 * np.pi, n)
+        v = vr[:, None] * rhat + vt[:, None] * (np.cos(a)[:, None] * e1 + np.sin(a)[:, None] * e2)
+        return np.hypot(v[:, 0], v[:, 1]), v[:, 2], v[:, 0], v[:, 1]
