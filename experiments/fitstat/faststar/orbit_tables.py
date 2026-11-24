@@ -211,7 +211,9 @@ def table(cfg, mdirectory, run, out):
     M = speed_hist(run, "orblib", w[0:2 * n_tube:2] + w[1:2 * n_tube:2]) + speed_hist(run, "orblibbox", w[2 * n_tube:])
     mass = M.sum((1, 2))
     edges = np.linspace(0, WIDTH, NB + 1) * sf                          # library velocities scaled to the model's ml
-    np.savez(out, P=M / mass[:, None, None], mass=mass, R_edges=R_EDGES, v_edges=edges, w_edges=edges,
+    from scipy.ndimage import gaussian_filter
+    Ms = np.stack([gaussian_filter(m, 2.0, mode="nearest") for m in M])   # 2 cells: table noise (smooth_test.py)
+    np.savez(out, P=M / mass[:, None, None], P_s2=Ms / Ms.sum((1, 2))[:, None, None], mass=mass, R_edges=R_EDGES, v_edges=edges, w_edges=edges,
              sf=sf, directory=mdirectory)
     print(f"{mdirectory}: sf {sf:.5f}; annulus masses {np.round(mass / mass.sum(), 4)}")
 
