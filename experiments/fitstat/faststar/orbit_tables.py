@@ -6,7 +6,7 @@ model centre on a fine pixel grid. The integration is order-independent per orbi
 DOP853 start step), so the existing weights apply unchanged. Nothing is written into the model directory: the
 run directory symlinks its inputs.
 
-    python orbit_tables.py prepare MODEL_DIR RUN_DIR [--with-kin] [--start S --number N]
+    python orbit_tables.py prepare MODEL_DIR RUN_DIR [--with-kin] [--start S --number N | --chunks K]
         writes RUN_DIR/infil/{orblib,orblibbox}_fs.in, the annulus aperture/bins files and symlinks; prints the
         two Fortran commands (run them from RUN_DIR through launch.sh). --with-kin keeps the model's own four
         kinematic sets (for the gate); without it only the fast-star set is binned.
@@ -41,7 +41,7 @@ def _write_annuli(infil):
     (infil / "faststar_bins.dat").write_text("#Counterrotation_binning_version_1\n" f"{flat.size}\n" + "\n".join(lines) + "\n")
 
 
-def _rewrite(src, box, with_kin, start, number):
+def _rewrite(src, box, with_kin, start, number, tag=""):
     """The model's orblib(.box).in with the fast-star set appended (or alone), outputs into RUN_DIR/datfil."""
     L = src.read_text().splitlines()
     head, i = L[:8], 8
@@ -61,7 +61,7 @@ def _rewrite(src, box, with_kin, start, number):
     binf = L[i:i + nap]; i += nap
     outs = L[i:i + 4]
     assert len(L) == i + 4, (src, len(L), i)
-    fam = "orblibbox" if box else "orblib"
+    fam = ("orblibbox" if box else "orblib") + tag
     fs_ap = ['"infil/faststar_aperture.dat"', f"{npsf + 1 if with_kin else 1}\t\t\t\t\t\t\t\t[psf for faststar]",
              "3\t\t\t\t\t\t\t\t[histogram dimension for faststar: speed histogram]"]
     fs_hist = [f"{WIDTH} {WIDTH / 2} {NB}\t\t\t\t\t\tdim {k} of 2 [faststar |v_2D|, |v_los|]" for k in (1, 2)]
@@ -79,7 +79,7 @@ def _rewrite(src, box, with_kin, start, number):
     return "\n".join(head + body + outs) + "\n"
 
 
-def prepare(mdir, run, with_kin=False, start=None, number=None):
+def prepare(mdir, run, with_kin=False, start=None, number=None, chunks=None, norb=15000):
     mdir, run = Path(mdir).resolve(), Path(run).resolve()
     assert "/models/" in str(mdir) and run != mdir and not str(run).startswith(str(mdir))
     (run / "infil").mkdir(parents=True, exist_ok=True)
@@ -97,10 +97,20 @@ def prepare(mdir, run, with_kin=False, start=None, number=None):
         if (mdir / f).exists() and not (run / f).exists():
             (run / f).symlink_to(mdir / f)
     _write_annuli(run / "infil")
+    exe = "$FS_ORBLIB"            # the patched orblib_new_mirror; set by the job script
+    if chunks:                    # contiguous orbit ranges per family; outputs datfil/{fam}_c{k}_*
+        edges = np.linspace(0, norb, chunks + 1).round().astype(int)
+        for box in (False, True):
+            fam = "orblibbox" if box else "orblib"
+            for k in range(chunks):
+                (run / "infil" / f"{fam}_fs_c{k}.in").write_text(_rewrite(
+                    mdir / "infil" / f"{fam}.in", box, with_kin, edges[k] + 1, edges[k + 1] - edges[k], f"_c{k}"))
+                print(f"cd {run} && {exe} < infil/{fam}_fs_c{k}.in > {fam}_fs_c{k}.log")
+        (run / "chunks.txt").write_text(" ".join(map(str, edges)))
+        return
     for box in (False, True):
         fam = "orblibbox" if box else "orblib"
         (run / "infil" / f"{fam}_fs.in").write_text(_rewrite(mdir / "infil" / f"{fam}.in", box, with_kin, start, number))
-    exe = "$FS_ORBLIB"            # the patched orblib_new_mirror; set by the job script
     for fam in ("orblib", "orblibbox"):
         print(f"cd {run} && {exe} < infil/{fam}_fs.in > {fam}_fs.log")
 
@@ -152,8 +162,18 @@ def gate(mdir, run, n_ap2d=1555):
 
 def speed_hist(run, fam, wt):
     """sum_o wt[o] h_o: (n_annuli, NB, NB) weighted speed histograms of the fast-star set (the only 2D set in a
-    fast-only run); wt has one entry per orbit of this family."""
-    raw = _raw(Path(run) / "datfil" / f"{fam}_pm_hist.dat")
+    fast-only run); wt has one entry per orbit of this family. Chunked runs (chunks.txt) are summed chunk by chunk."""
+    ch = Path(run) / "chunks.txt"
+    if ch.exists():
+        e = [int(x) for x in ch.read_text().split()]
+        assert e[-1] == len(wt), (e[-1], len(wt))
+        return sum(speed_hist_file(Path(run) / "datfil" / f"{fam}_c{k}_pm_hist.dat", wt[e[k]:e[k + 1]])
+                   for k in range(len(e) - 1))
+    return speed_hist_file(Path(run) / "datfil" / f"{fam}_pm_hist.dat", wt)
+
+
+def speed_hist_file(path, wt):
+    raw = _raw(path)
     n_ap = len(R_EDGES) - 1
     rec, _ = walk(raw, len(wt) * n_ap)
     f64 = np.frombuffer(raw, np.uint8)
@@ -178,8 +198,12 @@ def table(cfg, mdirectory, run, out):
     model = c.all_models.get_model_from_row(rows[0])
     sf = c.all_models.get_model_velocity_scaling_factor(model_id=rows[0])
     w = np.asarray(Table.read(Path(model.directory) / "orbit_weights.ecsv")["weights"], float)
-    n_tube = int((Path(run) / "infil" / "orblib_fs.in").read_text().splitlines()[6].split()[0])
-    n_box = int((Path(run) / "infil" / "orblibbox_fs.in").read_text().splitlines()[6].split()[0])
+    ch = Path(run) / "chunks.txt"
+    if ch.exists():
+        n_tube = n_box = int(ch.read_text().split()[-1])
+    else:
+        n_tube = int((Path(run) / "infil" / "orblib_fs.in").read_text().splitlines()[6].split()[0])
+        n_box = int((Path(run) / "infil" / "orblibbox_fs.in").read_text().splitlines()[6].split()[0])
     if n_tube < 0:
         n_tube = n_box = c.settings.orblib_settings["nE"] * c.settings.orblib_settings["nI2"] * c.settings.orblib_settings["nI3"]
     assert w.size == 2 * n_tube + n_box, (w.size, n_tube, n_box)
@@ -198,6 +222,8 @@ if __name__ == "__main__":
         o = dict(with_kin="--with-kin" in a)
         if "--start" in a:
             o.update(start=int(a[a.index("--start") + 1]), number=int(a[a.index("--number") + 1]))
+        if "--chunks" in a:
+            o.update(chunks=int(a[a.index("--chunks") + 1]))
         prepare(a[0], a[1], **o)
     elif cmd == "gate":
         gate(a[0], a[1])
