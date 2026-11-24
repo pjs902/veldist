@@ -1129,9 +1129,10 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   ml3.065 +2333 (integrated orblib_000_000: +2167), ml3.165 +5984 (orblib_001_000: +5202). NOT decisive: the
   references hold m-bh/mscale fixed while the stretch scales all masses by k (+3.4%, +6.8%), so the gold model
   (orblib_007_012, every mass x k) is the real test. Laplace sums reproduce the solves exactly.
-- [ ] Exact-check bookkeeping: the ml_stretch_compare exact column disagrees with Laplace by ~-50k (HST -49k vs
-  +2000 at ml3.065; per star about -8.9 ln s before the Jacobian). Likely the row normalisation or the Jacobian
-  in the exact path; find it before using the exact column.
+- [x] Exact-check discrepancy explained: stat_exact floors p at 1e-300 (+1381.6 per p<=0 star), and the p<=0 count
+  changes between solves (HST 121 -> 84 -> 58). Without the floor, exact vs Laplace (HST): +2030 vs +2000
+  (ml3.065), +4675 vs +5011 (ml3.165). Gaia about 2x apart (142 vs 311, 439 vs 906); small. ml_stretch_compare.py
+  now reports the floor-free exact column and the p<=0 count change.
 - [ ] Low-Υ stretch runs ml2.86 / ml2.76 / ml2.66 (ml2.76 pairs with the gold model).
 - [ ] Stage 3 (gpfill): gp_profile_fill.py now writes 13 rows (12 profile + ml-reuse gold standard: orblib_001_001
   with every mass x 0.93086 = Υ 2.760, m-bh 18617, mscale 0.931). gprun ncpus is 12: set ncpus 13 (52 cores) for

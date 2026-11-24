@@ -38,11 +38,16 @@ if __name__ == "__main__":
         s, d, dm = delta(base, ref, n)
         print(f"{n:>10} {s:7.4f} {2.965 * s * s:6.3f} " + " ".join(f"{d[k]:9.1f}" for k in (*SETS, "lvm"))
               + f" {sum(d.values()):9.1f} {dm:8.1f}")
-    # exact -2 log L (ml_stretch_exact.py; no h0, no expansion): exact(s) + jac(s) - exact(1)
+    # exact -2 log L (ml_stretch_exact.py; no h0, no expansion): exact(s) + jac(s) - exact(1).
+    # stat_exact floors p at 1e-300, so each star with model p <= 0 adds FLOOR; that count changes between solves
+    # and swamps the difference (ml3.065 HST: -37 such stars = -51k). Reported without it, plus the count change.
+    FLOOR = -2 * np.log(1e-300)
     if all((base / n / "exact.npz").exists() for n in (ref, *names)):
         X1 = np.load(base / ref / "exact.npz")
-        print("exact:" + "".join(f" {k:>9}" for k in SETS) + f" {'total':>9}")
+        print("exact w/o p<=0 floor:" + "".join(f" {k:>9}" for k in SETS) + f" {'total':>9}   change in # p<=0 stars")
         for n in names:
             X, m = np.load(base / n / "exact.npz"), np.load(base / n / "replace" / "stretch_meta.npz")
-            d = {k: X[f"{k}_exact"].sum() + float(m[f"jac_{v}"]) - X1[f"{k}_exact"].sum() for k, v in SETS.items()}
-            print(f"{n:>6}" + "".join(f" {d[k]:9.1f}" for k in SETS) + f" {sum(d.values()):9.1f}")
+            dn = {k: int(X[f"{k}_nonpos"].sum() - X1[f"{k}_nonpos"].sum()) for k in SETS}
+            d = {k: X[f"{k}_exact"].sum() + float(m[f"jac_{v}"]) - X1[f"{k}_exact"].sum() - dn[k] * FLOOR
+                 for k, v in SETS.items()}
+            print(f"{n:>21}" + "".join(f" {d[k]:9.1f}" for k in SETS) + f" {sum(d.values()):9.1f}   {dn}")
