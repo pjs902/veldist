@@ -1133,7 +1133,17 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   changes between solves (HST 121 -> 84 -> 58). Without the floor, exact vs Laplace (HST): +2030 vs +2000
   (ml3.065), +4675 vs +5011 (ml3.165). Gaia about 2x apart (142 vs 311, 439 vs 906); small. ml_stretch_compare.py
   now reports the floor-free exact column and the p<=0 count change.
-- [ ] Low-Υ stretch runs ml2.86 / ml2.76 / ml2.66 (ml2.76 pairs with the gold model).
+- [x] 2026-11-25 01:36 local: ml2.76 stretch done (s 0.9648). Laplace vs s1: hst -834, gaia +160, veldist -116,
+  lvm +122, total -668 (lower Υ preferred on this library); p<=0 HST stars +183. Compare with the gold model
+  (orblib_007_012) when stage 3 lands.
+- [ ] CORRECTION to the exact-check entry above: the count-based floor removal is not a clean test (stars that
+  enter/leave p<=0 keep their finite value on the other side). Matched apertures (no p<=0 star in either solve;
+  80-99% of stars kept), exact + jac vs Laplace + jac + E0: ml3.065 +664 vs +2238, ml3.165 +2616 vs +5714,
+  ml2.76 +2577 vs -755 (opposite sign). The exact statistic at the Laplace-optimal weights is not what the solve
+  optimises, and the dropped apertures hold the fast stars that carry the Υ signal, so the exact cross-check is
+  inconclusive; the integrated references and the gold model are the tests. (Earlier +2030 vs +2000 agreement was
+  coincidental.)
+- [ ] Low-Υ stretch runs ml2.86 / ml2.66: waiting for node load (precheck 01:40 local NO-GO, load 219).
 - [ ] Stage 3 (gpfill): gp_profile_fill.py now writes 13 rows (12 profile + ml-reuse gold standard: orblib_001_001
   with every mass x 0.93086 = Υ 2.760, m-bh 18617, mscale 0.931). gprun ncpus is 12: set ncpus 13 (52 cores) for
   stage 3 or the gold library waits for the first free slot. Gold result vs the ml2.76 stretched solve:
