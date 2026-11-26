@@ -23,5 +23,5 @@ done
 [ "$(diff "$W/gprun/config.yaml" "$D/config.yaml" | grep -c '^>')" = "$n" ]  # output_directory + each setting
 cp "$W/gprun/NGC5139_output/all_models.ecsv" "$PO/all_models.ecsv"
 grep -q "$ORB/" "$PO/all_models.ecsv"
-diff "$W/gprun/config.yaml" "$D/config.yaml" | grep '^>'
+diff "$W/gprun/config.yaml" "$D/config.yaml" | grep "^>" || true  # diff exits 1 on a difference
 echo "ready: $D"
