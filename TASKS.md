@@ -1143,11 +1143,23 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   optimises, and the dropped apertures hold the fast stars that carry the Υ signal, so the exact cross-check is
   inconclusive; the integrated references and the gold model are the tests. (Earlier +2030 vs +2000 agreement was
   coincidental.)
-- [ ] Low-Υ stretch runs ml2.86 / ml2.66: waiting for node load (precheck 01:40 local NO-GO, load 219).
-- [ ] Stage 3 (gpfill): gp_profile_fill.py now writes 13 rows (12 profile + ml-reuse gold standard: orblib_001_001
-  with every mass x 0.93086 = Υ 2.760, m-bh 18617, mscale 0.931). gprun ncpus is 12: set ncpus 13 (52 cores) for
-  stage 3 or the gold library waits for the first free slot. Gold result vs the ml2.76 stretched solve:
-  docs/ml-reuse-investigation.md step 5.
+- [x] 2026-11-25 ml2.86 stretch (s 0.9821): Laplace vs s1 hst -1019, gaia -50, veldist -61, lvm +57, total -1073.
+  ml2.66 not run (moot after the gold test below).
+- [x] 2026-11-25 GOLD TEST FAILS. orblib_007_012 (every mass x 0.93086, Υ 2.760) solved privately
+  (stretch/gold, gold_setup.sh; kinchi2 14736.30 = gpfill's own solve). Gold - s1: hst -335, gaia +117, veldist -117,
+  lvm +383, total +47. Stretch ml2.76 - s1: hst -834, gaia +160, veldist -116, lvm +122, total -668. Off by 715
+  (hst 499, lvm 261; veldist agrees) vs ~100 expected. The stretch overstates the gain at low Υ, so the data-stretch
+  mode is NOT implemented and reuse_orblib_across_ml stays False. Lead: the library's velocity histograms have a
+  fixed km/s range, so stretching the data (1/s = 1.036) pushes fast HST stars past the edge (+183 p<=0 stars at
+  ml2.76) while the gold library keeps them inside; LVM may be library noise at large radius. Not pursued unless the
+  stretch is needed again.
+- [x] 2026-11-25 Stage 3 done (gpfill exit 0; the tracebacks are multiprocessing tmp cleanup, harmless). NEW BEST
+  orblib_007_005 (M_IMBH 1.0e4, ml 2.926, q 0.637, mscale 0.929) kinchi2 13696.9, -346 vs 006_002 (14042.6, M
+  2.46e4). Its family: M 1.0e4 13696.9, 1.25e4 13765.7, 1.5e4 13930.6, 3.2e4 13975.8. The minimum is at the lowest
+  M sampled, so the IMBH mass is unconstrained below 1e4 in this family: needs a lower-M profile (and a library-noise
+  check) before any paper update.
+- [ ] Next profile: extend the 007_005 family to M = 0, 2.5e3, 5e3, 7.5e3 (same other params), plus a second seed of
+  007_005 for library noise. enclosed_mass.py for the stage-3 rows.
 
 ### Future options (not scheduled; user 2026-11-24: "future options we could test")
 

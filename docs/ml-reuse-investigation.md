@@ -134,3 +134,24 @@ Each: `stretch_setup.sh W NAME` then `regrid_one.py $W/stretch/NAME/config.yaml 
    −2lnL against each pack's rows (independent of h0 and of the Laplace expansion).
 5. Gold standard (stage-3 slot): integrate orblib_001_001's potential with every mass × k (k ≈ 0.93) — the exact
    scaled copy; the stretched solve must match it far below the ~100 library noise.
+
+### Outcome (2026-11-25): the gold standard fails, the stretch is not adopted
+
+| vs s1 (Υ 2.965)                       | hst_pm | gaia_pm | veldist |  lvm | total |
+|---------------------------------------|-------:|--------:|--------:|-----:|------:|
+| stretch ml3.065 (integrated: +2167)   |  +2000 |    +311 |     +65 |  −43 | +2333 |
+| stretch ml3.165 (integrated: +5202)   |  +5011 |    +906 |    +140 |  −74 | +5984 |
+| stretch ml2.86                        |  −1019 |     −50 |     −61 |  +57 | −1073 |
+| stretch ml2.76                        |   −834 |    +160 |    −116 | +122 |  −668 |
+| **gold orblib_007_012 (Υ 2.760)**     |   −335 |    +117 |    −117 | +383 |   +47 |
+
+The gold library (every mass × 0.93086, integrated by stage 3, solved privately with `gold_setup.sh`; its
+kinchi2 14736.30 equals stage 3's own solve) differs from the stretched ml2.76 solve by 715, far above the ~100
+library noise: HST by 499, LVM by 261, while veldist agrees to 1. The stretch also overstates the penalty at
+high Υ (+8%, +15% against the integrated references). So the data-stretch mode is not implemented and
+`reuse_orblib_across_ml` stays False.
+
+Lead, not tested: the orbit library's velocity histograms span a fixed km/s range. Stretching the data by 1/s
+(1.036 at ml2.76) pushes the fastest HST stars past that edge (+183 stars with p ≤ 0 at ml2.76, +69 at ml2.86),
+while the gold library keeps them inside, so the two are not the same likelihood at the edge. Step 4 (exact
+post-check) was inconclusive for the same reason: the p ≤ 0 stars are the Υ-sensitive ones.
