@@ -39,6 +39,16 @@ Baseline = addback + diagonal floored χ². DYNAMITE side: fork branch
   Plan: docs/fast-star-term.md (2026-11-24): post-hoc term on the M_IMBH profile, conditional on the quality
   sample, DF from re-integrating non-zero-weight orbits with a central (v2D,|vlos|) histogram set; IMBH position
   marginalised; needs the kinematic calibration factor kappa (library noise, frozen-curvature bootstrap, E2 mocks).
+  [2026-11-26] First real table (orblib_006_002, M 2.46e4; $W/faststar/table_006_002.npz, 45000 orbits
+  re-integrated in 16 chunks). Term (a), quality sample R<10" (2491 stars, 9 selected, ~3.5 contaminants
+  expected): raw table chi2 182.9 centred / 185.5 position-marginalised; 2-cell-smoothed 196.9 / 198.7.
+  PROBLEM: smoothing inflates the tail. Expected selected members 16.5 smoothed vs 2.5 raw (observed 9, ~5.5
+  members): a 10 km/s Gaussian moves mass across the steep fall-off at the 63 km/s cut (the cell-mass tail bias
+  of CLAUDE.md). P_s2 must not be used for term (a); need a tail-preserving smoother (e.g. smooth log P along v,
+  or more orbits / analytic tail fit). Star A candidate (532867, R 0.26", 114 km/s) is well inside the model's
+  support (member density 1.2e-4 vs contaminant 2.9e-6); 540652 (217 km/s, 4.7") and 537761 (110 km/s, 9.75")
+  are contaminants under this model. A chi2 profile needs tables for several M (one ~18 h re-integration each).
+  Bug fixed: fast-only runs write the 2D stream to *_losvd_hist.dat (56a29b3).
 - [ ] Phase 2 gate: rescore finished v4 models, baseline vs Laplace, along the IMBH profile.
 - [DONE] Time one production solve: `docs/laplace-solve-performance-record.md` (dsyrk ~70%).
 - [DONE] Speedups A (row-space rows), B (fused capture, cell-space chi2), D1 (KKT working set) in the fork
