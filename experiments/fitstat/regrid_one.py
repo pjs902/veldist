@@ -30,8 +30,8 @@ rows = [i for i, d in enumerate(c.all_models.table["directory"]) if d.rstrip("/"
 assert len(rows) == 1, mdir
 row = c.all_models.table[rows[0]]
 model = c.all_models.get_model_from_row(rows[0])
-assert "/veldist-fitstat/regrid/" in model.directory or "/veldist-fitstat/stretch/" in model.directory, \
-    model.directory  # private copies only (regrid_setup.sh, stretch_setup.sh)
+assert any(f"/veldist-fitstat/{p}/" in model.directory for p in ("regrid", "stretch", "noise")), \
+    model.directory  # private copies only (regrid_setup.sh, stretch_setup.sh, noise_setup.sh)
 orblib = dyn.orblib.LegacyOrbitLibrary(config=c, mod_dir=model.directory_noml, parset=model.parset)
 assert orblib._orblib_marker_matches_parset()
 kin = c.system.get_unique_triaxial_visible_component().kinematic_data
