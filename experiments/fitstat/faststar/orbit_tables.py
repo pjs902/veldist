@@ -164,18 +164,24 @@ def speed_hist(run, fam, wt):
     """sum_o wt[o] h_o: (n_annuli, NB, NB) weighted speed histograms of the fast-star set (the only 2D set in a
     fast-only run); wt has one entry per orbit of this family. Chunked runs (chunks.txt) are summed chunk by chunk."""
     ch = Path(run) / "chunks.txt"
+    # A fast-only run has no 1D aperture, and the fork then writes the 2D stream to the 2nd output name
+    # (*_losvd_hist.dat; *_pm_hist.dat gets the orbit classes). With the kinematic sets it is *_pm_hist.dat.
+    infil = next((Path(run) / "infil").glob(f"{fam}_fs*.in")).read_text().splitlines()
+    n_ap = int(next(s for s in infil if "[# of apertures]" in s).split()[0])
+    kind = "losvd_hist" if n_ap == 1 else "pm_hist"
     if ch.exists():
         e = [int(x) for x in ch.read_text().split()]
         assert e[-1] == len(wt), (e[-1], len(wt))
-        return sum(speed_hist_file(Path(run) / "datfil" / f"{fam}_c{k}_pm_hist.dat", wt[e[k]:e[k + 1]])
+        return sum(speed_hist_file(Path(run) / "datfil" / f"{fam}_c{k}_{kind}.dat", wt[e[k]:e[k + 1]])
                    for k in range(len(e) - 1))
-    return speed_hist_file(Path(run) / "datfil" / f"{fam}_pm_hist.dat", wt)
+    return speed_hist_file(Path(run) / "datfil" / f"{fam}_{kind}.dat", wt)
 
 
 def speed_hist_file(path, wt):
     raw = _raw(path)
     n_ap = len(R_EDGES) - 1
-    rec, _ = walk(raw, len(wt) * n_ap)
+    rec, used = walk(raw, len(wt) * n_ap)
+    assert len(raw) - used < 16, (path, len(raw), used)       # the stream holds exactly these orbits
     f64 = np.frombuffer(raw, np.uint8)
     M = np.zeros((n_ap, NB, NB))
     c = (NB - 1) // 2
