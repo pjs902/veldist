@@ -1168,8 +1168,15 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   2.46e4). Its family: M 1.0e4 13696.9, 1.25e4 13765.7, 1.5e4 13930.6, 3.2e4 13975.8. The minimum is at the lowest
   M sampled, so the IMBH mass is unconstrained below 1e4 in this family: needs a lower-M profile (and a library-noise
   check) before any paper update.
-- [ ] Next profile: extend the 007_005 family to M = 0, 2.5e3, 5e3, 7.5e3 (same other params), plus a second seed of
-  007_005 for library noise. enclosed_mass.py for the stage-3 rows.
+- [x] 2026-11-26 consolidation: docs/imbh-status-2026-11-26.md. GP refit on 91 models: LOO rms 421, profile min
+  8.5k but every Delta within 6k-32k is below the surrogate error; enclosed_mass.py done ($W/gprun/enclosed_mass.npz;
+  no IMBH<->sBH trade). Escape (escape_check.py, z = 0): 2D speeds bind for M >= 1.25e4; preliminary 3D speeds
+  favour M ~3e4. The 1e4 minimum is inside the noise band, not in tension with the fast stars.
+  GOLD VERDICT IS CONDITIONAL: 715 is a failure only if the library noise is <~100 (not measured).
+- [ ] Library noise (decides kappa, profile significance, gold verdict): start-grid perturbation replicas (NOT a
+  re-seed: integration is deterministic) of 007_005 and 007_008, 2-3 each (logrmin/logrmax +-1/3 step, dithering 3->4).
+- [ ] Fast-star raw tables along the profile (M 1e4, 1.5e4, 2.5e4, 3.2e4 at the 007 nuisance values); term (a) on the
+  raw v2D marginal; term (b) needs Goold's final RVs (102-star table + final A-L).
 
 ### Future options (not scheduled; user 2026-11-24: "future options we could test")
 
