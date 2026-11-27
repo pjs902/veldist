@@ -1178,6 +1178,20 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   [2026-11-26] Running ($W/noise/, noise_setup.sh + noise_build.py + regrid_one.py), 3 per model: seed4243,
   seed4244, logrp (logrmin -0.4517 / logrmax 3.7483, +1/3 energy step). Results ~2026-11-27 midday; dithering 3->4
   not launched. Compare with originals 13696.9 / 13975.8 and Delta(3.2e4 - 1e4) = 279.
+- [ ] 2026-11-27 LIBRARY NOISE + STATISTIC SYSTEMATIC (kinematic M_IMBH profile). Noise replicas
+  ($W/noise/*/result.npz): 007_005 (1e4) 13696.9 / 13684.6 / 13690.8 / 13670.1 (logrp), sd ~11; 007_008 (3.2e4)
+  13975.8 / 13939.6 / 14003.7, sd ~32 (HST); replica-total scatter of the gap ~30 (per-aperture noise is coherent,
+  so the pair-difference estimate 8 is too low). logrp of 007_008 pending.
+  hst_split.py + split_compare.py on the seed pairs ($W/split/): HST Laplace Delta(3.2e4-1e4) +233/+289 but
+  floor-free EXACT per-star -605 (matched stars; Z_star -8.8, aperture-block -5.8, kappa_eff 2.3). Laplace by radius:
+  R<50" -302 (exact -492), R>50" +535 (exact -113); Gaia +62 (exact +19), MUSE +22 (exact +5), LVM -62. So the
+  Laplace preference for 1e4 comes entirely from data where the IMBH does not act, and the reported statistic
+  (Laplace about the DATA h0 at the re-expanded weights) is not the exact likelihood at those weights. No grid-edge
+  loss (captured ~1.000), p<=0 167 vs 165. gp_argmin.py: the GP's +40 at 31.9k is extrapolation (sd 639).
+  OPEN before any conclusion: (1) convergence, reexpand 2 on the seed4243 pair (split_b job); (2) floor sensitivity
+  of the exact Delta (f 1e-4/1e-3/1e-2, ~24 stars p<=0 in one model only); then re-score gold vs stretch ml2.76 and
+  the three 3.2e4 re-tunes (retune_setup.py: ml 2.88, mscale 0.80, rscale 0.70; $W/noise/m32_*) on the exact
+  statistic. Stage-3 ranking, GP profile and the gold verdict all rest on the Laplace-about-data statistic.
 - [ ] Fast-star raw tables along the profile (M 1e4, 1.5e4, 2.5e4, 3.2e4 at the 007 nuisance values); term (a) on the
   raw v2D marginal; term (b) needs Goold's final RVs (102-star table + final A-L).
   [2026-11-26] Running fs_007_005..008 ($W/faststar/table_007_00X.npz). 007_005 (M 1e4) done: term (a) 207.0
