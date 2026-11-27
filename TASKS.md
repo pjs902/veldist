@@ -1192,6 +1192,12 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   of the exact Delta (f 1e-4/1e-3/1e-2, ~24 stars p<=0 in one model only); then re-score gold vs stretch ml2.76 and
   the three 3.2e4 re-tunes (retune_setup.py: ml 2.88, mscale 0.80, rscale 0.70; $W/noise/m32_*) on the exact
   statistic. Stage-3 ranking, GP profile and the gold verdict all rest on the Laplace-about-data statistic.
+  [2026-11-27 eve] logrp pair (radial grid shifted): 007_008 logrp 14206.0, so Laplace Delta +536 (HST +465, Gaia
+  +98, MUSE +22, LVM -49); 007_008 replica sd now ~120. Exact matched-star: HST -312 (Z_star -4.2, Z_block -2.9),
+  Gaia +51 (Z_block +3.3), MUSE +7, so exact total ~ -300 (seeds ~ -640). Laplace-minus-exact HST is stable (838
+  seed / 777 logrp): the statistic bias is ~800 against 3.2e4 regardless of library; library noise shifts both by
+  ~300 coherently (per-aperture corr 0.94), far above the independent-aperture estimate (~22). Exact sign holds,
+  significance ~3 sigma once block correlation and library noise are counted.
 - [ ] Fast-star raw tables along the profile (M 1e4, 1.5e4, 2.5e4, 3.2e4 at the 007 nuisance values); term (a) on the
   raw v2D marginal; term (b) needs Goold's final RVs (102-star table + final A-L).
   [2026-11-26] Running fs_007_005..008 ($W/faststar/table_007_00X.npz). 007_005 (M 1e4) done: term (a) 207.0
