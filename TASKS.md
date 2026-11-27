@@ -1173,10 +1173,16 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   no IMBH<->sBH trade). Escape (escape_check.py, z = 0): 2D speeds bind for M >= 1.25e4; preliminary 3D speeds
   favour M ~3e4. The 1e4 minimum is inside the noise band, not in tension with the fast stars.
   GOLD VERDICT IS CONDITIONAL: 715 is a failure only if the library noise is <~100 (not measured).
-- [ ] Library noise (decides kappa, profile significance, gold verdict): start-grid perturbation replicas (NOT a
-  re-seed: integration is deterministic) of 007_005 and 007_008, 2-3 each (logrmin/logrmax +-1/3 step, dithering 3->4).
+- [ ] Library noise (decides kappa, profile significance, gold verdict): replicas of 007_005 and 007_008. A new
+  random_seed does change the integrated orbits (12/12 records differ), so seed replicas count as noise.
+  [2026-11-26] Running ($W/noise/, noise_setup.sh + noise_build.py + regrid_one.py), 3 per model: seed4243,
+  seed4244, logrp (logrmin -0.4517 / logrmax 3.7483, +1/3 energy step). Results ~2026-11-27 midday; dithering 3->4
+  not launched. Compare with originals 13696.9 / 13975.8 and Delta(3.2e4 - 1e4) = 279.
 - [ ] Fast-star raw tables along the profile (M 1e4, 1.5e4, 2.5e4, 3.2e4 at the 007 nuisance values); term (a) on the
   raw v2D marginal; term (b) needs Goold's final RVs (102-star table + final A-L).
+  [2026-11-26] Running fs_007_005..008 ($W/faststar/table_007_00X.npz). 007_005 (M 1e4) done: term (a) 207.0
+  centred / 204.5 marginalised, sum P(sel) 0.55 (006_002: 182.9 / 185.5, 2.48; ~5.5 observed). Main penalty: the
+  0.87" fast star is background-like at 1e4 (member/bg density ~1e-7). Clean mass comparison = 007_008 (same nuisance).
 
 ### Future options (not scheduled; user 2026-11-24: "future options we could test")
 
