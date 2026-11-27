@@ -7,7 +7,7 @@ ml_stretch_exact.py's capture (one rhs-only read at RESULT.npz w_new from regrid
 Per Laplace set and aperture: offset-free Laplace statistic (sum asserted against the solve), FLOOR-FREE exact
 -2 log L (stars with p = (M h)_s <= 0 left out and counted separately), projected mass Ma, captured fraction
 sum(h)/Ma, and for the PM sets the fraction of h in the outermost ring of cells and the aperture position.
-Per star: aperture index, log p (nan if p <= 0) and, for PM sets, the speed of its kernel centre (km/s units of the
+Per star: aperture index, log p (nan if p <= 0), kernel mass on the grid m_s and, for PM sets, the speed of its kernel centre (km/s units of the
 pack's cells). The exact per-star term is log p_s - sum(h)/Ma (the extended-Poisson normalisation split evenly).
 Writes nothing into the model directory.
 """
@@ -75,7 +75,7 @@ for k in kin:
         out[f"{k.name}_x"], out[f"{k.name}_y"] = np.asarray(z["xbin"], float), np.asarray(z["ybin"], float)
         out[f"{k.name}_edgefrac"] = h[:, ring].sum(1) / h.sum(1)
     lap, ex, nonpos, nst = (np.zeros(n) for _ in range(4))
-    s_ap, s_logp, s_v = [], [], []
+    s_ap, s_logp, s_v, s_m = [], [], [], []
     for a in range(n):
         Lt, g, h0 = k.laplace_terms(a, Ma[a])
         lap[a] = fs.stat_offset_free(h[a], Lt, g, h0)
@@ -87,6 +87,7 @@ for k in kin:
         ex[a] = 2.0 * (-np.sum(np.log(p[ok])) + len(M) / Ma[a] * h[a].sum())
         s_ap.append(np.full(len(M), a, np.int32))
         s_logp.append(np.where(ok, np.log(np.where(ok, p, 1.0)), np.nan).astype(np.float32))
+        s_m.append(M.sum(1).astype(np.float32))  # kernel mass on the grid: p of a uniform h is sum(h) m_s / K2
         if pm:
             m0 = M.sum(1)
             s_v.append(np.hypot(M @ P1, M @ P2) / m0)
@@ -96,7 +97,8 @@ for k in kin:
           f"min {np.min(h.sum(1) / Ma):.4f}", flush=True)
     out.update({f"{k.name}_Ma": Ma, f"{k.name}_capt": h.sum(1) / Ma, f"{k.name}_lap": lap, f"{k.name}_exact": ex,
                 f"{k.name}_nonpos": nonpos, f"{k.name}_nstars": nst, f"{k.name}_star_ap": np.concatenate(s_ap),
-                f"{k.name}_star_logp": np.concatenate(s_logp)})
+                f"{k.name}_star_logp": np.concatenate(s_logp), f"{k.name}_star_m": np.concatenate(s_m),
+                f"{k.name}_K2": h.shape[1]})
     if pm:
         out[f"{k.name}_star_v"] = np.concatenate(s_v).astype(np.float32)
         out[f"{k.name}_half"] = float(z["vxrange"])
