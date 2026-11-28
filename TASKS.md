@@ -1198,6 +1198,14 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   seed / 777 logrp): the statistic bias is ~800 against 3.2e4 regardless of library; library noise shifts both by
   ~300 coherently (per-aperture corr 0.94), far above the independent-aperture estimate (~22). Exact sign holds,
   significance ~3 sigma once block correlation and library noise are counted.
+  [2026-11-27 late] CONVERGENCE FAILS. reexpand 2 on the seed4243 pair: reported Laplace HST worsens by +1408 (1e4)
+  / +1630 (3.2e4); p<=0 HST stars 167/165 -> 417/334; floored exact HST (true m_s, work/floor_exact.py) worsens by
+  ~+5400 / +4800 at f 1e-3. Exact Delta(3.2e4-1e4) at f 1e-3: HST -554 (pass 1) -> -1164 (pass 2), Gaia +20 -> -51,
+  total ~ -590 -> ~ -1295. Pass 1, f 1e-3, all three libraries: HST -554 / -561 / -292 (logrp); floor-sensitive
+  (f 1e-2: -337 / -320 / -96). The re-expansion (Laplace about the model, floor 1e-3) moves AWAY from the exact
+  optimum, emptying cells under observed stars; neither pass is an exact profile likelihood, so no exact-statistic
+  Delta is final. Needs weights optimised on the exact (floored) likelihood itself (e.g. EM / mix-SQP polish from
+  the pass-1 weights) before any M_IMBH conclusion.
 - [ ] Fast-star raw tables along the profile (M 1e4, 1.5e4, 2.5e4, 3.2e4 at the 007 nuisance values); term (a) on the
   raw v2D marginal; term (b) needs Goold's final RVs (102-star table + final A-L).
   [2026-11-26] Running fs_007_005..008 ($W/faststar/table_007_00X.npz). 007_005 (M 1e4) done: term (a) 207.0
