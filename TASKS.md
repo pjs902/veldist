@@ -1206,6 +1206,10 @@ SBC in the loop, sigma=7 diagnosis, decision at n_real=100).
   optimum, emptying cells under observed stars; neither pass is an exact profile likelihood, so no exact-statistic
   Delta is final. Needs weights optimised on the exact (floored) likelihood itself (e.g. EM / mix-SQP polish from
   the pass-1 weights) before any M_IMBH conclusion.
+  [2026-11-28] PAUSED for a couple of days (user). Independent review: docs/imbh-statistic-review-2026-11-28.md
+  (undamped Newton re-expansion; damped line search on the floored exact objective recommended; cut the GP profile).
+  Resume with its offline t-scan between pass-1 and pass-2 weights. Re-tunes m32_ml288b / msc080 / rsc070 were
+  still integrating on the node (results to $W/noise/m32_*/result.npz).
 - [ ] Fast-star raw tables along the profile (M 1e4, 1.5e4, 2.5e4, 3.2e4 at the 007 nuisance values); term (a) on the
   raw v2D marginal; term (b) needs Goold's final RVs (102-star table + final A-L).
   [2026-11-26] Running fs_007_005..008 ($W/faststar/table_007_00X.npz). 007_005 (M 1e4) done: term (a) 207.0
